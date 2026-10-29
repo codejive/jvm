@@ -1,0 +1,2 @@
+* text=auto eol=lf
+tests/fixtures/crlf.tsv -text whitespace=cr-at-eol

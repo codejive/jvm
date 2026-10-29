@@ -1,0 +1,272 @@
+#!/usr/bin/env bash
+# Discovery milestone. Runtime dependencies: Bash 3.2 and ordinary utilities.
+LC_ALL=C
+export LC_ALL
+VERSION=0.1.0
+BASE=https://jbangdev.github.io/jdkdb-index
+
+error() { printf 'jvm: %s\n' "$*" >&2; }
+help_text() {
+    local line
+    while IFS= read -r line; do printf '%s\n' "$line"; done <<'EOF'
+Usage: jvm help | --help | --version
+       jvm available [selector]
+
+Latest JDKs: major (21), distro (temurin), or distro-major (temurin-21).
+EOF
+}
+
+require_tools() {
+    local tool
+    for tool in "$@"; do
+        command -v "$tool" >/dev/null 2>&1 || { error "required utility missing: $tool"; return 1; }
+    done
+}
+
+detect_host() {
+    local system machine libc
+    system=$(uname -s) && machine=$(uname -m) || return 1
+    case "$system" in
+        Linux) OS=linux ;;
+        Darwin) OS=macosx ;;
+        CYGWIN*|MSYS*|MINGW*) OS=windows ;;
+        *) error "unsupported operating system: $system ($machine)"; return 1 ;;
+    esac
+    case "$machine" in
+        x86_64|amd64|AMD64) ARCH=x86_64 ;;
+        aarch64|arm64|ARM64) ARCH=aarch64 ;;
+        i386|i486|i586|i686|x86) ARCH=i686 ;;
+        armv7*) error "cannot determine supported ARM ABI from $system/$machine"; return 1 ;;
+        ppc64le|s390x|riscv64) ARCH=$machine ;;
+        *) error "unsupported architecture: $system/$machine"; return 1 ;;
+    esac
+    if [ "$OS" = linux ]; then
+        libc=$(ldd --version 2>&1)
+        case "$libc" in
+            *musl*) OS=linux-musl ;;
+            *GLIBC*|*'GNU libc'*|*'GNU C Library'*) ;;
+            *)
+                libc=$(getconf GNU_LIBC_VERSION 2>/dev/null) || libc=
+                case "$libc" in
+                    glibc\ *) ;;
+                    *) error "cannot determine Linux libc for $machine (need ldd or getconf)"; return 1 ;;
+                esac ;;
+        esac
+    fi
+}
+
+absolute_path() {
+    case "$1" in
+        /*) printf '%s\n' "$1" ;;
+        [a-zA-Z]:[\\/]*)
+            [ "$OS" = windows ] && command -v cygpath >/dev/null 2>&1 || return 1
+            cygpath -u "$1" ;;
+        *) return 1 ;;
+    esac
+}
+
+cache_path() {
+    local root home
+    root=$(absolute_path "${XDG_CACHE_HOME:-}") || root=
+    if [ -z "$root" ]; then
+        home=$(absolute_path "${HOME:-}") || { error 'need an absolute HOME or XDG_CACHE_HOME'; return 1; }
+        root=$home/.cache
+    fi
+    CACHE=$root/jvm
+    umask 077
+    mkdir -p "$CACHE" || { error "cannot create cache: $CACHE"; return 1; }
+    ENTRY=$CACHE/ga-$OS-$ARCH-jdk-latest-v1
+    WORK=$(mktemp -d "$CACHE/.discovery.XXXXXXXX") || return 1
+    trap 'rm -rf -- "$WORK"' EXIT
+    trap 'exit 1' HUP INT TERM
+}
+
+# Normalize HTTP status/headers for curl and wget. Redirects are restricted to
+# HTTPS (wget must expose --https-only); unsupported conditions become plain GET.
+transfer() {
+    local validator=$1 value=$2 capabilities result
+    local -a options
+    STATUS=
+    : > "$WORK/headers"
+    if command -v curl >/dev/null 2>&1; then
+        options=(--silent --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 45 --dump-header "$WORK/headers" --output "$WORK/download" --write-out '%{http_code}')
+        [ -z "$validator" ] || options+=(--header "$validator: $value")
+        STATUS=$(curl "${options[@]}" "$URL" 2> "$WORK/transfer-error") || return 1
+    elif command -v wget >/dev/null 2>&1; then
+        capabilities=$(wget --help 2>&1)
+        case "$capabilities" in *--https-only*) ;; *) printf '%s\n' 'wget lacks --https-only; install a TLS-redirect-safe wget or curl' > "$WORK/transfer-error"; return 1 ;; esac
+        options=(--https-only --server-response --timeout=15 --tries=1 -O "$WORK/download")
+        case "$capabilities" in *--header*) [ -z "$validator" ] || options+=(--header="$validator: $value") ;; esac
+        wget "${options[@]}" "$URL" 2> "$WORK/headers"
+        result=$?
+        STATUS=$(awk '/^[ \t]*HTTP\// {code=$2} END {print code}' "$WORK/headers")
+        [ "$result" -eq 0 ] || [ "$STATUS" = 304 ] || { cp "$WORK/headers" "$WORK/transfer-error"; return 1; }
+    else
+        printf '%s\n' 'install curl or wget to fetch metadata' > "$WORK/transfer-error"
+        return 1
+    fi
+    [ "$STATUS" = 200 ] || [ "$STATUS" = 304 ]
+}
+
+header_value() {
+    local value
+    value=$(awk -v wanted="$1" '
+        /^[ \t]*HTTP\// {value=""}
+        {line=$0; sub(/\r$/, "", line); sub(/^[ \t]*/, "", line)
+         colon=index(line, ":"); if (tolower(substr(line,1,colon-1))==wanted) {
+             value=substr(line,colon+1); sub(/^[ \t]*/, "",value)}}
+        END {print value}' "$WORK/headers") || return 1
+    case "$value" in *[$'\r\n']*) return 1 ;; esac
+    printf '%s\n' "$value"
+}
+
+load_cache() {
+    local saved_url
+    VALID=0; CHECKED=0; ETAG=; MODIFIED=
+    [ -f "$ENTRY" ] || return 0
+    # Open one generation once: another process may replace ENTRY at any time.
+    cp "$ENTRY" "$WORK/snapshot" || return 1
+    {
+        IFS= read -r saved_url && IFS= read -r CHECKED &&
+        IFS= read -r ETAG && IFS= read -r MODIFIED
+    } < "$WORK/snapshot" || return 0
+    [ "$saved_url" = "$URL" ] || return 0
+    case "$CHECKED" in ''|*[!0-9]*|????????????*) return 0 ;; esac
+    CHECKED=$((10#$CHECKED))
+    case "$ETAG$MODIFIED" in *[$'\r\n']*) return 0 ;; esac
+    sed '1,4d' "$WORK/snapshot" > "$WORK/cached" || return 1
+    if [ -s "$WORK/cached" ]; then VALID=1; INDEX=$WORK/cached; fi
+}
+
+publish_cache() {
+    local body=$1 etag=$2 modified=$3
+    {
+        printf '%s\n%s\n%s\n%s\n' "$URL" "$NOW" "$etag" "$modified" &&
+            cat "$body"
+    } > "$WORK/entry" || return 1
+    mv -f "$WORK/entry" "$ENTRY"
+}
+
+metadata() {
+    local validator= value= attempt
+    URL=$BASE/metadata/ga/$OS/$ARCH/jdk-latest.tsv
+    load_cache || return 1
+    NOW=$(date +%s) || return 1
+    case "$NOW" in ''|*[!0-9]*) error 'date utility must support +%s'; return 1 ;; esac
+    if [ "$VALID" -eq 1 ] && [ "$NOW" -ge "$CHECKED" ] && [ "$((NOW - CHECKED))" -lt 3600 ]; then return 0; fi
+    if [ "$VALID" -eq 1 ]; then
+        if [ -n "$ETAG" ]; then validator=If-None-Match; value=$ETAG
+        elif [ -n "$MODIFIED" ]; then validator=If-Modified-Since; value=$MODIFIED; fi
+    fi
+    for attempt in 1 2; do
+        if ! transfer "$validator" "$value"; then break; fi
+        if [ "$STATUS" = 304 ]; then
+            if [ "$VALID" -eq 1 ]; then
+                publish_cache "$WORK/cached" "$ETAG" "$MODIFIED" || { error 'cannot update metadata cache'; return 1; }
+                return 0
+            fi
+            validator=; value=; continue
+        fi
+        if [ -s "$WORK/download" ]; then
+            publish_cache "$WORK/download" "$(header_value etag)" "$(header_value last-modified)" || { error 'cannot publish metadata cache'; return 1; }
+            INDEX=$WORK/download
+            return 0
+        fi
+        break
+    done
+    [ "$VALID" -eq 0 ] || return 0
+    error "cannot obtain metadata for $OS/$ARCH from $URL (HTTP ${STATUS:-unavailable})"
+    [ ! -s "$WORK/transfer-error" ] || cat "$WORK/transfer-error" >&2
+    return 1
+}
+
+parse_selector() {
+    WANTED_MAJOR=; WANTED_DISTRO=
+    case "$1" in
+        '') return 0 ;;
+        *[!0-9]*)
+            if [[ $1 =~ ^([a-z][a-z0-9-]*)-([1-9][0-9]*)$ ]]; then
+                WANTED_DISTRO=${BASH_REMATCH[1]}; WANTED_MAJOR=${BASH_REMATCH[2]}
+            elif [[ $1 =~ ^[a-z][a-z0-9-]*$ ]]; then
+                WANTED_DISTRO=$1
+            else
+                error 'selector must be a major, distro, or distro-major'; return 2
+            fi ;;
+        0*) error 'Java major must be positive, without leading zeros'; return 2 ;;
+        *) WANTED_MAJOR=$1 ;;
+    esac
+    [ "${#1}" -le 100 ] || { error 'selector is too long'; return 2; }
+}
+
+available() {
+    local selector=$1 result
+    parse_selector "$selector" || return $?
+    require_tools uname mkdir mktemp rm sed awk cat mv date cp || return 1
+    detect_host && cache_path && metadata || return 1
+    # The published TSV is trusted. Read only listing fields and collapse IDs;
+    # do not validate unused metadata or compare builds/archive variants.
+    awk -F '\t' -v os="$OS" -v arch="$ARCH" -v distro="$WANTED_DISTRO" -v major="$WANTED_MAJOR" '
+        function add_row(id, distribution, version, jvm, col) {
+            rows++
+            cells[rows,1]=id; cells[rows,2]=distribution; cells[rows,3]=version
+            cells[rows,4]=jvm
+            for (col=1; col<4; col++)
+                if (length(cells[rows,col])>width[col]) width[col]=length(cells[rows,col])
+        }
+        BEGIN {add_row("ID", "DISTRIBUTION", "VERSION", "JVM")}
+        NR==1 {next}
+        {sub(/\r$/, "")}
+        $1!="ga" || $2!=os || $3!=arch || $4!="jdk" {next}
+        $10!="tar.gz" && $10!="zip" {next}
+        os!="linux-musl" && $15 ~ /(^\[|,)musl(,|\]$)/ {next}
+        distro!="" && $7!=distro {next}
+        {
+            java_major=$9; sub(/^1\./,"",java_major); sub(/[^0-9].*$/,"",java_major)
+            if (major!="" && java_major!=major) next
+            id=$9 "-" $7
+            if (seen[id]++) next
+            add_row(id, $7, $9, $5)
+            found=1
+        }
+        END {
+            if ((distro!="" || major!="") && !found) exit 1
+            for (row=1; row<=rows; row++) {
+                for (col=1; col<=4; col++) {
+                    printf "%s", cells[row,col]
+                    if (col<4) {
+                        padding=int(width[col]/8)+1
+                        if (padding>4) padding=4
+                        padding-=int(length(cells[row,col])/8)
+                        if (padding<1) padding=1
+                        for (tab=0; tab<padding; tab++) printf "\t"
+                    }
+                }
+                printf "\n"
+            }
+        }
+    ' "$INDEX" > "$WORK/results"
+    result=$?
+    case "$result" in
+        0) cat "$WORK/results" ;;
+        1) error "no compatible JDK matches: $selector"; return 1 ;;
+        *) error 'cannot read metadata'; return 1 ;;
+    esac
+}
+
+case "${1:-}" in
+    help|--help)
+        [ "$#" -eq 1 ] || { error 'help takes no arguments'; exit 2; }
+        help_text ;;
+    --version)
+        [ "$#" -eq 1 ] || { error '--version takes no arguments'; exit 2; }
+        printf 'jvm %s\n' "$VERSION" ;;
+    available)
+        if [ "$#" -eq 2 ] && [ "$2" = --help ]; then help_text; exit 0; fi
+        [ "$#" -le 2 ] && { [ "$#" -eq 1 ] || [ -n "$2" ]; } || {
+            error 'usage: jvm available [selector]'; exit 2;
+        }
+        available "${2:-}" ;;
+    *)
+        error 'usage: jvm help | --help | --version | available [selector]'
+        exit 2 ;;
+esac

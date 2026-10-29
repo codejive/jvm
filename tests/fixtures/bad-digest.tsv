@@ -1,0 +1,2 @@
+release_type	os	architecture	image_type	jvm_impl	vendor	distro	java_version	version	file_type	url	filename	size	sha256	features
+ga	linux	x86_64	jdk	hotspot	eclipse	temurin	21.0.12+8	21.0.12+9	tar.gz	https://example.invalid/jdk	jdk.tar.gz	123	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	[]
