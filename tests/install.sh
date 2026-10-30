@@ -166,6 +166,10 @@ run() {
     "$BASH_BIN" "$ROOT/jvm" "$@" > "$TEMP/out" 2> "$TEMP/err"; actual=$?
     [ "$expected" -eq "$actual" ] || fail "exit $actual, expected $expected: $*"
     if [ "$expected" -ne 0 ]; then [ ! -s "$TEMP/out" ] || fail 'partial command output on failure'; fi
+    case "$1" in
+        install|uninstall) [ ! -s "$TEMP/out" ] || fail 'informational messages leaked to stdout' ;;
+        default) if [ "$#" -gt 1 ]; then [ ! -s "$TEMP/out" ] || fail 'default selection leaked to stdout'; fi ;;
+    esac
 }
 contains() { [[ $(< "$TEMP/out") = *"$1"* ]] || fail "missing output: $1"; }
 diagnostic() { [[ $(< "$TEMP/err") = *"$1"* ]] || fail "missing diagnostic: $1"; }
@@ -216,10 +220,10 @@ uninstall_checks() {
     [[ $(< "$TEMP/err") != *'might be in use'* ]] || fail 'Windows hint on Linux'
     run 0 list; contains '21+1-temurin'
     TEST_REMOVE_FAIL=0
-    run 0 uninstall 21+1-temurin; contains 'Successfully uninstalled 21+1-temurin'
+    run 0 uninstall 21+1-temurin; diagnostic 'Successfully uninstalled 21+1-temurin'
     run 1 uninstall 21; diagnostic 'Multiple JDKs match, try again using one of the following IDs:'; diagnostic '21+2-temurin'; diagnostic '21+1-other-vendor'
-    run 0 uninstall temurin-21; contains 'Successfully uninstalled 21+2-temurin'
-    run 0 uninstall 8; contains 'Successfully uninstalled 1.8.0_99-b09-old-vendor'
+    run 0 uninstall temurin-21; diagnostic 'Successfully uninstalled 21+2-temurin'
+    run 0 uninstall 8; diagnostic 'Successfully uninstalled 1.8.0_99-b09-old-vendor'
     run 0 list; contains '21+1-other-vendor'
     [[ $(< "$TEMP/out") != *temurin* ]] || fail 'removed JDK still listed'
     TEST_REMOVE_DELETE_FAIL=1
@@ -259,12 +263,12 @@ default_checks() {
     row 21+1 vendor; row 21+2 vendor; row 21+1 other
     row 23+1 vendor; row 25+1 vendor; row 17+1 vendor; row 1.8.0_99 old
     run 0 install 21+1-vendor
-    contains 'Default JDK set to: 21+1-vendor'
+    diagnostic 'Default JDK set to: 21+1-vendor'
     run 0 default; contains '21+1-vendor'
     run 0 list; contains 'DEFAULT'; contains '*'
     for id in 21+2-vendor 21+1-other 23+1-vendor 25+1-vendor 17+1-vendor 1.8.0_99-old; do
         run 0 install "$id"
-        [[ $(< "$TEMP/out") != *'Default JDK set to:'* ]] || fail 'unchanged default announced'
+        [[ $(< "$TEMP/err") != *'Default JDK set to:'* ]] || fail 'unchanged default announced'
     done
     rm "$XDG_DATA_HOME/jvm/default"
     TEST_DEFAULT_GATE=$TEMP/default-gate
@@ -282,9 +286,10 @@ default_checks() {
     wait "$second" || fail 'second default initializer failed'; second=
     TEST_DEFAULT_GATE=
     [ ! -e "$XDG_DATA_HOME/jvm/jdks/21+1-vendor/17+1-vendor" ] || fail 'losing initializer created a nested link'
-    [ ! -s "$TEMP/second.err" ] || fail 'losing initializer emitted a diagnostic'
-    [[ $(< "$TEMP/first.out") = *'Default JDK set to: 21+1-vendor'* ]] || fail 'initializer omitted confirmation'
-    [[ $(< "$TEMP/second.out") != *'Default JDK set to:'* ]] || fail 'losing initializer announced selection'
+    [ "$(< "$TEMP/second.err")" = 'Already installed 17+1-vendor' ] || fail 'unexpected losing initializer message'
+    [ ! -s "$TEMP/first.out" ] && [ ! -s "$TEMP/second.out" ] || fail 'initializers wrote to stdout'
+    [[ $(< "$TEMP/first.err") = *'Default JDK set to: 21+1-vendor'* ]] || fail 'initializer omitted confirmation'
+    [[ $(< "$TEMP/second.err") != *'Default JDK set to:'* ]] || fail 'losing initializer announced selection'
     run 0 default; contains '21+1-vendor'
     TEST_DEFAULT_FAIL=1
     run 1 default 17; diagnostic 'cannot replace'
@@ -312,8 +317,8 @@ default_checks() {
     run 1 default 21; diagnostic 'Multiple JDKs match'
     run 1 default 99
     run 0 default vendor-17
-    [ "$(< "$TEMP/out")" = 'Default JDK set to: 17+1-vendor' ] || fail 'wrong default confirmation'
-    [ ! -s "$TEMP/err" ] || fail 'default printed shell setup'
+    [ "$(< "$TEMP/err")" = 'Default JDK set to: 17+1-vendor' ] || fail 'wrong default confirmation'
+    [ ! -s "$TEMP/out" ] || fail 'default selection wrote to stdout'
     run 0 default; contains '17+1-vendor'
     run 0 default 21+1-vendor
     TEST_REMOVE_FAIL=1
@@ -321,7 +326,7 @@ default_checks() {
     run 0 default; contains '21+1-vendor'
     TEST_REMOVE_FAIL=0
     run 0 uninstall 21+1-vendor
-    contains 'Default JDK set to: 21+1-other'
+    diagnostic 'Default JDK set to: 21+1-other'
     run 0 default; contains '21+1-other'
     run 0 uninstall 21+1-other
     run 0 default; contains '21+2-vendor'
@@ -334,7 +339,7 @@ default_checks() {
     run 0 uninstall 17+1-vendor
     run 0 default; contains '1.8.0_99-old'
     run 0 uninstall 8
-    contains 'Default JDK unset: no JDKs are installed'
+    diagnostic 'Default JDK unset: no JDKs are installed'
     run 0 default; contains 'Default JDK unset: no JDKs are installed'
     [ ! -e "$XDG_DATA_HOME/jvm/default" ] && [ ! -L "$XDG_DATA_HOME/jvm/default" ] || fail 'last default link remains'
     [ ! -e "$XDG_CACHE_HOME/jvm" ] || fail 'default accessed cache'
@@ -370,15 +375,15 @@ check 'empty offline inventory succeeds without creating storage; command usage'
 uninstall_checks
 default_checks
 
-index; row 21.0.2+9 vendor; run 0 install vendor-21; contains '21.0.2+9-vendor'
-contains 'Successfully installed 21.0.2+9-vendor'; diagnostic 'Installing 21.0.2+9-vendor...'
+index; row 21.0.2+9 vendor; run 0 install vendor-21; diagnostic '21.0.2+9-vendor'
+diagnostic 'Successfully installed 21.0.2+9-vendor'; diagnostic 'Installing 21.0.2+9-vendor...'
 [ -f "$XDG_DATA_HOME/jvm/jdks/21.0.2+9-vendor/lib/internal" ] || fail 'internal JDK link lost'
 [ -f "$XDG_DATA_HOME/jvm/jdks/21.0.2+9-vendor/bin/java" ] || fail 'ID directory is not the JDK home'
 [ -f "$XDG_DATA_HOME/jvm/jdks/21.0.2+9-vendor/.home-marker" ] || fail 'normalization lost dotfiles'
 [ ! -e "$XDG_DATA_HOME/jvm/jdks/21.0.2+9-vendor/payload" ] || fail 'payload wrapper published'
 before=$(count_downloads)
 run 0 list; contains '21.0.2+9-vendor'; contains 'openj9'
-run 0 install 21.0.2+9-vendor; contains 'Already installed 21.0.2+9-vendor'
+run 0 install 21.0.2+9-vendor; diagnostic 'Already installed 21.0.2+9-vendor'
 run 0 install vendor-21
 [ "$(count_downloads)" = "$before" ] || fail 'idempotent install redownloaded'
 mv "$TOOLS/curl" "$TEMP/curl"; mv "$TOOLS/wget" "$TEMP/wget"
@@ -393,7 +398,7 @@ row 21.0.2+9 vendor zip "$ROOT/tests/fixtures/archives/jdk.zip"
 run 1 install vendor-21; diagnostic 'Multiple JDKs match, try again using one of the following IDs:'; diagnostic '21.0.2+9-vendor'; diagnostic '21.0.10+1-vendor'
 awk -F '\t+' 'NR==2 && ($1!="ID" || $2!="DISTRIBUTION" || $3!="VERSION" || $4!="JVM") {exit 1}
     END {if (NR!=5) exit 1}' "$TEMP/err" || fail 'install ambiguity must show a listing with each ID once'
-run 0 install 21.0.2+10-vendor; contains '21.0.2+10-vendor'
+run 0 install 21.0.2+10-vendor; diagnostic '21.0.2+10-vendor'
 index; row 1.8.0_99-b09 old-vendor; row 1.8.0_100-b02 old-vendor
 run 1 install old-vendor-8; diagnostic 'Multiple JDKs match, try again using one of the following IDs:'
 run 0 install 1.8.0_99-b09-old-vendor
@@ -403,33 +408,33 @@ index; row 22.0.1+8-LTS vendor; row 22.0.1+9 vendor
 run 1 install vendor-22; diagnostic 'Multiple JDKs match, try again using one of the following IDs:'
 index; row 22.0.2+9 vendor; row 22.1.0.1-Final gluon-graalvm
 row 22.3.3+java17 graalvm
-run 0 install vendor-22; contains '22.0.2+9-vendor'
-run 0 install graalvm-22; contains '22.3.3+java17-graalvm'
-run 0 install gluon-graalvm-22; contains '22.1.0.1-Final-gluon-graalvm'
+run 0 install vendor-22; diagnostic '22.0.2+9-vendor'
+run 0 install graalvm-22; diagnostic '22.3.3+java17-graalvm'
+run 0 install gluon-graalvm-22; diagnostic '22.1.0.1-Final-gluon-graalvm'
 index; row 22.1.0.1-final lower-vendor
-run 0 install lower-vendor-22; contains '22.1.0.1-final-lower-vendor'
+run 0 install lower-vendor-22; diagnostic '22.1.0.1-final-lower-vendor'
 index; row 25.0.1+7 vendor; row 25.0.1+7 other-vendor
-run 0 install vendor-25; contains '25.0.1+7-vendor'
+run 0 install vendor-25; diagnostic '25.0.1+7-vendor'
 run 0 install 25.0.1+7-other-vendor
 run 1 install vendor-999; diagnostic 'No JDK found matching:'
 run 1 install 999+1-missing; diagnostic 'No JDK found matching:'
 run 2 install vendor; diagnostic 'selector must'
 index; row 26.0.1-weird vendor
-run 0 install vendor-26; contains '26.0.1-weird-vendor'
+run 0 install vendor-26; diagnostic '26.0.1-weird-vendor'
 run 0 install 26.0.1-weird-vendor
 check 'IDs without version ordering, legacy/vendor labels, exact IDs, hyphenated distros and ambiguity'
 
 index; row 22.0.2+9 temurin; row 22.3.3+java17 graalvm; row 22.1.0.1-Final gluon-graalvm
-run 0 install 22; contains '22.0.2+9-temurin'
+run 0 install 22; diagnostic '22.0.2+9-temurin'
 diagnostic 'Installing 22.0.2+9-temurin...'
 before=$(count_downloads)
-run 0 install temurin-22; contains '22.0.2+9-temurin'
+run 0 install temurin-22; diagnostic '22.0.2+9-temurin'
 [ "$(count_downloads)" = "$before" ] || fail 'bare major and temurin-major resolved differently'
-run 0 install graalvm-22; contains '22.3.3+java17-graalvm'
+run 0 install graalvm-22; diagnostic '22.3.3+java17-graalvm'
 run 0 available 22; contains '22.0.2+9-temurin'; contains '22.3.3+java17-graalvm'
 index; row 23.0.2+9 other-vendor
 run 1 install 23; diagnostic 'No JDK found matching:'
-run 0 install other-vendor-23; contains '23.0.2+9-other-vendor'
+run 0 install other-vendor-23; diagnostic '23.0.2+9-other-vendor'
 index; row 22.0.2+9 temurin; row 22.0.2+10 temurin
 run 1 install 22; diagnostic 'Multiple JDKs match, try again using one of the following IDs:'; diagnostic '22.0.2+9-temurin'; diagnostic '22.0.2+10-temurin'
 check 'bare install majors use Temurin, explicit distro overrides, no vendor fallback; discovery remains broad'
@@ -462,7 +467,7 @@ if [ "${1:-}" = --selectors ]; then
 fi
 
 reset; index; row 21+1 vendor zip; row 21+1 vendor tar.gz
-run 0 install vendor-21; contains '21+1-vendor'
+run 0 install vendor-21; diagnostic '21+1-vendor'
 [[ $(< "$TEST_LOG") = *'https://artifacts.invalid/tar.gz'* ]] || fail 'Linux did not prefer tar.gz'
 reset; index; row 21+1 vendor tar.gz; row 21+1 vendor tar.gz; row 21+1 vendor zip
 run 1 install vendor-21; diagnostic 'multiple artifact rows'
@@ -471,7 +476,7 @@ run 1 install vendor-21; diagnostic 'No JDK found matching:'
 run 1 available 21
 TEST_ARCHIVE=$ROOT/tests/fixtures/archives/jdk.zip
 reset; index; row 21+1 vendor zip
-run 0 install vendor-21; contains '21+1-vendor'
+run 0 install vendor-21; diagnostic '21+1-vendor'
 check 'supported formats, Linux preference, opposite-format fallback, duplicate-row rejection and real ZIP extraction'
 
 TEST_SYSTEM=MINGW64_NT-10.0; TEST_OS=windows
@@ -650,8 +655,9 @@ second=
 [ "$(< "$TEST_PUBLISH_GATE/nested-copies")" = second ] || fail 'publication race did not exercise nested-copy cleanup'
 [ "$(< "$TEST_PUBLISH_GATE/reclaimed-copies")" = second ] || fail 'nested copy was not moved back to private staging'
 TEST_PUBLISH_GATE=
-for output in "$TEMP/first.out" "$TEMP/second.out"; do
-    [ "$(< "$output")" = 'Successfully installed 22+1-vendor' ] || fail 'concurrent installer did not report success'
+for role in first second; do
+    [ ! -s "$TEMP/$role.out" ] || fail 'concurrent installer wrote to stdout'
+    [[ $(< "$TEMP/$role.err") = *'Successfully installed 22+1-vendor'* ]] || fail 'concurrent installer did not report success'
 done
 after=$(count_downloads)
 [ "$after" -eq "$((before+2))" ] || fail 'concurrent installers did not stage independently'

@@ -95,6 +95,64 @@ staging directories and no lock.
 
 See [tests/README.md](tests/README.md) for exact verification commands and gaps.
 
+## Proposed next milestones (recorded 2026-10-30)
+
+The core command set is implemented. The proposed next milestone is release
+readiness, starting with the previously requested configurable installation
+distribution, followed by validation and user documentation. This roadmap
+records planned work; it does not claim implementation or verification.
+
+1. **Configurable installation distribution.** Let bare-major installation
+   such as `install 21` use a configured distro, with Temurin as the default
+   when none is configured. The future requirement is recorded under
+   [Identity and selection](#identity-and-selection); the config filename and
+   format remain undecided. Explicit distro selectors retain their meaning.
+2. **Real JDK smoke testing.** Add an optional end-to-end check covering download,
+   installation, default selection, actual `java`/`javac` execution and
+   uninstallation in isolated storage. Current fixture tests and native Windows
+   junction traversal do not establish that a downloaded Java runtime works.
+   Keep live downloads separate from the deterministic offline suite, following
+   the verification procedures in [AGENTS.md](AGENTS.md).
+3. **Portability checks and CI.** Run the offline suite on Linux, macOS and
+   Windows, including actual Bash 3.2, and add CI for repeatable coverage.
+   Native Cygwin and standalone MSYS2 verification also remain outstanding.
+   Record actual results and remaining gaps in
+   [tests/README.md](tests/README.md); simulated hosts do not establish native
+   platform support.
+4. **User README.** Add a short root README explaining how to copy `jvm` into
+   a project, use the basic commands and configure the shell for the persistent
+   default. Keep contributor procedures in AGENTS.md and tests/README.md.
+
+Version ranges below remain a separate future feature. Running commands with
+a selected JDK and broader session-switching integration remain deferred.
+Offline `home` and `env` output were subsequently authorized and implemented on
+2026-10-30; their contract follows the deferred range proposal.
+
+### Open versions and inclusive version ranges
+
+Extend selectors with major-version bounds:
+
+| Selector | Meaning |
+| --- | --- |
+| `21+` | Any major version 21 or higher. |
+| `temurin-21+` | Any Temurin major version 21 or higher. |
+| `21..25` | Any major version from 21 through 25, inclusive. |
+| `temurin-21..25` | Any Temurin major version from 21 through 25, inclusive. |
+
+These are major bounds, using the existing major extraction from `version`,
+not comparisons of complete vendor version strings. Preserve exact full-ID
+precedence, including IDs whose version already contains `+`, and support
+hyphenated distro names.
+
+**Unresolved:** decide which commands accept these forms. Candidates are
+`available`, `list`, `install`, `default`, `home`, and `env`.
+`uninstall` may be excluded because ranges seem less useful for removing a
+single installation; no exclusion or bulk-uninstall behavior is adopted yet.
+Also decide how commands requiring one JDK handle multiple matches and whether
+bare installation ranges use the configured installation distro. Range syntax
+alone does not authorize highest-version selection, version sorting, historical
+index fetching or automatic installation by local commands.
+
 ## Offline home and environment output (implemented 2026-10-30)
 
 `home [<selector>]` and `env [<selector>]` use only the complete managed
@@ -115,7 +173,9 @@ Without a selector, validate that the stable default reference points to a
 usable managed installation. An absent, dangling, incompatible, unrelated or
 unusable reference reports `jvm: default JDK is missing or unusable` on stderr
 and exits 1. Never repair or select a default implicitly. Successful ordinary
-invocations have empty stderr; failures have empty stdout.
+invocations without secondary informational messages have empty stderr; failures
+have empty stdout. The output-stream decision below permits informational
+messages on stderr, including installation messages for the future `-i` flag.
 
 ### JDK home output: `home [<selector>]`
 
@@ -124,7 +184,7 @@ the selected installation's normalized physical JDK home. Omitted selection
 uses the stable `jvm/default` path, retaining that final reference rather than
 resolving it to an installation. Unix output is an absolute filesystem path;
 Windows output is a native absolute path with forward slashes, using `cygpath`.
-No label, comment, shell quoting or selection announcement is printed.
+No label, comment, shell quoting or selection announcement is printed on stdout.
 
 ### Shell environment output: `env [<selector>]`
 
@@ -151,6 +211,82 @@ the Bash environment's POSIX path, both converted with `cygpath`. A native drive
 colon never enters the PATH entry. Output does not itself change the caller's
 environment: the user explicitly evaluates it. The implementation never uses
 `eval` or sources metadata. No extra session-switching infrastructure is added.
+
+### Future install-on-demand flag: required selector
+
+The proposed `-i` flag for `default`, `home` and `env` installs the selected JDK
+if it is missing before completing the command. This flag remains future work.
+An explicit selector is required when using `-i`: `default -i`, `home -i` and
+`env -i` without a selector are invalid usage. Print `Missing selector` on
+stderr, leave stdout empty and exit 2 without installing or changing state.
+The normal no-selector behavior applies only when `-i` is absent.
+
+### Output streams (decision recorded 2026-10-30)
+
+Reserve stdout for information that is the command's primary purpose: JDK
+listings from `available` and `list`, the current-default query result, the path
+from `home`, and the usage comment and shell statements from `env`. Help and
+version queries likewise print their requested information to stdout.
+
+All secondary output, including progress, informational confirmations and
+default-change announcements, goes to stderr. This includes `Installing <ID>...`,
+`Successfully installed <ID>`, `Already installed <ID>`,
+`Successfully uninstalled <ID>`, `Default JDK set to: <ID>` and automatic
+`Default JDK unset: no JDKs are installed` announcements. Diagnostics also go to
+stderr. State-changing commands need not produce stdout merely to confirm
+success. A no-selector `default` query remains primary output, including its
+no-default result.
+
+This rule applies equally when one command performs another operation, such as
+installation or default initialization through `home -i` or `env -i`. Those
+operations may print informational messages on stderr while stdout retains
+exactly the command's primary result. For example, a future invocation of
+`jvm home -i temurin-21` could produce:
+
+| Stream | Line |
+| --- | --- |
+| stderr | `Installing 21.1.2-temurin...` |
+| stderr | `Successfully installed 21.1.2-temurin` |
+| stderr | `Default JDK set to: 21.1.2-temurin` |
+| stdout | `/home/user/.local/share/jvm/jdks/21.1.2-temurin` |
+
+The ID is illustrative; this example does not prescribe message ordering or
+settle selector resolution or default initialization for `-i`. A failed operation
+must leave stdout empty rather than print a partial primary result.
+
+This decision supersedes the earlier requirement that `home` and `env` print
+nothing else on either stream: their stdout remains restricted, while stderr
+may contain secondary messages. Existing installation, uninstallation and
+default-change confirmations now follow this rule in the script. The future
+`-i` flag is not implemented yet.
+
+### First-letter command aliases
+
+**Future feature requested 2026-10-30:** allow commands to be invoked using
+their first letter, retaining the full command names except for the removal
+of `help` described below:
+
+| Alias | Command |
+| --- | --- |
+| `a` | `available` |
+| `l` | `list` |
+| `i` | `install` |
+| `u` | `uninstall` |
+| `d` | `default` |
+| `e` | `env` |
+| `h` | `home` |
+
+Aliases use the same arguments, flags, behavior, output and exit status as
+their full command names. For example, `jvm l 21` means `jvm list 21`, and
+`jvm i temurin-21` means `jvm install temurin-21`. This requests explicit
+single-letter aliases, not arbitrary command-prefix matching.
+
+**Decision recorded 2026-10-30:** remove the `help` command and expose help only
+through `--help`, including the existing subcommand `--help` forms. This leaves
+`h` unambiguously available for `home`. When implemented, `jvm help` becomes an
+unknown command (exit 2); update command help and examples accordingly. Aliases
+and removal of `help` are not implemented yet; descriptions elsewhere of the
+current `help` command remain implementation records until that change ships.
 
 ## Scope
 
@@ -262,8 +398,8 @@ jvm env [selector]
   default, but MUST NOT replace an existing default.
   Print `Installing <ID>...` to stderr after resolving the full ID and before
   downloading the artifact, then
-  `Successfully installed <ID>` to stdout after publication. An existing complete
-  installation reports `Already installed <ID>` without another download.
+  `Successfully installed <ID>` to stderr after publication. An existing complete
+  installation reports `Already installed <ID>` on stderr without another download.
   With no argument, print exactly two lines on stderr:
   `jvm: usage: jvm install <selector>` followed by
   `for more information run: jvm install --help`. Exit 2.
@@ -298,7 +434,9 @@ jvm env [selector]
   values remain untruncated and get one separating tab; they may overflow the
   usual alignment without widening the other rows. Preserve row order and apply
   the same layout to redirected output; repeated tabs are display padding.
-- Diagnostics and progress go to stderr; command results go to stdout. Avoid
+- Diagnostics, progress and secondary informational messages go to stderr;
+  only primary command results go to stdout, as specified in the output-stream
+  decision above. Avoid
   interactive prompts and terminal-only formatting in redirected output.
 - When install, uninstall, default, home or env matches multiple IDs, print
   `Multiple JDKs match, try again using one of the following IDs:` followed by
@@ -557,7 +695,7 @@ refresh the shell environment or restart that software.
 and exits 0. A dangling managed reference reports an unavailable-default error.
 With a selector, exact IDs take precedence; major and distro-major selectors
 must resolve to one complete local installation. Bare majors match all distros.
-Success prints `Default JDK set to: <ID>` to stdout. No networking or cache access is involved.
+Success prints `Default JDK set to: <ID>` to stderr. No networking or cache access is involved.
 `default --help` uses the main help without accessing storage or external tools.
 
 Installation initializes an absent default after successful publication, including
@@ -567,7 +705,7 @@ was installed but default selection failed; the installed JDK is retained.
 Concurrent initialization creates the final link directly without replacement:
 the first creator wins. No shared-storage lock is introduced.
 The installer that creates the default also prints `Default JDK set to: <ID>`
-on stdout, before its installation success/already-installed message. Subsequent
+on stderr, before its installation success/already-installed message. Subsequent
 installs and losing concurrent initializers do not announce a default change.
 
 When uninstalling the default, choose from the remaining complete compatible
@@ -577,7 +715,7 @@ name order). This orders only extracted majors, never vendor version strings.
 If no JDK remains, remove the link/junction. After successful removal, print
 `Default JDK set to: <ID>`
 for a replacement, or `Default JDK unset: no JDKs are installed` if the inventory is now empty.
-These lines follow the uninstall success message on stdout. Failed removals
+These lines follow the uninstall success message on stderr. Failed removals
 do not announce a successful default change. Change the reference before moving
 the old installation so it never intentionally points to a removed JDK. If the
 move fails, restore the old selection provided the replacement is still current.

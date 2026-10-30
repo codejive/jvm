@@ -500,7 +500,7 @@ initialize_default() {
 report_default() {
     if [ -n "$1" ]; then printf 'Default JDK set to: %s\n' "$1"
     else printf 'Default JDK unset: no JDKs are installed\n'; fi
-}
+} >&2
 
 default_jdk() {
     local selector=$1 rows id
@@ -891,7 +891,7 @@ uninstall_jdk() {
         return 1
     fi
     rm -rf -- "$removal" || { error "cannot remove uninstalled JDK staging directory: $removal"; return 1; }
-    printf 'Successfully uninstalled %s\n' "$id"
+    printf 'Successfully uninstalled %s\n' "$id" >&2
     [ -z "$was_default" ] || report_default "$replacement"
     return 0
 }
@@ -905,7 +905,7 @@ install_jdk() {
     # A known exact ID remains usable offline after upstream drops its record.
     if safe_id "$selector" && read_installation "$JDKS/$selector" >/dev/null; then
         initialize_default "$selector" || return 1
-        printf 'Already installed %s\n' "$selector"; return 0
+        printf 'Already installed %s\n' "$selector" >&2; return 0
     fi
     cache_path || return 1
     trap installation_cleanup EXIT
@@ -923,7 +923,7 @@ install_jdk() {
     ID=$(printf '%s\n' "$rows" | awk -F '\t' '{print $1}')
     safe_id "$ID" || { error 'unsafe installation ID'; return 1; }
     existing=$JDKS/$ID
-    if read_installation "$existing" >/dev/null; then initialize_default "$ID" || return 1; printf 'Already installed %s\n' "$ID"; return 0; fi
+    if read_installation "$existing" >/dev/null; then initialize_default "$ID" || return 1; printf 'Already installed %s\n' "$ID" >&2; return 0; fi
     [ ! -e "$existing" ] && [ ! -L "$existing" ] || { error "incomplete or incompatible installation already exists: $existing"; return 1; }
     printf 'Installing %s...\n' "$ID" >&2
     URL=$(printf '%s\n' "$rows" | awk -F '\t' '{print $8}')
@@ -955,7 +955,7 @@ install_jdk() {
         return 1
     fi
     initialize_default "$ID" || return 1
-    printf 'Successfully installed %s\n' "$ID"
+    printf 'Successfully installed %s\n' "$ID" >&2
 }
 
 case "${1:-}" in

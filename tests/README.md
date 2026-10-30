@@ -334,3 +334,20 @@ smoke passed with real path conversion and child-shell evaluation. `git diff
 --check` passed. Distributed script size: 43,117 bytes, with LF line endings.
 ShellCheck was unavailable. Bash 3.2 and native Linux/macOS/Cygwin/standalone
 MSYS2 remain unverified; fixture launchers do not establish real Java execution.
+
+## Primary results and informational messages (2026-10-30)
+
+Installation, already-installed, uninstallation and default-change confirmations
+now go to stderr. Listing, current-default queries, home paths and environment
+statements retain their primary results on stdout. The installation harness
+asserts empty stdout for install/uninstall/default-selection operations and
+checks confirmations on stderr, including concurrent publishers and default
+initializers. Home/env checks retain their exact output and child-shell
+evaluation assertions.
+
+Verification on 2026-10-30: Bash syntax checks for `jvm` and `tests/install.sh`
+passed. The full offline suite passed 56 discovery checks, 17 installation
+groups and home/env checks under Git Bash. The native Windows junction smoke
+also passed. `git diff --check` passed; script size is 43,137 bytes, with LF
+line endings. Bash 3.2 and native Linux/macOS/Cygwin/standalone MSYS2 remain
+unverified; no real JDK was downloaded or executed.
