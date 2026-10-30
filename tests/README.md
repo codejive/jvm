@@ -221,7 +221,7 @@ focused `--selectors` groups passed under Git Bash; `git diff --check` passed.
 Script size: 32,454 bytes. Existing native platform and Bash 3.2 gaps remain.
 
 Empty inventory messaging (2026-10-30): list checks require exactly
-`No JDKs installed. Use 'install' to install one` on stdout with exit 0 and no
+`No JDKs are installed. Use 'install' to install one` on stdout with exit 0 and no
 stderr, both without a selector and with major, distro, distro-major and full-ID
 selectors. Invalid usage still fails; a nonempty inventory with no selector
 match still reports the no-match error. Bash syntax checks and all seven focused
@@ -258,3 +258,50 @@ Sibling-staging cleanup verification (2026-10-30): `bash -n ./jvm`,
 `git diff --check` passed. The race test verifies moving the nested copy back
 into its own `jvm/tmp/` staging area before deletion, rejects recursive deletion
 under `jvm/jdks/`, and confirms that `jdks/tmp` is absent. Script size: 30,345 bytes.
+
+## Persistent defaults (2026-10-30)
+
+The default lifecycle checks run in the full installation suite, or separately:
+
+```bash
+bash tests/install.sh --defaults
+```
+
+They cover first-install selection, preservation on subsequent installs, offline
+exact/major/distro-major selection, ambiguity, list marking, failed/interrupted
+replacement (including recovery after the old reference disappears), uninstall
+move-failure rollback, concurrent first-default creators, same-major ties, nearest higher
+and lower majors, legacy majors, removing the last default, unrelated-file
+protection, and retaining an installed JDK when default creation fails.
+The ordinary suite simulates Windows `cmd.exe`/`cygpath`; its junction adapter is
+not a native Windows claim. Git Bash runs use native symlinks in isolated storage.
+
+An optional native Windows Bash check uses real `mklink /J`, `cygpath`, `mv` and
+native executable traversal, with temporary HOME/XDG directories and no network:
+
+```bash
+bash tests/default-native-windows.sh
+```
+
+It exercises creation, replacement, uninstall fallback/removal, and paths with
+spaces, ampersands, exclamation marks and percent signs. Copies of `cmd.exe`
+stand in for Java launchers, so this verifies native executable traversal through
+a junction, not a downloaded JDK or Java runtime. It does not use the contributor's
+installed JDKs or shell profiles. Windows crash atomicity during the underlying
+rename remains unverified; failure/interruption injection tests cover both the
+boundary before publication and a missing-old-reference window. Native Linux/macOS/Cygwin/standalone MSYS2 and
+Bash 3.2 remain outstanding.
+
+Verification on 2026-10-30: the full offline suite passed 56 discovery checks and
+17 installation groups under Git Bash. After recovery-link hardening, Bash syntax
+checks, the focused `--defaults` suite and the native Windows junction smoke
+passed again. `git diff --check` passed. The distributed script is 39,937 bytes.
+ShellCheck was unavailable; the native platform/Bash 3.2 gaps above still apply.
+
+Default messaging update (2026-10-30): shell setup now lives only in its own
+main-help section, with Unix and Windows Bash examples. Explicit selection and
+automatic install/uninstall selection print `Default JDK set to: <ID>`; removing
+the last JDK prints `Default JDK unset: no JDKs are installed` Syntax checks,
+`bash tests/run.sh --help-only`, `bash tests/install.sh --defaults` and
+`git diff --check` passed. Tests also verify that unchanged defaults and losing
+initializers do not announce a change. Script size: 40,087 bytes.

@@ -5,7 +5,7 @@ export LC_ALL
 VERSION=0.2.0
 BASE=https://jbangdev.github.io/jdkdb-index
 DEFAULT_DISTRO=temurin
-WORK= STAGE=
+WORK= STAGE= CURRENT=
 
 error() { printf 'jvm: %s\n' "$*" >&2; }
 help_text() {
@@ -20,14 +20,15 @@ Commands:
   install <selector>    Download, verify and install a JDK in user storage.
   uninstall <selector>  Remove an installed JDK from user storage.
   list [selector]       Show matching JDKs installed by jvm, even offline.
+  default [selector]    Show or select the persistent installed JDK default.
   help, --help          Show this help.
   --version            Show the jvm version.
 
 Selectors:
   available/list: major (21), distro (temurin), or distro-major (temurin-21).
-  install/uninstall: full ID (21.0.12+9-temurin), major, or distro-major.
-  Bare install majors use Temurin; uninstall majors match all distros.
-  If install/uninstall match multiple IDs, choose a reported full ID.
+  install/uninstall/default: full ID (21.0.12+9-temurin), major, or distro-major.
+  Bare install majors use Temurin; uninstall/default majors match all distros.
+  If install/uninstall/default match multiple IDs, choose a reported full ID.
   list also accepts a full ID; omit available/list selectors to show all.
 
 Examples:
@@ -36,7 +37,16 @@ Examples:
   jvm uninstall temurin-21
   jvm list 21
 
-Installation does not change your default Java or shell configuration.
+Shell setup (once, in your shell profile):
+  Unix:
+  export JAVA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/jvm/default"
+  export PATH="$JAVA_HOME/bin:$PATH"
+
+  Windows Bash:
+  export JAVA_HOME="$(cygpath -u "${XDG_DATA_HOME:-$HOME/.local/share}/jvm/default")"
+  export PATH="$JAVA_HOME/bin:$PATH"
+  export JAVA_HOME="$(cygpath -m "$JAVA_HOME")"
+The first installation becomes the default. No shell files are edited.
 EOF
 }
 
@@ -381,6 +391,144 @@ local_rows() {
     done
 }
 
+# Defaults are links only; never replace an unrelated file or directory.
+default_current() {
+    local target parent
+    CURRENT=
+    if [ ! -L "$DATA/default" ]; then
+        [ ! -e "$DATA/default" ] && return 0
+        error "default path is not a managed link: $DATA/default"; return 1
+    fi
+    require_tools readlink || return 1
+    target=$(readlink "$DATA/default") || return 1
+    target=$(absolute_path "$target") || return 1
+    parent=$(cd "$JDKS" && pwd -P) || return 1
+    CURRENT=${target##*/}
+    safe_id "$CURRENT" && [ "$target" = "$parent/$CURRENT" ] || {
+        CURRENT=; error 'default points outside the managed JDK inventory'; return 1;
+    }
+}
+
+create_default_link() {
+    local link=$1 target=$2
+    if [ "$OS" = windows ]; then
+        require_tools cygpath cmd.exe || return 1
+        # Fixed command text on stdin avoids cmd's /c argument quoting rules.
+        # Environment expansion is quoted and delayed expansion is disabled.
+        local JVM_LINK JVM_TARGET
+        JVM_LINK=$(cygpath -w "$link") && JVM_TARGET=$(cygpath -w "$target") || return 1
+        export JVM_LINK JVM_TARGET
+        printf '@mklink /J "%%JVM_LINK%%" "%%JVM_TARGET%%"\r\n@exit %%errorlevel%%\r\n' |
+            MSYS2_ARG_CONV_EXCL='*' cmd.exe /q /d /v:off > /dev/null 2>&1 || return 1
+    else
+        require_tools ln || return 1
+        ln -sn "$target" "$link" || return 1
+    fi
+    [ -L "$link" ] && [ "$link" -ef "$target" ] && jdk_layout "$link"
+}
+
+default_cleanup() {
+    local stage=$1 flag=$2 published=$3 link
+    if [ "$published" = 0 ] && [ -L "$stage/previous" ] &&
+        [ ! -e "$DATA/default" ] && [ ! -L "$DATA/default" ]; then
+        mv "$flag" "$stage/previous" "$DATA/default" || {
+            error "cannot restore default; recovery link retained at $stage/previous"; return 1;
+        }
+    fi
+    for link in link previous; do
+        [ ! -L "$stage/$link" ] || rm -- "$stage/$link" || return 1
+    done
+    rmdir "$stage" || return 1
+}
+
+# Run in a subshell so private cleanup never replaces installation traps.
+set_default() (
+    local id=$1 initial=${2:-} stage target flag= published=0 previous
+    require_tools mkdir mktemp mv rm rmdir readlink || return 1
+    default_current || return 1
+    if [ -n "$initial" ] && [ -n "$CURRENT" ]; then return 0; fi
+    if [ -z "$id" ]; then
+        [ -z "$CURRENT" ] || rm -- "$DATA/default" || return 1
+        return 0
+    fi
+    safe_id "$id" && read_installation "$JDKS/$id" >/dev/null || {
+        error "default JDK is unavailable: $id"; return 1;
+    }
+    [ "$CURRENT" != "$id" ] || return 0
+    target=$(cd "$JDKS/$id" && pwd -P) || return 1
+    mkdir -p "$DATA/tmp" || return 1
+    stage=$(mktemp -d "$DATA/tmp/default.XXXXXXXX") || return 1
+    trap 'default_cleanup "$stage" "$flag" "$published"' EXIT
+    trap 'exit 1' HUP INT TERM
+    if [ -n "$initial" ]; then
+        # Creation, unlike replacement, cannot overwrite another first installer.
+        if create_default_link "$DATA/default" "$target" 2>/dev/null; then
+            report_default "$id"
+            return 0
+        fi
+        default_current && [ -n "$CURRENT" ] && return 0
+        error 'cannot create the default JDK link'; return 1
+    fi
+    create_default_link "$stage/link" "$target" || { error 'cannot create the default JDK link'; return 1; }
+    # GNU/Cygwin/MSYS mv has -T; BSD mv has -h. Both avoid following the
+    # destination directory link. Detect the capability, not just the host.
+    case "$(mv --help 2>/dev/null)" in
+        *--no-target-directory*) flag=-fT ;;
+        *) flag=-fh ;;
+    esac
+    default_current || return 1
+    if [ -n "$CURRENT" ] && read_installation "$JDKS/$CURRENT" >/dev/null; then
+        previous=$(cd "$JDKS/$CURRENT" && pwd -P) || return 1
+        create_default_link "$stage/previous" "$previous" || {
+            error 'cannot prepare default recovery link'; return 1;
+        }
+    fi
+    mv "$flag" "$stage/link" "$DATA/default" || { error 'cannot replace the default JDK link'; return 1; }
+    published=1
+)
+
+initialize_default() {
+    # Existing unrelated data is left alone, as it was before defaults existed.
+    [ ! -e "$DATA/default" ] && [ ! -L "$DATA/default" ] || return 0
+    set_default "$1" initial || { error 'JDK installed, but default selection failed; run jvm default <ID>'; return 1; }
+}
+
+report_default() {
+    if [ -n "$1" ]; then printf 'Default JDK set to: %s\n' "$1"
+    else printf 'Default JDK unset: no JDKs are installed\n'; fi
+}
+
+default_jdk() {
+    local selector=$1 rows id
+    installation_selector "$selector" || return $?
+    require_tools uname awk || return 1
+    detect_host && data_path && default_current || return 1
+    if [ -z "$selector" ]; then
+        if [ -z "$CURRENT" ]; then printf 'Default JDK unset: no JDKs are installed\n'
+        elif read_installation "$JDKS/$CURRENT" >/dev/null; then printf '%s\n' "$CURRENT"
+        else error "default JDK is unavailable: $CURRENT"; return 1; fi
+        return 0
+    fi
+    rows=$(local_rows | select_rows "$selector") || return $?
+    id=${rows%%$'\t'*}
+    set_default "$id" || return 1
+    report_default "$id"
+}
+
+replacement_default() {
+    local removed=$1 version=$2
+    local_rows | awk -F '\t' -v removed="$removed" -v version="$version" '
+        function major(v) {sub(/^1\./,"",v); sub(/[^0-9].*$/,"",v); return v+0}
+        BEGIN {old=major(version)}
+        $1!=removed {
+            m=major($3)
+            if (m==old && same=="") same=$1
+            if (m>old && (higher=="" || m<high)) {higher=$1; high=m}
+            if (m<old && (lower=="" || m>low)) {lower=$1; low=m}
+        }
+        END {if (same!="") print same; else if (higher!="") print higher; else if (lower!="") print lower}'
+}
+
 remote_rows() {
     awk -F '\t' -v OFS='\t' -v os="$OS" -v arch="$ARCH" '
         NR==1 {next} {sub(/\r$/, "")}
@@ -443,8 +591,9 @@ list_installed() {
     require_tools uname awk || return 1
     detect_host && data_path || return 1
     rows=$(local_rows) || return 1
+    default_current 2>/dev/null || CURRENT=
     if [ -z "$rows" ]; then
-        printf '%s\n' "No JDKs installed. Use 'install' to install one"
+        printf '%s\n' "No JDKs are installed. Use 'install' to install one"
         return 0
     fi
     rows=$(printf '%s\n' "$rows" | select_rows "$selector" '' all) || return $?
@@ -452,17 +601,19 @@ list_installed() {
 }
 
 format_rows() {
-    awk -F '\t' '
+    awk -F '\t' -v current="${CURRENT:-}" '
         function add(a,b,c,d, i) {
             n++; cell[n,1]=a; cell[n,2]=b; cell[n,3]=c; cell[n,4]=d
-            for (i=1;i<4;i++) if (length(cell[n,i])>width[i]) width[i]=length(cell[n,i])
+            cell[n,5]=(n==1 ? "DEFAULT" : (a==current ? "*" : ""))
+            for (i=1;i<5;i++) if (length(cell[n,i])>width[i]) width[i]=length(cell[n,i])
         }
         BEGIN {add("ID","DISTRIBUTION","VERSION","JVM")}
         NF {add($1,$2,$3,$4)}
         END {for (r=1;r<=n;r++) {
-            for (c=1;c<=4;c++) {
+            columns=(current!="" ? 5 : 4)
+            for (c=1;c<=columns;c++) {
                 printf "%s",cell[r,c]
-                if (c<4) {
+                if (c<columns) {
                     tabs=int(width[c]/8)+1; if (tabs>4) tabs=4
                     tabs-=int(length(cell[r,c])/8); if (tabs<1) tabs=1
                     for (t=0;t<tabs;t++) printf "\t"
@@ -651,19 +802,32 @@ extract_jdk() {
 }
 
 uninstall_jdk() {
-    local selector=$1 rows id removal hint=
+    local selector=$1 rows id removal hint= replacement= was_default= version
     installation_selector "$selector" || return $?
     require_tools uname awk mkdir mktemp mv rm rmdir || return 1
     detect_host && data_path || return 1
+    if [ -L "$DATA/default" ]; then default_current || return 1; else CURRENT=; fi
     rows=$(local_rows | select_rows "$selector") || return $?
     id=$(printf '%s\n' "$rows" | awk -F '\t' '{print $1}')
     safe_id "$id" || { error 'unsafe installation ID'; return 1; }
     umask 077
     mkdir -p "$DATA/tmp" || return 1
     removal=$(mktemp -d "$DATA/tmp/remove-$id.XXXXXXXX") || return 1
+    if [ -L "$DATA/default" ]; then
+        default_current || { rmdir "$removal"; return 1; }
+    fi
+    if [ "$CURRENT" = "$id" ]; then
+        version=$(printf '%s\n' "$rows" | awk -F '\t' '{print $3}')
+        replacement=$(replacement_default "$id" "$version") || return 1
+        set_default "$replacement" || { rmdir "$removal"; return 1; }
+        was_default=1
+    fi
     # Keep the reserved directory: ordinary mv places the home inside it.
     # Never recursively remove anything beneath jdks, even on move failure.
     if ! mv "$JDKS/$id" "$removal/" 2>/dev/null; then
+        if [ -n "$was_default" ] && default_current && [ "$CURRENT" = "$replacement" ]; then
+            set_default "$id" || error "couldn't restore default $id"
+        fi
         rmdir "$removal" 2>/dev/null || :
         [ "$OS" != windows ] || hint=' (it might be in use)'
         error "couldn't uninstall $id$hint"
@@ -671,6 +835,8 @@ uninstall_jdk() {
     fi
     rm -rf -- "$removal" || { error "cannot remove uninstalled JDK staging directory: $removal"; return 1; }
     printf 'Successfully uninstalled %s\n' "$id"
+    [ -z "$was_default" ] || report_default "$replacement"
+    return 0
 }
 
 install_jdk() {
@@ -681,6 +847,7 @@ install_jdk() {
     umask 077
     # A known exact ID remains usable offline after upstream drops its record.
     if safe_id "$selector" && read_installation "$JDKS/$selector" >/dev/null; then
+        initialize_default "$selector" || return 1
         printf 'Already installed %s\n' "$selector"; return 0
     fi
     cache_path || return 1
@@ -699,7 +866,7 @@ install_jdk() {
     ID=$(printf '%s\n' "$rows" | awk -F '\t' '{print $1}')
     safe_id "$ID" || { error 'unsafe installation ID'; return 1; }
     existing=$JDKS/$ID
-    if read_installation "$existing" >/dev/null; then printf 'Already installed %s\n' "$ID"; return 0; fi
+    if read_installation "$existing" >/dev/null; then initialize_default "$ID" || return 1; printf 'Already installed %s\n' "$ID"; return 0; fi
     [ ! -e "$existing" ] && [ ! -L "$existing" ] || { error "incomplete or incompatible installation already exists: $existing"; return 1; }
     printf 'Installing %s...\n' "$ID" >&2
     URL=$(printf '%s\n' "$rows" | awk -F '\t' '{print $8}')
@@ -730,6 +897,7 @@ install_jdk() {
         [ ! -s "$WORK/publish-error" ] || cat "$WORK/publish-error" >&2
         return 1
     fi
+    initialize_default "$ID" || return 1
     printf 'Successfully installed %s\n' "$ID"
 }
 
@@ -740,10 +908,10 @@ case "${1:-}" in
     --version)
         [ "$#" -eq 1 ] || { error '--version takes no arguments'; exit 2; }
         printf 'jvm %s\n' "$VERSION" ;;
-    list)
+    list|default)
         if [ "$#" -eq 2 ] && [ "$2" = --help ]; then help_text; exit 0; fi
-        [ "$#" -le 2 ] && { [ "$#" -eq 1 ] || [ -n "$2" ]; } || { error 'usage: jvm list [selector]'; exit 2; }
-        list_installed "${2:-}" ;;
+        [ "$#" -le 2 ] && { [ "$#" -eq 1 ] || [ -n "$2" ]; } || { error "usage: jvm $1 [selector]"; exit 2; }
+        if [ "$1" = list ]; then list_installed "${2:-}"; else default_jdk "${2:-}"; fi ;;
     available|install|uninstall)
         if [ "$#" -eq 2 ] && [ "$2" = --help ]; then help_text; exit 0; fi
         if [ "$1" != available ] && [ "$#" -eq 1 ]; then

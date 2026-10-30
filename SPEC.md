@@ -7,8 +7,8 @@ Kits (JDKs). Projects commit a copy of the tool and invoke it directly; users do
 not need to install a separate JDK manager. JDK downloads and user preferences
 are shared across those project copies.
 
-This document distinguishes implemented discovery, installation and offline
-listing and uninstallation from requirements for later milestones. Requirements expressed as MUST
+This document distinguishes implemented discovery, installation, offline
+listing, uninstallation and persistent defaults from later milestones. Requirements expressed as MUST
 are mandatory for their stated scope. Details marked **proposed** remain design
 choices for review.
 
@@ -34,9 +34,10 @@ exits 1. Unknown commands and excess/empty arguments exit 2.
 Adopted implementation choices explicitly authorized by the user: Bash 3.2 as
 the baseline, the command names below, exit codes 0/2/1, and a one-hour freshness
 interval. The four discovery entry points remain supported. The
-installation and offline-listing extension is described below. Persistent
-defaults, shell integration, session switching, command execution
-and general JSON parsing remain deferred. Help advertises implemented commands.
+installation and offline-listing extension is described below. Persistent defaults
+and manual shell setup were subsequently authorized on 2026-10-30. Session
+switching, command execution and general JSON parsing remain deferred.
+Help advertises implemented commands.
 
 ### Installation and offline listing (authorized 2026-10-30)
 
@@ -48,7 +49,8 @@ publishes a complete installation by rename on the destination filesystem.
 Local listing uses only durable managed manifests and checks the recorded host
 and JDK layout. Empty inventory succeeds. The user restored `list [selector]`
 on 2026-10-30, superseding the earlier removal of its optional selector.
-No command changes a default or a shell profile.
+This milestone originally left defaults unchanged; the persistent-default
+extension below supersedes that behavior. No command edits shell profiles.
 
 Exact full IDs take precedence for installation selectors. Otherwise
 accept a positive major or distro-major (including hyphenated distros). A bare
@@ -84,18 +86,19 @@ move recursively delete the private directory and report
 A failed move reports `couldn't uninstall <ID>` on stderr, adding exactly
 ` (it might be in use)` on Windows, and exits 1. Only an empty reservation is
 removed after failure; a failed or interrupted move/deletion may leave temporary
-data for manual cleanup. Uninstallation does not change a default or shell
-configuration. Concurrent commands use independent staging directories and no lock.
+data for manual cleanup. Default replacement now follows the extension below;
+shell configuration is never edited. Concurrent installations use independent
+staging directories and no lock.
 
 See [tests/README.md](tests/README.md) for exact verification commands and gaps.
 
 ## Scope
 
-The eventual complete version MUST (persistent defaults remain deferred):
+The complete version MUST:
 
 - List JDKs available for download from jdkdb-index.
 - Download and install compatible JDKs into user-owned storage.
-- List JDKs installed by this tool, including their full IDs (default status is deferred).
+- List JDKs installed by this tool, including their full IDs and default status.
 - Select a persistent default JDK for the user.
 - Accept a full JDK ID, a Java major version, or `<distro_name>-<major_version>`
   wherever an installed JDK is selected.
@@ -164,7 +167,7 @@ installers are outside initial scope.
 ## Adopted command interface
 
 The names and exit codes are adopted. `help`, `--help`, `--version`,
-`available`, `list`, `install`, and `uninstall` are implemented; `default` is deferred.
+`available`, `list`, `install`, `uninstall`, and `default` are implemented.
 The following commands describe the intended complete interface.
 
 ```text
@@ -184,7 +187,7 @@ jvm default [selector]
   Historical versions are outside the current discovery interface.
 - `list [selector]` lists complete managed installations offline. With no
   selector it returns the complete inventory. If no complete managed JDKs are
-  installed, print `No JDKs installed. Use 'install' to install one` to stdout,
+  installed, print `No JDKs are installed. Use 'install' to install one` to stdout,
   without a table header, and exit 0 whether or not a valid selector was supplied.
   An optional full ID, major, distro or distro-major filters this inventory.
   Exact IDs take precedence; majors match all distributions. Return every
@@ -193,7 +196,8 @@ jvm default [selector]
   invalid syntax or excess/empty arguments exit 2. No network or cache access
   is allowed.
 - `install` resolves a remote selector and installs that exact artifact. It is
-  idempotent for an already complete installation and MUST NOT change the default.
+  idempotent for an already complete installation. It initializes a missing
+  default, but MUST NOT replace an existing default.
   Print `Installing <ID>...` to stderr after resolving the full ID and before
   downloading the artifact, then
   `Successfully installed <ID>` to stdout after publication. An existing complete
@@ -222,6 +226,8 @@ jvm default [selector]
   exact IDs are accepted by installation, uninstallation and local listing. Listings
   show `ID`, `DISTRIBUTION`, `VERSION`, and `JVM`. Omit the platform column;
   discovery already filters for the current host.
+  Local listings and local ambiguity tables add a `DEFAULT` column marked `*`
+  when a managed default reference exists. IDs themselves remain unchanged.
 - Align listing headers and values with tabs at 8-column stops. Size each column
   from the widest displayed value or header, placing the next column at the
   following tab stop, capped at four tab stops (32 columns) per column. Longer
@@ -230,7 +236,7 @@ jvm default [selector]
   the same layout to redirected output; repeated tabs are display padding.
 - Diagnostics and progress go to stderr; command results go to stdout. Avoid
   interactive prompts and terminal-only formatting in redirected output.
-- When install or uninstall matches multiple IDs, print
+- When install, uninstall or default matches multiple IDs, print
   `Multiple JDKs match, try again using one of the following IDs:` followed by
   the matching JDKs using the same table renderer as `list <selector>` (ID,
   distribution, version and JVM, with the same headers and tab alignment).
@@ -238,7 +244,7 @@ jvm default [selector]
   stderr; stdout stays empty and the command exits 1. Uninstall shows the local
   matches; install shows its matching remote candidates, including its default
   distribution filter for bare majors.
-- **Adopted:** exit 0 for success (including empty lists and future no default), 2 for
+- **Adopted:** exit 0 for success (including empty lists and no default), 2 for
   invalid usage, and 1 for operational failures, no selector match, or ambiguity.
   A selector with no matching JDK reports `No JDK found matching: <selector>`.
 
@@ -308,7 +314,7 @@ for validation, without encoding them into the ID.
   the distro-major interpretation.
 - `jvm available --help` prints the same short help as `jvm --help`, with exit 0.
 
-### Installation selectors (implemented; default deferred)
+### Installation selectors (implemented)
 
 - Try an exact full-ID match first.
 - A positive integer such as `21` selects that major from the hard-coded
@@ -318,8 +324,7 @@ for validation, without encoding them into the ID.
   Split the major from the final hyphen; distro names can contain hyphens.
 - Distribution names use canonical jdkdb-index identifiers.
 - `list` is an optionally filtered offline inventory. `install` and
-  future `default` must resolve to a single artifact or installation.
-  `default` remains unimplemented.
+  `default` must resolve to a single artifact or installation.
 - Filter the latest index by the major extracted from upstream `version` and
   the explicit or default distro. The endpoint already selects latest releases; do not
   rank versions or reject vendor version syntax such as `+java17` or `-Final`.
@@ -333,8 +338,8 @@ for validation, without encoding them into the ID.
 
 Remote resolution uses the API's own latest selection for each major version;
 the API need not supply an ordering key. Resolve within that inventory, retaining
-the ambiguity rules above. Future local default resolution MUST work offline;
-its implementation remains deferred. Current `list` returns all local selector
+the ambiguity rules above. Local default resolution works offline and bare majors
+match every installed distribution. Current `list` returns all local selector
 matches rather than resolving a single installation.
 
 **Future requirement (user requested 2026-10-30):** make the default installation
@@ -461,9 +466,14 @@ component limit. Existing portable ID/path checks still apply before storage.
 
 ## Persistent default and shell integration
 
-**Proposed:** the `default` reference is a directory symlink to the selected
-normalized JDK home. Users add its `bin` directory to PATH once. Help and a
-successful selection show the actual resolved setup paths and equivalent of:
+**Authorized and implemented 2026-10-30:** `default` references the selected
+normalized JDK home, using a directory symlink on Unix and `mklink /J` directory
+junction on Windows. Users add its `bin` directory to PATH once. The main help
+has a dedicated `Shell setup` section with Unix and Windows Bash instructions.
+Default selection prints no setup instructions. Windows setup converts JAVA_HOME
+to a Bash POSIX path before adding its bin to PATH, then to a native drive path
+with forward slashes for native tools. This avoids a drive colon in PATH.
+The Unix setup is:
 
 ```bash
 export JAVA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/jvm/default"
@@ -478,18 +488,58 @@ JAVA_HOME pointing elsewhere, earlier PATH entries, command caching, or software
 that resolves JAVA_HOME once can prevent immediate adoption; describe how to
 refresh the shell environment or restart that software.
 
-On Windows, a fake symlink implemented as a directory copy is unacceptable.
-Probe whether the Bash environment can create and traverse a real directory
-link to the JDK and launch native `java.exe` through it. If that fails, preserve
-the previous default and explain the environment's link/permission requirement.
-**Open design issue:** supporting persistent selection without native link
-capability may need a directory junction or another mechanism. Do not assume
-`ln -s` works everywhere or introduce dynamic shell shims in this milestone.
+`default` without a selector prints the exact ID, or `Default JDK unset: no JDKs are installed`
+and exits 0. A dangling managed reference reports an unavailable-default error.
+With a selector, exact IDs take precedence; major and distro-major selectors
+must resolve to one complete local installation. Bare majors match all distros.
+Success prints `Default JDK set to: <ID>` to stdout. No networking or cache access is involved.
+`default --help` uses the main help without accessing storage or external tools.
 
-Default updates must preserve a working prior reference on
-failure. Use an atomic reference replacement where supported; document and test
-any platform-specific interruption window. Never overwrite an unrelated file or
-directory at the reference path.
+Installation initializes an absent default after successful publication, including
+an idempotent install of an existing ID. It never replaces an existing reference
+or unrelated data at that path. Link failure returns 1 and explains that the JDK
+was installed but default selection failed; the installed JDK is retained.
+Concurrent initialization creates the final link directly without replacement:
+the first creator wins. No shared-storage lock is introduced.
+The installer that creates the default also prints `Default JDK set to: <ID>`
+on stdout, before its installation success/already-installed message. Subsequent
+installs and losing concurrent initializers do not announce a default change.
+
+When uninstalling the default, choose from the remaining complete compatible
+inventory: first the same major, then the smallest higher major, then the largest
+lower major. Ties use the first ID in local inventory order (C-locale directory
+name order). This orders only extracted majors, never vendor version strings.
+If no JDK remains, remove the link/junction. After successful removal, print
+`Default JDK set to: <ID>`
+for a replacement, or `Default JDK unset: no JDKs are installed` if the inventory is now empty.
+These lines follow the uninstall success message on stdout. Failed removals
+do not announce a successful default change. Change the reference before moving
+the old installation so it never intentionally points to a removed JDK. If the
+move fails, restore the old selection provided the replacement is still current.
+A failed default change aborts removal. Interruption between selection and removal
+can leave the old installation present with the replacement already selected.
+
+Explicit replacement stages and verifies a real link in `jvm/tmp/default.XXXXXXXX`,
+then uses GNU-compatible `mv -fT` when advertised or BSD `mv -fh` to avoid following
+the destination link. Never replace an unrelated file, directory, or link outside
+the managed inventory. `readlink` is required for inspecting existing references;
+Unix creation requires `ln`; Windows requires `cygpath` and `cmd.exe`.
+Windows creation runs fixed `mklink /J` text with quoted environment values and
+delayed expansion disabled. No directory-copy fallback is permitted. Junctions
+avoid the special symlink privilege requirement; filesystem/access errors still
+fail explicitly. See [Microsoft's mklink reference](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/mklink)
+(checked 2026-10-30).
+
+Unix rename replacement is atomic with the supported utilities. A staged recovery
+link preserves the prior usable selection if replacement fails or a catchable
+signal arrives after the old reference disappears. If restoration itself fails,
+retain that link and report its recovery path. Windows junction replacement was
+verified with Git Bash's native `mv`; crash atomicity inside Windows/MSYS rename
+is not established. An uncatchable kill in a non-atomic replacement window can
+require manual recovery from `jvm/tmp/default.XXXXXXXX/previous`.
+Simultaneous explicit default changes use last successful
+publication; there is no transaction spanning independent install/uninstall/default
+processes. Native Cygwin/MSYS2 and macOS replacement remain verification gaps.
 
 ## Metadata API
 
@@ -693,9 +743,8 @@ never schema-checked or parsed until the single listing/filtering pass.
 
 ## Acceptance criteria
 
-The later complete version, including deferred persistent defaults, is ready
-when the following hold. These are not claims that defaults or native platform
-verification are complete in the current installation milestone:
+The complete version is ready when the following hold. These are not claims
+that native verification is complete on every supported platform:
 
 1. A copied `jvm` script can list/download/install a JDK without Java already
    installed and without a language runtime or `jq` dependency.
@@ -721,7 +770,7 @@ verification are complete in the current installation milestone:
 
 ## Decisions to revisit before declaring full platform support
 
-- Decide the Windows fallback, if any, when real directory links are unavailable.
+- Verify junction replacement and interruption behavior in native Cygwin/MSYS2.
 - Keep general JSON parsing deferred as a last resort. Artifact preference is
   adopted above; no feature or JVM preference is introduced.
 - Record actual platform/architecture coverage; a simulated detection test does
@@ -826,8 +875,8 @@ or native platform compatibility.
   to be GNU Wget. At most two GET attempts cover a 304 with no usable cached body.
 - Artifact preference and installed manifests were subsequently implemented in
   0.2.0 as described above. Version ordering was removed following the user's
-  latest-index clarification. Windows default-link fallback and general JSON
-  parsing remain deferred.
+  latest-index clarification. Windows defaults now use junctions; general JSON
+  parsing remains deferred.
 - Verification to date: Bash syntax validation, the deterministic offline suite,
   and native Git Bash 5.3 discovery with curl plus a second cached invocation.
   Other host cases and both downloader adapters are simulated by the suite.

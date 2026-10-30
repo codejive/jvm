@@ -11,8 +11,10 @@ The user authorized discovery on 2026-10-29 and extended the milestone on
 verified archive extraction, durable manifests, and atomic publication from
 independent temporary directories without a storage lock.
 The optional selector for `list [selector]` was restored on 2026-10-30.
-Persistent defaults, shell integration, session switching and command execution
-remain deferred. Uninstallation was authorized on 2026-10-30, with offline
+Persistent defaults and manual shell setup were authorized on 2026-10-30,
+including Windows junctions, first-install selection and replacement on default
+uninstallation. Session switching and command execution remain deferred.
+Uninstallation was authorized on 2026-10-30, with offline
 ID/major/distro-major selection and move-before-delete removal through
 `jvm/tmp/remove-<ID>.XXXXXXXX`. Do not infer further authorization from the
 detailed future requirements in `SPEC.md`.

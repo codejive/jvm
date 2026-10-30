@@ -10,6 +10,10 @@ cleanup() {
         : > "$TEST_PUBLISH_GATE/first.release"
         : > "$TEST_PUBLISH_GATE/second.release"
     fi
+    if [ -n "${TEST_DEFAULT_GATE:-}" ]; then
+        : > "$TEST_DEFAULT_GATE/first.release"
+        : > "$TEST_DEFAULT_GATE/second.release"
+    fi
     for pid in "${first:-}" "${second:-}"; do
         [ -z "$pid" ] || { kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; }
     done
@@ -21,17 +25,24 @@ export HOME="$TEMP/home with spaces" XDG_DATA_HOME="$TEMP/data with spaces"
 export XDG_CACHE_HOME="$TEMP/cache with spaces" XDG_CONFIG_HOME="$TEMP/config" XDG_STATE_HOME="$TEMP/state"
 mkdir -p "$HOME" "$TEMP/bin"
 TOOLS=$TEMP/bin
-for tool in mkdir mktemp rm rmdir sed awk cat mv date cp sleep wc find tar gzip unzip sha256sum openssl; do
+export MSYS=winsymlinks:nativestrict
+for tool in ln readlink mkdir mktemp rm rmdir sed awk cat mv date cp sleep wc find tar gzip unzip sha256sum openssl; do
     path=$(command -v "$tool") || continue
     printf '#!%s\nexec "%s" "$@"\n' "$BASH_BIN" "$path" > "$TOOLS/$tool"
     chmod +x "$TOOLS/$tool" || exit 1
 done
+printf '#!%s\nprintf "%%s\\n" "$2"\n' "$BASH_BIN" > "$TOOLS/cygpath"
+printf '#!%s\ncat > /dev/null\nln -s "$JVM_TARGET" "$JVM_LINK"\n' "$BASH_BIN" > "$TOOLS/cmd.exe"
+chmod +x "$TOOLS/cygpath" "$TOOLS/cmd.exe"
 export TEST_SYSTEM=Linux TEST_MACHINE=x86_64 TEST_OS=linux
 export TEST_LOG="$TEMP/requests" TEST_FIXTURE="$TEMP/index.tsv"
 export TEST_ARCHIVE="$ROOT/tests/fixtures/archives/jdk.tar.gz"
 export TEST_ARTIFACT_STATUS=200 TEST_DELAY=0
 export TEST_PUBLISH_GATE= TEST_PUBLISH_FAIL=0 TEST_REAL_MV TEST_REAL_RM
 export TEST_REMOVE_FAIL=0 TEST_REMOVE_DELETE_FAIL=0 TEST_REMOVE_LOG="$TEMP/removals"
+export TEST_DEFAULT_FAIL=0 TEST_DEFAULT_INTERRUPT=0
+export TEST_DEFAULT_GATE= TEST_REAL_LN
+TEST_REAL_LN=$(command -v ln)
 TEST_REAL_MV=$(command -v mv)
 TEST_REAL_RM=$(command -v rm)
 for tool in uname ldd curl wget mv rm; do
@@ -59,6 +70,16 @@ exec "$TEST_REAL_RM" "$@"
 EOF
         ;;
         mv) cat >> "$TOOLS/$tool" <<'EOF'
+case "${2:-}" in
+    */jvm/tmp/default.*/link)
+        if [ "$TEST_DEFAULT_INTERRUPT" = 2 ] || [ "$TEST_DEFAULT_FAIL" = 2 ]; then
+            rm "$XDG_DATA_HOME/jvm/default" || exit 99
+            [ "$TEST_DEFAULT_INTERRUPT" != 2 ] || kill -TERM "$PPID"
+            exit 1
+        fi
+        [ "$TEST_DEFAULT_INTERRUPT" != 1 ] || { kill -TERM "$PPID"; exit 1; }
+        [ "$TEST_DEFAULT_FAIL" != 1 ] || exit 1 ;;
+esac
 if [ "$#" -eq 2 ]; then
     case "$2" in "$XDG_DATA_HOME/jvm/tmp/remove-"*/)
         [ "$TEST_REMOVE_FAIL" != 1 ] || exit 1
@@ -127,6 +148,14 @@ EOF
     esac
     chmod +x "$TOOLS/$tool"
 done
+printf '#!%s\n' "$BASH_BIN" > "$TOOLS/ln"
+cat >> "$TOOLS/ln" <<'EOF'
+if [ -n "$TEST_DEFAULT_GATE" ] && [ "${3:-}" = "$XDG_DATA_HOME/jvm/default" ]; then
+    : > "$TEST_DEFAULT_GATE/$TEST_DEFAULT_ROLE.ready"
+    while [ ! -e "$TEST_DEFAULT_GATE/$TEST_DEFAULT_ROLE.release" ]; do sleep 0.05; done
+fi
+exec "$TEST_REAL_LN" "$@"
+EOF
 export PATH=$TOOLS
 passed=0
 fail() { printf 'FAIL: %s\n' "$*" >&2; cat "$TEMP/err" >&2; exit 1; }
@@ -159,6 +188,7 @@ uninstall_checks() {
     row 21+1 temurin; row 21+2 temurin; row 21+1 other-vendor
     row 1.8.0_99-b09 old-vendor
     for id in 21+1-temurin 21+2-temurin 21+1-other-vendor 1.8.0_99-b09-old-vendor; do run 0 install "$id"; done
+    rm "$XDG_DATA_HOME/jvm/default"
     printf 'keep\n' > "$XDG_DATA_HOME/jvm/default"
     mv "$TOOLS/curl" "$TEMP/curl"; mv "$TOOLS/wget" "$TEMP/wget"
     rm -rf -- "$XDG_CACHE_HOME/jvm"
@@ -222,19 +252,123 @@ uninstall_checks() {
 
 if [ "${1:-}" = --uninstall ]; then uninstall_checks; exit 0; fi
 
+default_checks() {
+    reset; index
+    run 0 default; contains 'Default JDK unset: no JDKs are installed'
+    run 2 default ''; run 2 default vendor; run 2 default 21 extra
+    row 21+1 vendor; row 21+2 vendor; row 21+1 other
+    row 23+1 vendor; row 25+1 vendor; row 17+1 vendor; row 1.8.0_99 old
+    run 0 install 21+1-vendor
+    contains 'Default JDK set to: 21+1-vendor'
+    run 0 default; contains '21+1-vendor'
+    run 0 list; contains 'DEFAULT'; contains '*'
+    for id in 21+2-vendor 21+1-other 23+1-vendor 25+1-vendor 17+1-vendor 1.8.0_99-old; do
+        run 0 install "$id"
+        [[ $(< "$TEMP/out") != *'Default JDK set to:'* ]] || fail 'unchanged default announced'
+    done
+    rm "$XDG_DATA_HOME/jvm/default"
+    TEST_DEFAULT_GATE=$TEMP/default-gate
+    mkdir "$TEST_DEFAULT_GATE"
+    TEST_DEFAULT_ROLE=first "$BASH_BIN" "$ROOT/jvm" install 21+1-vendor > "$TEMP/first.out" 2> "$TEMP/first.err" & first=$!
+    TEST_DEFAULT_ROLE=second "$BASH_BIN" "$ROOT/jvm" install 17+1-vendor > "$TEMP/second.out" 2> "$TEMP/second.err" & second=$!
+    for attempt in {1..200}; do
+        if [ -e "$TEST_DEFAULT_GATE/first.ready" ] && [ -e "$TEST_DEFAULT_GATE/second.ready" ]; then break; fi
+        sleep 0.05
+    done
+    [ -e "$TEST_DEFAULT_GATE/first.ready" ] && [ -e "$TEST_DEFAULT_GATE/second.ready" ] || fail 'initializers did not reach link creation'
+    : > "$TEST_DEFAULT_GATE/first.release"
+    wait "$first" || fail 'first default initializer failed'; first=
+    : > "$TEST_DEFAULT_GATE/second.release"
+    wait "$second" || fail 'second default initializer failed'; second=
+    TEST_DEFAULT_GATE=
+    [ ! -e "$XDG_DATA_HOME/jvm/jdks/21+1-vendor/17+1-vendor" ] || fail 'losing initializer created a nested link'
+    [ ! -s "$TEMP/second.err" ] || fail 'losing initializer emitted a diagnostic'
+    [[ $(< "$TEMP/first.out") = *'Default JDK set to: 21+1-vendor'* ]] || fail 'initializer omitted confirmation'
+    [[ $(< "$TEMP/second.out") != *'Default JDK set to:'* ]] || fail 'losing initializer announced selection'
+    run 0 default; contains '21+1-vendor'
+    TEST_DEFAULT_FAIL=1
+    run 1 default 17; diagnostic 'cannot replace'
+    TEST_DEFAULT_FAIL=0
+    run 0 default; contains '21+1-vendor'
+    TEST_DEFAULT_INTERRUPT=1
+    run 1 default 17
+    TEST_DEFAULT_INTERRUPT=0
+    run 0 default; contains '21+1-vendor'
+    TEST_DEFAULT_FAIL=2
+    run 1 default 17
+    TEST_DEFAULT_FAIL=0
+    run 0 default; contains '21+1-vendor'
+    TEST_DEFAULT_INTERRUPT=2
+    run 1 default 17
+    TEST_DEFAULT_INTERRUPT=0
+    run 0 default; contains '21+1-vendor'
+    mv "$TOOLS/readlink" "$TEMP/readlink"
+    run 1 uninstall 21+1-vendor; diagnostic 'required utility missing: readlink'
+    [ -d "$XDG_DATA_HOME/jvm/jdks/21+1-vendor" ] || fail 'uninstall ignored unreadable default'
+    mv "$TEMP/readlink" "$TOOLS/readlink"
+    run 0 default; contains '21+1-vendor'
+    mv "$TOOLS/curl" "$TEMP/curl"; mv "$TOOLS/wget" "$TEMP/wget"
+    rm -rf -- "$XDG_CACHE_HOME/jvm"
+    run 1 default 21; diagnostic 'Multiple JDKs match'
+    run 1 default 99
+    run 0 default vendor-17
+    [ "$(< "$TEMP/out")" = 'Default JDK set to: 17+1-vendor' ] || fail 'wrong default confirmation'
+    [ ! -s "$TEMP/err" ] || fail 'default printed shell setup'
+    run 0 default; contains '17+1-vendor'
+    run 0 default 21+1-vendor
+    TEST_REMOVE_FAIL=1
+    run 1 uninstall 21+1-vendor
+    run 0 default; contains '21+1-vendor'
+    TEST_REMOVE_FAIL=0
+    run 0 uninstall 21+1-vendor
+    contains 'Default JDK set to: 21+1-other'
+    run 0 default; contains '21+1-other'
+    run 0 uninstall 21+1-other
+    run 0 default; contains '21+2-vendor'
+    run 0 uninstall 21+2-vendor
+    run 0 default; contains '23+1-vendor'
+    run 0 uninstall 23+1-vendor
+    run 0 default; contains '25+1-vendor'
+    run 0 uninstall 25+1-vendor
+    run 0 default; contains '17+1-vendor'
+    run 0 uninstall 17+1-vendor
+    run 0 default; contains '1.8.0_99-old'
+    run 0 uninstall 8
+    contains 'Default JDK unset: no JDKs are installed'
+    run 0 default; contains 'Default JDK unset: no JDKs are installed'
+    [ ! -e "$XDG_DATA_HOME/jvm/default" ] && [ ! -L "$XDG_DATA_HOME/jvm/default" ] || fail 'last default link remains'
+    [ ! -e "$XDG_CACHE_HOME/jvm" ] || fail 'default accessed cache'
+    mv "$TEMP/curl" "$TOOLS/curl"; mv "$TEMP/wget" "$TOOLS/wget"
+    mv "$TOOLS/ln" "$TEMP/ln"
+    run 1 install 17+1-vendor; diagnostic 'JDK installed, but default selection failed'
+    [ -f "$XDG_DATA_HOME/jvm/jdks/17+1-vendor/.jvm-manifest" ] || fail 'default failure removed installed JDK'
+    mv "$TEMP/ln" "$TOOLS/ln"
+    run 0 install 17+1-vendor
+    run 0 default; contains '17+1-vendor'
+    rm "$XDG_DATA_HOME/jvm/default"
+    printf 'unrelated\n' > "$XDG_DATA_HOME/jvm/default"
+    run 1 default 17; diagnostic 'not a managed link'
+    [ "$(< "$XDG_DATA_HOME/jvm/default")" = unrelated ] || fail 'default overwrote unrelated data'
+    check 'persistent defaults, first install, offline selection, failed/interrupted replacement, failed removal rollback and complete fallback order'
+    reset
+}
+
+if [ "${1:-}" = --defaults ]; then default_checks; exit 0; fi
+
 if [ "${1:-}" != --publication ]; then
 run 0 list
-[ "$(< "$TEMP/out")" = "No JDKs installed. Use 'install' to install one" ] || fail 'wrong empty inventory message'
+[ "$(< "$TEMP/out")" = "No JDKs are installed. Use 'install' to install one" ] || fail 'wrong empty inventory message'
 [ ! -s "$TEMP/err" ] || fail 'empty listing wrote a diagnostic'
 for selector in 21 temurin temurin-21 21+1-temurin; do
     run 0 list "$selector"
-    [ "$(< "$TEMP/out")" = "No JDKs installed. Use 'install' to install one" ] || fail 'selector suppressed empty inventory message'
+    [ "$(< "$TEMP/out")" = "No JDKs are installed. Use 'install' to install one" ] || fail 'selector suppressed empty inventory message'
     [ ! -s "$TEMP/err" ] || fail 'empty selected listing wrote a diagnostic'
 done
 [ ! -e "$XDG_DATA_HOME" ] || fail 'empty listing created data storage'
 run 2 install; run 2 list ''; run 2 list ../21; run 2 list extra extra
 check 'empty offline inventory succeeds without creating storage; command usage'
 uninstall_checks
+default_checks
 
 index; row 21.0.2+9 vendor; run 0 install vendor-21; contains '21.0.2+9-vendor'
 contains 'Successfully installed 21.0.2+9-vendor'; diagnostic 'Installing 21.0.2+9-vendor...'
@@ -465,6 +599,7 @@ else
 fi
 
 # Existing complete installations and unrelated files survive all failure paths.
+rm "$XDG_DATA_HOME/jvm/default"
 printf 'keep\n' > "$XDG_DATA_HOME/jvm/default"
 index; row 22+1 vendor
 TEST_DELAY=3

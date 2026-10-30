@@ -129,7 +129,9 @@ contains 'available [selector]'; contains 'distro-major (temurin-21)'
 contains 'list [selector]'
 contains 'finds and installs Java Development Kits'; contains 'even offline'
 lines=0; while IFS= read -r line; do lines=$((lines+1)); done < "$TEMP/out"
-[ "$lines" -le 28 ] || fail 'help is too verbose'
+[ "$lines" -le 40 ] || fail 'help is too verbose'
+contains 'Shell setup (once, in your shell profile):'
+contains 'Windows Bash:'; contains 'cygpath -m'
 main_help=$(< "$TEMP/out")
 run 0 --help
 [ "$(< "$TEMP/out")" = "$main_help" ] || fail 'main help differs'
@@ -139,6 +141,8 @@ run 0 uninstall --help
 [ "$(< "$TEMP/out")" = "$main_help" ] || fail 'uninstall --help differs'
 run 0 list --help
 [ "$(< "$TEMP/out")" = "$main_help" ] || fail 'list --help differs'
+run 0 default --help
+[ "$(< "$TEMP/out")" = "$main_help" ] || fail 'default --help differs'
 run 0 --version
 run 2 install
 [ "$(< "$TEMP/err")" = 'jvm: usage: jvm install <selector>'$'\n''for more information run: jvm install --help' ] || fail 'incorrect no-argument install guidance'
@@ -152,6 +156,7 @@ diagnostic 'selector must be a full ID, major, or distro-major'
 PATH=$saved_path
 run 2; run 2 install; run 2 available 21 extra; run 2 available ''
 check 'help/version independent of network and archive utilities; usage exit codes'
+if [ "${1:-}" = --help-only ]; then exit 0; fi
 
 run 0 available; quiet
 awk -F '\t+' 'NR==1 && (NF!=4 || $1!="ID" || $2!="DISTRIBUTION" || $3!="VERSION" || $4!="JVM") {exit 1}' "$TEMP/out" || fail 'unexpected listing columns'
