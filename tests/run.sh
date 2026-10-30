@@ -125,17 +125,32 @@ fixture() { TEST_FIXTURE=$ROOT/tests/fixtures/latest.tsv; export TEST_FIXTURE; }
 # Help and version run even with no external tools.
 saved_path=$PATH; PATH=/nonexistent
 run 0 help
-contains 'jvm available [selector]'; contains 'distro-major (temurin-21)'
+contains 'available [selector]'; contains 'distro-major (temurin-21)'
+contains 'list [selector]'
+contains 'finds and installs Java Development Kits'; contains 'even offline'
 lines=0; while IFS= read -r line; do lines=$((lines+1)); done < "$TEMP/out"
-[ "$lines" -le 5 ] || fail 'help is too verbose'
+[ "$lines" -le 28 ] || fail 'help is too verbose'
 main_help=$(< "$TEMP/out")
 run 0 --help
 [ "$(< "$TEMP/out")" = "$main_help" ] || fail 'main help differs'
 run 0 available --help
 [ "$(< "$TEMP/out")" = "$main_help" ] || fail 'available --help differs'
+run 0 uninstall --help
+[ "$(< "$TEMP/out")" = "$main_help" ] || fail 'uninstall --help differs'
+run 0 list --help
+[ "$(< "$TEMP/out")" = "$main_help" ] || fail 'list --help differs'
 run 0 --version
+run 2 install
+[ "$(< "$TEMP/err")" = 'jvm: usage: jvm install <selector>'$'\n''for more information run: jvm install --help' ] || fail 'incorrect no-argument install guidance'
+run 0 install --help
+[ ! -s "$TEMP/err" ] || fail 'install --help wrote a diagnostic'
+[ "$(< "$TEMP/out")" = "$main_help" ] || fail 'install --help differs from main help'
+run 2 uninstall
+[ "$(< "$TEMP/err")" = 'jvm: usage: jvm uninstall <selector>'$'\n''for more information run: jvm uninstall --help' ] || fail 'incorrect no-argument uninstall guidance'
+run 2 install -help
+diagnostic 'selector must be a full ID, major, or distro-major'
 PATH=$saved_path
-run 2; run 2 install 21; run 2 available 21 extra; run 2 available ''
+run 2; run 2 install; run 2 available 21 extra; run 2 available ''
 check 'help/version independent of network and archive utilities; usage exit codes'
 
 run 0 available; quiet
@@ -159,7 +174,7 @@ run 0 available foo-bar-17; contains '17.0.20.1+1-foo-bar'
 run 2 available 21.0.12+9-temurin; diagnostic 'selector must be'
 run 2 available '../temurin-21'; run 2 available 0
 run 0 available semeru; quiet; contains '21.0.12+9-semeru'; contains 'openj9'
-run 1 available 999; diagnostic 'no compatible JDK'
+run 1 available 999; diagnostic 'No JDK found matching:'
 check 'major, distro, legacy, hyphenated distro, removed exact IDs and missing match'
 [ "$(< "$TEST_COUNTER")" -eq 1 ] || fail 'selectors did not share the latest cache'
 [[ $(< "$TEST_LOG") = *'/metadata/ga/linux/x86_64/jdk-latest.tsv'* ]] || fail 'wrong discovery endpoint'
@@ -297,7 +312,7 @@ lines=0; while IFS= read -r line; do lines=$((lines+1)); done < "$TEMP/out"
 [ "$lines" -eq 4 ] || fail 'deduplication did not use version-based IDs'
 awk -F '\t+' 'NR>1 && $1!=$3 "-" $2 {exit 1}' "$TEMP/out" || fail 'displayed version differs from ID version'
 run 0 available temurin-21; quiet; contains '21.0.12+10-temurin'
-run 1 available 99; diagnostic 'no compatible JDK'
+run 1 available 99; diagnostic 'No JDK found matching:'
 run 0 available legacy-vendor-8; quiet; contains '1.8.0_482-b08-legacy-vendor'
 check 'version controls IDs, display, deduplication and major selection, independently of java_version'
 TEST_FIXTURE=$ROOT/tests/fixtures/jvm-impls.tsv; reset_cache
@@ -354,3 +369,4 @@ check 'simulated Windows absolute drive path conversion stays in test workspace'
 
 [ ! -e "$XDG_DATA_HOME" ] && [ ! -e "$XDG_CONFIG_HOME" ] && [ ! -e "$XDG_STATE_HOME" ] || fail 'unrelated storage touched'
 printf 'PASS: %s checks (offline; platform cases simulated)\n' "$passed"
+PATH=$ORIGINAL_PATH "$BASH_BIN" "$ROOT/tests/install.sh"

@@ -6,17 +6,21 @@ Read `SPEC.md` before changing behavior. It is the source of truth for product
 requirements, interfaces, storage, platform support, and deferred features.
 This file describes how to work on the project. Keep that division intact.
 
-The user authorized the first implementation milestone on 2026-10-29: discovery
-only (`help`, `--help`, `--version`, and `available [selector]`), host detection,
-TSV adaptation, metadata caching, and deterministic offline tests. Installation,
-managed local listing, persistent defaults, session switching, and command
-execution remain outside this milestone. Do not infer further authorization
-from the detailed future requirements in `SPEC.md`.
+The user authorized discovery on 2026-10-29 and extended the milestone on
+2026-10-30 to `install <selector>` and offline `list`, including
+verified archive extraction, durable manifests, and atomic publication from
+independent temporary directories without a storage lock.
+The optional selector for `list [selector]` was restored on 2026-10-30.
+Persistent defaults, shell integration, session switching and command execution
+remain deferred. Uninstallation was authorized on 2026-10-30, with offline
+ID/major/distro-major selection and move-before-delete removal through
+`jvm/tmp/remove-<ID>.XXXXXXXX`. Do not infer further authorization from the
+detailed future requirements in `SPEC.md`.
 
 Discovery trusts the project-owned TSV index. Index/schema validation and build
 collision checks belong upstream, not in the discovery command. Keep its reader
 small and fast; test filtering, silent ID deduplication, caching and treating
-data as data. Installation-related validation below remains future work.
+data as data. Keep installation validation separate from this trusted reader.
 
 ## Keeping the documents current
 
@@ -84,7 +88,7 @@ When implementation exists:
   failed initial fetch, checksum mismatch, and archive traversal/link rejection.
   Do not implement a general JSON parser unless simpler API formats prove
   insufficient and that direction is explicitly revisited.
-- Test interrupted installation/default replacement and shared-storage locking.
+- Test interrupted installation/default replacement and concurrent publication.
   Verify a prior usable installation/default survives failures.
 - Cover paths with spaces, XDG overrides, macOS bundle layout, musl/glibc
   distinctions, and Windows native executable/link behavior.
