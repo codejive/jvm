@@ -113,7 +113,7 @@ for selector in '' windows-test-25; do
     expected=$base/default
     [ -z "$selector" ] || expected=$base/jdks/25+1-windows-test
     if [ -z "$selector" ]; then run 0 home; else run 0 home "$selector"; fi
-    exact "C:$expected"
+    exact "$expected"
     if [ -z "$selector" ]; then run 0 env; else run 0 env "$selector"; fi
     check_env "C:$expected" "$expected/bin" "$selector"
 done
@@ -127,5 +127,8 @@ done
 export XDG_DATA_HOME=$saved_data
 export TEST_CONVERT_FAIL=1
 run 1 env; diagnostic 'cannot convert JDK home path'
-run 1 home; diagnostic 'cannot convert JDK home path'
+run 0 home; exact "$base/default"
+mv "$TEMP/tools/cygpath" "$TEMP/cygpath"
+run 0 home windows-test-25; exact "$base/jdks/25+1-windows-test"
+mv "$TEMP/cygpath" "$TEMP/tools/cygpath"
 echo 'PASS: offline home/env selection, quoting, evaluation, failures and state preservation (Windows simulated)'

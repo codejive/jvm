@@ -16,6 +16,8 @@ bash tests/install.sh
 bash tests/install.sh --selectors
 # Focused interruption/publication-race checks:
 bash tests/install.sh --publication
+# Focused flags and aliases checks:
+bash tests/install.sh --flags
 # Focused offline home/env checks:
 bash tests/home-env.sh
 # Focused offline list/uninstall checks:
@@ -351,3 +353,35 @@ groups and home/env checks under Git Bash. The native Windows junction smoke
 also passed. `git diff --check` passed; script size is 43,137 bytes, with LF
 line endings. Bash 3.2 and native Linux/macOS/Cygwin/standalone MSYS2 remain
 unverified; no real JDK was downloaded or executed.
+
+## Command flags and aliases (2026-10-30)
+
+The full suite includes `tests/install.sh --flags`. It checks every explicit
+alias and both flag positions, invalid/duplicate/unsupported options, missing
+selectors without utilities or state changes, local matches without transfers,
+local ambiguity and storage/utility failures without installation, and ordinary
+Temurin fallback after a genuine local miss. It covers new/already-installed
+`install -d`, failed/interrupted default replacement, failed installation,
+first-install initialization, preservation of existing defaults, offline exact
+IDs, and primary stdout versus informational stderr. A competing local match
+introduced during download verifies that continuation uses the exact installed
+ID. Windows output cases are simulated, with spaces in isolated data paths.
+
+The optional native Windows smoke also exercises `i -d`, `d -i`, `h -i` and
+`e <ID> -i`, with real junctions and native/Bash path conversion. Its copied
+`cmd.exe` launchers remain inert substitutes for JDKs; it proves no real Java
+runtime behavior.
+
+The subsequent 2026-10-30 correction makes `home` return an absolute POSIX path
+on Windows too. Simulated tests require successful home output with a failed or
+missing `cygpath`, and the native smoke compares home output with the Bash path.
+`env` retains native JAVA_HOME and POSIX PATH conversion and evaluation checks.
+
+Final verification on 2026-10-30: `bash -n ./jvm` and syntax checks for all
+modified test scripts passed. `bash tests/run.sh` passed 56 discovery checks,
+18 installation groups and the home/env suite under Git Bash 5.3.15. The focused
+flags suite and the native Windows junction smoke also passed; the corrected
+POSIX home policy passed focused home/env and native checks. `git diff --check`
+passed. The distributed script measures 45,558 bytes with LF line endings.
+ShellCheck and Bash 3.2 were unavailable. Native Linux, macOS, Cygwin and
+standalone MSYS2 remain unverified; no real JDK was downloaded or executed.

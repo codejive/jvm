@@ -37,7 +37,7 @@ chmod +x "$TOOLS/cygpath" "$TOOLS/cmd.exe"
 export TEST_SYSTEM=Linux TEST_MACHINE=x86_64 TEST_OS=linux
 export TEST_LOG="$TEMP/requests" TEST_FIXTURE="$TEMP/index.tsv"
 export TEST_ARCHIVE="$ROOT/tests/fixtures/archives/jdk.tar.gz"
-export TEST_ARTIFACT_STATUS=200 TEST_DELAY=0
+export TEST_ARTIFACT_STATUS=200 TEST_DELAY=0 TEST_EXTRA_LOCAL=
 export TEST_PUBLISH_GATE= TEST_PUBLISH_FAIL=0 TEST_REAL_MV TEST_REAL_RM
 export TEST_REMOVE_FAIL=0 TEST_REMOVE_DELETE_FAIL=0 TEST_REMOVE_LOG="$TEMP/removals"
 export TEST_DEFAULT_FAIL=0 TEST_DEFAULT_INTERRUPT=0
@@ -129,6 +129,9 @@ status=200; body=$TEST_FIXTURE
 case "$url" in
     https://artifacts.invalid/*)
         body=$TEST_ARCHIVE; status=$TEST_ARTIFACT_STATUS
+        if [ -n "${TEST_EXTRA_LOCAL:-}" ]; then
+            cp -R "$TEST_EXTRA_LOCAL" "$XDG_DATA_HOME/jvm/jdks/" || exit 99
+        fi
         if [ "$TEST_DELAY" != 0 ]; then
             : > "$TEST_LOG.started"
             sleep "$TEST_DELAY"
@@ -182,6 +185,129 @@ row() {
     printf 'ga\t%s\tx86_64\tjdk\topenj9\tvendor\t%s\t99+1\t%s\t%s\thttps://artifacts.invalid/%s\tjdk.%s\t%s\t%s\t[]\n' "$TEST_OS" "$distro" "$version" "$format" "$format" "$format" "$bytes" "$sha" >> "$TEST_FIXTURE"
 }
 count_downloads() { awk '/https:\/\/artifacts.invalid/ {n++} END {print n+0}' "$TEST_LOG"; }
+
+flag_alias_checks() {
+    local cmd args before saved_data saved_archive
+    reset; index; row 21+1 temurin; row 22+1 other-vendor; row 23+1 temurin
+    # All parsing failures precede even host detection, with no utilities on PATH.
+    for cmd in available list install uninstall default home env a l i u d h e; do
+        for args in '-x 21' '21 -x' '21 extra' '--help 21' '-i -i 21' '-d -d 21'; do
+            PATH=/nonexistent run 2 "$cmd" $args
+        done
+        PATH=/nonexistent run 2 "$cmd" ''
+    done
+    for cmd in available list uninstall a l u; do
+        PATH=/nonexistent run 2 "$cmd" -i 21
+        PATH=/nonexistent run 2 "$cmd" 21 -d
+    done
+    PATH=/nonexistent run 2 install -i 21
+    for cmd in default home env d h e; do
+        PATH=/nonexistent run 2 "$cmd" -d 21
+        PATH=/nonexistent run 2 "$cmd" -i
+        [ "$(< "$TEMP/err")" = 'jvm: Missing selector' ] || fail 'missing selector diagnostic'
+    done
+    [ ! -e "$TEST_LOG" ] && [ ! -e "$XDG_DATA_HOME/jvm" ] || fail 'invalid usage had side effects'
+    run 0 a temurin-21; contains '21+1-temurin'
+    run 0 i -d 21
+    [ ! -s "$TEMP/out" ] || fail 'install alias stdout'
+    diagnostic 'Successfully installed 21+1-temurin'
+    run 0 d; contains '21+1-temurin'
+    run 0 install 22+1-other-vendor -d
+    run 0 default; contains '22+1-other-vendor'
+    run 0 i 21+1-temurin -d; diagnostic 'Already installed 21+1-temurin'
+    run 0 default; contains '21+1-temurin'
+    run 0 l 21; contains '21+1-temurin'
+    before=$(cat "$TEST_LOG")
+    for cmd in home h env e default d; do
+        run 0 "$cmd" -i 22
+        case "$cmd" in
+            home|h) [ "$(< "$TEMP/out")" = "$XDG_DATA_HOME/jvm/jdks/22+1-other-vendor" ] || fail 'local home -i' ;;
+            env|e) contains '# Use: eval "$(jvm env -i 22)"'; contains 'export JAVA_HOME=' ;;
+        esac
+        run 0 "$cmd" 21 -i
+    done
+    [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'local -i used networking'
+    run 0 home -i 23
+    [ "$(< "$TEMP/out")" = "$XDG_DATA_HOME/jvm/jdks/23+1-temurin" ] || fail 'installed home stdout'
+    diagnostic 'Installing 23+1-temurin...'
+    run 0 default; contains '21+1-temurin'
+    run 0 install 23+1-temurin -d
+    # Replacement failure preserves a usable old default; the new JDK can remain.
+    index; row 24+1 temurin
+    TEST_DEFAULT_FAIL=1 run 1 install -d 24
+    diagnostic 'cannot replace the default JDK link'
+    [ -f "$XDG_DATA_HOME/jvm/jdks/24+1-temurin/.jvm-manifest" ] || fail 'successful installation lost'
+    TEST_DEFAULT_FAIL=1 run 1 default -i 24
+    TEST_DEFAULT_INTERRUPT=1 run 1 i -d 21+1-temurin
+    run 0 default; contains '23+1-temurin'
+    index; row 25+1 temurin
+    TEST_ARTIFACT_STATUS=503 run 1 i -d 25
+    TEST_ARTIFACT_STATUS=503 run 1 h -i 25
+    run 0 default; contains '23+1-temurin'
+    # Exact IDs remain usable with no downloaders or cache, even with -i/-d.
+    rm -rf -- "$XDG_CACHE_HOME/jvm"
+    mv "$TOOLS/curl" "$TEMP/curl"; mv "$TOOLS/wget" "$TEMP/wget"
+    run 0 i 21+1-temurin -d
+    run 0 h -i 21+1-temurin
+    run 0 e 21+1-temurin -i
+    run 0 d -i 21+1-temurin
+    run 0 u 22+1-other-vendor; diagnostic 'Successfully uninstalled 22+1-other-vendor'
+    mv "$TEMP/curl" "$TOOLS/curl"; mv "$TEMP/wget" "$TOOLS/wget"
+    # A broad major with multiple local matches must never fall through to install.
+    index; row 21+2 other-vendor
+    run 0 install 21+2-other-vendor
+    before=$(cat "$TEST_LOG")
+    for cmd in default home env; do
+        run 1 "$cmd" -i 21; diagnostic 'Multiple JDKs match'
+        run 2 "$cmd" -i ../21
+    done
+    [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'ambiguity/validation used networking'
+    # Storage and utility failures are not misses.
+    saved_data=$XDG_DATA_HOME; XDG_DATA_HOME=$TEMP/invalid-data
+    mkdir -p "$XDG_DATA_HOME"; printf 'blocked' > "$XDG_DATA_HOME/jvm"
+    for cmd in default home env; do run 1 "$cmd" -i 26; done
+    XDG_DATA_HOME=$TEMP/invalid-root
+    printf 'blocked' > "$XDG_DATA_HOME"
+    for cmd in default home env; do run 1 "$cmd" -i 26; done
+    XDG_DATA_HOME=$saved_data
+    mv "$TOOLS/awk" "$TEMP/awk"
+    printf '#!%s\nexit 2\n' "$BASH_BIN" > "$TOOLS/awk"
+    for cmd in default home env; do run 1 "$cmd" -i 26; done
+    mv "$TEMP/awk" "$TOOLS/awk"
+    [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'operational failure used networking'
+    # No existing default: both output commands retain first-install initialization.
+    for cmd in home env default; do
+        reset; index; row 27+1 temurin; row 27+1 other-vendor
+        run 0 "$cmd" -i 27
+        diagnostic 'Successfully installed 27+1-temurin'
+        run 0 default; contains '27+1-temurin'
+        [ ! -e "$XDG_DATA_HOME/jvm/jdks/27+1-other-vendor" ] || fail 'bare install fallback changed'
+    done
+    reset; index; row 29+1 other-vendor
+    run 0 install other-vendor-29
+    mkdir -p "$TEMP/competitor"
+    mv "$XDG_DATA_HOME/jvm/jdks/29+1-other-vendor" "$TEMP/competitor/"
+    index; row 29+1 temurin
+    TEST_EXTRA_LOCAL=$TEMP/competitor/29+1-other-vendor run 0 env -i 29
+    contains "export JAVA_HOME='$XDG_DATA_HOME/jvm/jdks/29+1-temurin'"
+    run 0 default; contains '29+1-other-vendor'
+    run 1 env 29; diagnostic 'Multiple JDKs match'
+    # Simulated Windows paths still pass through the normal conversion and quoting.
+    reset; TEST_SYSTEM=MINGW64_NT-10.0; TEST_OS=windows
+    saved_archive=$TEST_ARCHIVE; TEST_ARCHIVE=$ROOT/tests/fixtures/archives/windows.zip
+    index; row 28+1 temurin zip
+    run 0 i -d 28
+    mv "$TOOLS/cygpath" "$TEMP/cygpath"
+    printf '#!%s\ncase "$1" in -m) printf "C:/test home/%%s\\n" "${2##*/}" ;; *) printf "%%s\\n" "$2" ;; esac\n' "$BASH_BIN" > "$TOOLS/cygpath"
+    PATH=$ORIGINAL_PATH chmod +x "$TOOLS/cygpath"
+    run 0 h -i 28
+    [ "$(< "$TEMP/out")" = "$XDG_DATA_HOME/jvm/jdks/28+1-temurin" ] || fail 'Windows home must remain POSIX'
+    run 0 e 28 -i; contains "export JAVA_HOME='C:/test home/28+1-temurin'"
+    mv "$TEMP/cygpath" "$TOOLS/cygpath"
+    TEST_SYSTEM=Linux; TEST_OS=linux; TEST_ARCHIVE=$saved_archive
+    reset
+    check 'flags, aliases, offline-first resolution, exact IDs, failure preservation and output streams'
+}
 
 uninstall_checks() {
     reset; index
@@ -358,6 +484,7 @@ default_checks() {
     reset
 }
 
+if [ "${1:-}" = --flags ]; then flag_alias_checks; exit 0; fi
 if [ "${1:-}" = --defaults ]; then default_checks; exit 0; fi
 
 if [ "${1:-}" != --publication ]; then
@@ -680,6 +807,8 @@ run 1 install vendor-23; diagnostic 'incomplete or incompatible'
 run 0 list
 [[ $(< "$TEMP/out") != *23+1* ]] || fail 'unmanaged partial installation listed'
 check 'independent staging, race loser success, publication failure and preservation of prior installation/default'
+
+flag_alias_checks
 
 saved_data=$XDG_DATA_HOME; XDG_DATA_HOME=relative
 index; row 24+1 vendor; run 0 install vendor-24

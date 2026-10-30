@@ -13,18 +13,18 @@ help_text() {
     while IFS= read -r line; do printf '%s\n' "$line"; done <<'EOF'
 jvm finds and installs Java Development Kits for this computer.
 
-Usage: jvm <command> [selector]
+Usage: jvm <command> [options] [selector]
 
 Commands:
-  available [selector]  Show compatible JDKs available to download.
-  install <selector>    Download, verify and install a JDK in user storage.
-  uninstall <selector>  Remove an installed JDK from user storage.
-  list [selector]       Show matching JDKs installed by jvm, even offline.
-  default [selector]    Show or select the persistent installed JDK default.
-  home [selector]       Print an installed JDK home or the stable default path.
-  env [selector]        Print Bash exports for an installed JDK or default.
-  help, --help          Show this help.
-  --version            Show the jvm version.
+  available, a [selector]      Show compatible JDKs available to download.
+  install, i [-d] <selector>   Download, verify and install a JDK in user storage.
+  uninstall, u <selector>      Remove an installed JDK from user storage.
+  list, l [selector]           Show matching JDKs installed by jvm, even offline.
+  default, d [-i] [selector]   Show or select the persistent installed JDK default.
+  home, h [-i] [selector]      Print an installed JDK home or the stable default path.
+  env, e [-i] [selector]       Print Bash exports for an installed JDK or default.
+  --help                      Show this help.
+  --version                   Show the jvm version.
 
 Selectors:
   available/list: major (21), distro (temurin), or distro-major (temurin-21).
@@ -33,12 +33,16 @@ Selectors:
   If install/uninstall/default/home/env match multiple IDs, choose a reported full ID.
   list also accepts a full ID; omit available/list selectors to show all.
 
+Options:
+  -d  install: make the installed JDK the persistent default.
+  -i  default/home/env: install if missing; requires a selector.
+
 Examples:
   jvm available temurin
-  jvm install temurin-21
+  jvm i -d temurin-21
   jvm uninstall temurin-21
   jvm list 21
-  jvm home
+  jvm home -i 21
   eval "$(jvm env temurin-21)"
 
 Shell setup (once, in your shell profile):
@@ -47,10 +51,8 @@ Shell setup (once, in your shell profile):
   export PATH="$JAVA_HOME/bin:$PATH"
 
   Windows Bash:
-  export JAVA_HOME="$(cygpath -u "${XDG_DATA_HOME:-$HOME/.local/share}/jvm/default")"
-  export PATH="$JAVA_HOME/bin:$PATH"
-  export JAVA_HOME="$(cygpath -m "$JAVA_HOME")"
-The first installation becomes the default. No shell files are edited.
+  export JAVA_HOME="$(cygpath -m "${XDG_DATA_HOME:-$HOME/.local/share}/jvm/default")"
+  export PATH="$(cygpath -u "${JAVA_HOME}")/bin:$PATH"
 EOF
 }
 
@@ -371,7 +373,7 @@ release_platform() {
 
 # Never source a manifest or vendor release file. A manifest is one TSV record.
 read_installation() {
-    local directory=$1 row
+    local directory=$1 row status
     [ -d "$directory" ] && [ ! -L "$directory" ] && [ -f "$directory/.jvm-manifest" ] || return 1
     row=$(awk -F '\t' -v os="$OS" -v arch="$ARCH" -v id="${directory##*/}" '
         NR!=1 {bad=1}
@@ -381,18 +383,38 @@ read_installation() {
             if ($11!="zip" && $11!="tar.gz") next
             valid=1; result=substr($0,index($0,"\t")+1)
         }
-        END {if (!valid || bad) exit 1; print result}' "$directory/.jvm-manifest") || return 1
+        END {if (!valid || bad) exit 1; print result}' "$directory/.jvm-manifest")
+    status=$?
+    [ "$status" -le 1 ] || { error 'cannot read installed manifest'; return 5; }
+    [ "$status" -eq 0 ] || return 1
     jdk_layout "$directory" || return 1
     printf '%s\n' "$row"
 }
 
 local_rows() {
-    local directory id
+    local directory id status parent=$DATA
+    # A missing inventory is valid; an unusable existing ancestor is not a miss.
+    while [ ! -e "$parent" ] && [ ! -L "$parent" ]; do
+        parent=${parent%/*}
+        [ -n "$parent" ] || parent=/
+    done
+    [ -d "$parent" ] && [ -r "$parent" ] && [ -x "$parent" ] || {
+        error 'cannot read installed inventory'; return 1;
+    }
+    for directory in "$DATA" "$JDKS"; do
+        if [ -e "$directory" ] || [ -L "$directory" ]; then
+            [ -d "$directory" ] && [ -r "$directory" ] && [ -x "$directory" ] || {
+                error 'cannot read installed inventory'; return 1;
+            }
+        fi
+    done
     for directory in "$JDKS"/*; do
         id=${directory##*/}
         safe_id "$id" || continue
-        read_installation "$directory" || :
+        read_installation "$directory"; status=$?
+        [ "$status" -le 1 ] || return 1
     done
+    return 0
 }
 
 # Defaults are links only; never replace an unrelated file or directory.
@@ -554,6 +576,7 @@ shell_quote() {
 home_environment() {
     local command=$1 selector=$2 java_home path_home quoted_java quoted_bin usage
     resolve_home "$selector" || return $?
+    if [ "$command" = home ]; then printf '%s\n' "$RESOLVED_HOME"; return 0; fi
     java_home=$RESOLVED_HOME
     path_home=$RESOLVED_HOME
     if [ "$OS" = windows ]; then
@@ -564,11 +587,11 @@ home_environment() {
         case "$path_home" in /*) ;; *) error 'cannot convert Bash JDK home path'; return 1 ;; esac
     fi
     case "$java_home$path_home" in *[$'\r\n']*) error 'JDK home must be a single-line path'; return 1 ;; esac
-    if [ "$command" = home ]; then printf '%s\n' "$java_home"; return 0; fi
     quoted_java=$(shell_quote "$java_home") && quoted_bin=$(shell_quote "$path_home/bin") || return 1
     usage='jvm env'
     # Valid installed selectors contain only shell-safe ID/major/distro characters.
-    [ -z "$selector" ] || usage="$usage $selector"
+    [ "${option:-}" != -i ] || usage="$usage -i"
+    [ -z "${3:-$selector}" ] || usage="$usage ${3:-$selector}"
     printf '# Use: eval "$(%s)"\nexport JAVA_HOME=%s\nexport PATH=%s:"$PATH"\n' "$usage" "$quoted_java" "$quoted_bin"
 }
 
@@ -601,7 +624,7 @@ remote_rows() {
 # Only installation supplies a default distro for bare majors.
 select_rows() {
     local rows result
-    rows=$(awk -F '\t' -v selector="$1" -v default_distro="${2:-}" -v listing="${3:-}" '
+    rows=$(awk -F '\t' -v selector="$1" -v default_distro="${2:-}" -v listing="${3:-}" -v probe="${4:-}" '
         {rows[NR]=$0; ids[NR]=$1; versions[NR]=$3; distros[NR]=$2; if ($1==selector) exact=1}
         END {
             if (!exact) {
@@ -611,7 +634,7 @@ select_rows() {
                     major=selector; sub(/^.*-/,"",major)
                     distro=substr(selector,1,length(selector)-length(major)-1)
                 } else if (listing && selector ~ /^[a-z][a-z0-9-]*$/) {distro=selector}
-                else {print "No JDK found matching: " selector > "/dev/stderr"; exit 1}
+                else {if (!probe) print "No JDK found matching: " selector > "/dev/stderr"; exit 4}
             }
             for (i=1;i<=NR;i++) {
                 if (exact) {if (ids[i]!=selector) continue}
@@ -622,7 +645,7 @@ select_rows() {
                 count++; matches[count]=i
                 if (!seen[ids[i]]++) distinct++
             }
-            if (!count && !(listing && selector=="")) {print "No JDK found matching: " selector > "/dev/stderr"; exit 1}
+            if (!count && !(listing && selector=="")) {if (!probe) print "No JDK found matching: " selector > "/dev/stderr"; exit 4}
             if (!listing && distinct>1) {
                 for (j=1;j<=count;j++) {
                     i=matches[j]; if (!displayed[ids[i]]++) print rows[i]
@@ -635,6 +658,10 @@ select_rows() {
     if [ "$result" -eq 3 ]; then
         printf '%s\n' 'Multiple JDKs match, try again using one of the following IDs:' >&2
         printf '%s\n' "$rows" | format_rows >&2
+        return 1
+    fi
+    if [ "$result" -eq 4 ]; then
+        [ "${4:-}" != probe ] || return 4
         return 1
     fi
     [ "$result" -eq 0 ] || return "$result"
@@ -858,6 +885,13 @@ extract_jdk() {
     home_links && release_platform "$JDK_HOME"
 }
 
+install_default() {
+    if [ "${1:-}" = -d ]; then
+        set_default "$INSTALLED_ID" || return 1
+        report_default "$INSTALLED_ID"
+    else initialize_default "$INSTALLED_ID"; fi
+}
+
 uninstall_jdk() {
     local selector=$1 rows id removal hint= replacement= was_default= version
     installation_selector "$selector" || return $?
@@ -897,14 +931,16 @@ uninstall_jdk() {
 }
 
 install_jdk() {
-    local selector=$1 rows result preferred count existing publish_home publish_marker
+    local selector=$1 make_default=${2:-} rows result preferred count existing publish_home publish_marker
+    INSTALLED_ID=
     installation_selector "$selector" || return $?
     require_tools uname awk mkdir mktemp rm sed cat mv date cp wc || return 1
     detect_host && data_path || return 1
     umask 077
     # A known exact ID remains usable offline after upstream drops its record.
     if safe_id "$selector" && read_installation "$JDKS/$selector" >/dev/null; then
-        initialize_default "$selector" || return 1
+        INSTALLED_ID=$selector
+        install_default "$make_default" || return 1
         printf 'Already installed %s\n' "$selector" >&2; return 0
     fi
     cache_path || return 1
@@ -922,8 +958,9 @@ install_jdk() {
     # Empty TSV cells must not collapse as they do with Bash whitespace IFS.
     ID=$(printf '%s\n' "$rows" | awk -F '\t' '{print $1}')
     safe_id "$ID" || { error 'unsafe installation ID'; return 1; }
+    INSTALLED_ID=$ID
     existing=$JDKS/$ID
-    if read_installation "$existing" >/dev/null; then initialize_default "$ID" || return 1; printf 'Already installed %s\n' "$ID" >&2; return 0; fi
+    if read_installation "$existing" >/dev/null; then install_default "$make_default" || return 1; printf 'Already installed %s\n' "$ID" >&2; return 0; fi
     [ ! -e "$existing" ] && [ ! -L "$existing" ] || { error "incomplete or incompatible installation already exists: $existing"; return 1; }
     printf 'Installing %s...\n' "$ID" >&2
     URL=$(printf '%s\n' "$rows" | awk -F '\t' '{print $8}')
@@ -954,41 +991,70 @@ install_jdk() {
         [ ! -s "$WORK/publish-error" ] || cat "$WORK/publish-error" >&2
         return 1
     fi
-    initialize_default "$ID" || return 1
+    install_default "$make_default" || return 1
     printf 'Successfully installed %s\n' "$ID" >&2
 }
 
-case "${1:-}" in
-    help|--help)
-        [ "$#" -eq 1 ] || { error 'help takes no arguments'; exit 2; }
-        help_text ;;
-    --version)
-        [ "$#" -eq 1 ] || { error '--version takes no arguments'; exit 2; }
-        printf 'jvm %s\n' "$VERSION" ;;
-    list|default|home|env)
-        if [ "$#" -eq 2 ] && [ "$2" = --help ]; then help_text; exit 0; fi
-        [ "$#" -le 2 ] && { [ "$#" -eq 1 ] || [ -n "$2" ]; } || { error "usage: jvm $1 [selector]"; exit 2; }
-        case "$1" in
-            list) list_installed "${2:-}" ;;
-            default) default_jdk "${2:-}" ;;
-            home|env) home_environment "$1" "${2:-}" ;;
-        esac ;;
-    available|install|uninstall)
-        if [ "$#" -eq 2 ] && [ "$2" = --help ]; then help_text; exit 0; fi
-        if [ "$1" != available ] && [ "$#" -eq 1 ]; then
-            error "usage: jvm $1 <selector>"
-            printf 'for more information run: jvm %s --help\n' "$1" >&2
-            exit 2
-        fi
-        [ "$#" -le 2 ] && { [ "$#" -eq 1 ] || [ -n "$2" ]; } && { [ "$1" = available ] || [ "$#" -eq 2 ]; } || {
-            error "usage: jvm $1 $([ "$1" != available ] && printf '<selector>' || printf '[selector]')"; exit 2;
-        }
-        case "$1" in
-            available) available "${2:-}" ;;
-            install) install_jdk "$2" ;;
-            uninstall) uninstall_jdk "$2" ;;
-        esac ;;
-    *)
-        error 'usage: jvm <command> [selector]; use jvm --help'
-        exit 2 ;;
+# Resolve locally first. Only the selector helper's explicit miss permits install.
+ensure_installed() {
+    local selector=$1 rows status
+    installation_selector "$selector" || return $?
+    require_tools uname awk || return 1
+    detect_host && data_path && default_current || return 1
+    rows=$(local_rows) || return 1
+    rows=$(printf '%s\n' "$rows" | select_rows "$selector" '' '' probe); status=$?
+    case "$status" in
+        0) INSTALLED_ID=${rows%%$'\t'*} ;;
+        4) install_jdk "$selector" || return $? ;;
+        *) return 1 ;;
+    esac
+}
+
+command=${1:-}
+case "$command" in
+    a) command=available ;; l) command=list ;; i) command=install ;;
+    u) command=uninstall ;; d) command=default ;; e) command=env ;; h) command=home ;;
+esac
+case "$command" in
+    --help|--version)
+        [ "$#" -eq 1 ] || { error "$command takes no arguments"; exit 2; }
+        if [ "$command" = --help ]; then help_text; else printf 'jvm %s\n' "$VERSION"; fi
+        exit 0 ;;
+    available|list|install|uninstall|default|home|env) ;;
+    *) error 'usage: jvm <command> [selector]; use jvm --help'; exit 2 ;;
+esac
+shift
+if [ "$#" -eq 1 ] && [ "$1" = --help ]; then help_text; exit 0; fi
+selector= option=
+for argument in "$@"; do
+    case "$command:$argument" in
+        install:-d|default:-i|home:-i|env:-i)
+            [ -z "$option" ] || { error 'duplicate flag'; exit 2; }
+            option=$argument ;;
+        *:-*) error "unsupported flag: $argument"; exit 2 ;;
+        *)
+            [ -n "$argument" ] && [ -z "$selector" ] || { error 'expected one nonempty selector'; exit 2; }
+            selector=$argument ;;
+    esac
+done
+if [ -z "$selector" ]; then
+    if [ -n "$option" ]; then error 'Missing selector'; exit 2; fi
+    case "$command" in
+        install|uninstall)
+            error "usage: jvm $command <selector>"
+            printf 'for more information run: jvm %s --help\n' "$command" >&2
+            exit 2 ;;
+    esac
+fi
+if [ "$option" = -i ]; then
+    ensure_installed "$selector" || exit $?
+    resolved_selector=$INSTALLED_ID
+else resolved_selector=$selector; fi
+case "$command" in
+    available) available "$selector" ;;
+    list) list_installed "$selector" ;;
+    install) install_jdk "$selector" "$option" ;;
+    uninstall) uninstall_jdk "$selector" ;;
+    default) default_jdk "$resolved_selector" ;;
+    home|env) home_environment "$command" "$resolved_selector" "$selector" ;;
 esac

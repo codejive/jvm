@@ -15,8 +15,8 @@ choices for review.
 
 ### First implementation milestone (authorized 2026-10-29)
 
-Implemented in the single Bash file `jvm`: `help`, `--help`, `--version`, and
-`available [selector]`; host and libc detection; validated XDG cache paths;
+The original milestone implemented `help` (since removed), `--help`, `--version`,
+and `available [selector]`; host and libc detection; validated XDG cache paths;
 GA latest TSV fetching through curl or wget; discovery across JVM implementations;
 trusted TSV reading; compatible archive filtering; ID construction and selector
 filtering; and a one-hour metadata cache with conditional requests and silent fallback.
@@ -155,8 +155,8 @@ index fetching or automatic installation by local commands.
 
 ## Offline home and environment output (implemented 2026-10-30)
 
-`home [<selector>]` and `env [<selector>]` use only the complete managed
-inventory and existing default reference. They never fetch metadata, access the
+Without `-i`, `home [<selector>]` and `env [<selector>]` use only the complete
+managed inventory and existing default reference. They never fetch metadata, access the
 metadata cache, create storage directories, change the persistent default or
 installed inventory, or edit shell profiles. They do not download missing JDKs.
 
@@ -175,15 +175,18 @@ unusable reference reports `jvm: default JDK is missing or unusable` on stderr
 and exits 1. Never repair or select a default implicitly. Successful ordinary
 invocations without secondary informational messages have empty stderr; failures
 have empty stdout. The output-stream decision below permits informational
-messages on stderr, including installation messages for the future `-i` flag.
+messages on stderr, including installation messages for the `-i` flag.
 
 ### JDK home output: `home [<selector>]`
 
 Print exactly one unquoted absolute path and a newline. Explicit selection uses
 the selected installation's normalized physical JDK home. Omitted selection
 uses the stable `jvm/default` path, retaining that final reference rather than
-resolving it to an installation. Unix output is an absolute filesystem path;
-Windows output is a native absolute path with forward slashes, using `cygpath`.
+resolving it to an installation. Output is an absolute POSIX path in the running
+Bash environment on every platform, including Windows. A 2026-10-30 user
+correction supersedes the earlier native-path output policy: `home` does not
+convert its result through `cygpath`, so the result is directly usable in Bash.
+Windows drive-style storage inputs still use the ordinary storage conversion.
 No label, comment, shell quoting or selection announcement is printed on stdout.
 
 ### Shell environment output: `env [<selector>]`
@@ -212,14 +215,42 @@ colon never enters the PATH entry. Output does not itself change the caller's
 environment: the user explicitly evaluates it. The implementation never uses
 `eval` or sources metadata. No extra session-switching infrastructure is added.
 
-### Future install-on-demand flag: required selector
+### Command flags (adopted and implemented 2026-10-30)
 
-The proposed `-i` flag for `default`, `home` and `env` installs the selected JDK
-if it is missing before completing the command. This flag remains future work.
-An explicit selector is required when using `-i`: `default -i`, `home -i` and
-`env -i` without a selector are invalid usage. Print `Missing selector` on
-stderr, leave stdout empty and exit 2 without installing or changing state.
-The normal no-selector behavior applies only when `-i` is absent.
+The implementation handoff explicitly adopted the following previously assumed
+or proposed policies. They are current behavior, not earlier requirements.
+
+`install -d <selector>` installs and selects the resolved ID as the persistent
+default, including when that JDK is already installed. It reuses the installation
+and atomic default-replacement helpers. Without `-d`, installation retains its
+ordinary first-install default initialization and preserves an existing default.
+Installation failure preserves the previous usable default. Selection failure
+returns 1 and preserves the previous default; a successfully published JDK may
+remain installed.
+
+`default -i <selector>`, `home -i <selector>` and `env -i <selector>` first resolve
+against the managed offline inventory using the existing local selector rules:
+exact IDs take precedence and bare majors match every distribution. One match
+uses that ID without networking. Ambiguity fails with the existing local table;
+validation, storage and other operational failures also fail without installation.
+Only a genuine no-match result permits installation using ordinary install
+selectors, including Temurin for a bare major. Continue with the exact ID returned
+by installation, without resolving the original broad selector again.
+
+`default -i` selects that ID persistently. `home -i` and `env -i` preserve ordinary
+installation's first-install initialization and do not replace an existing usable
+default. Home output follows the corrected POSIX policy above; env quoting and
+Windows conversion retain their existing behavior. The env
+usage comment retains the supplied selector and includes `-i` when requested;
+aliases emit the same canonical comment as their full command names.
+
+An explicit selector is required with `-i`: missing selection prints
+`jvm: Missing selector` through the stderr diagnostic helper, leaves stdout empty
+and exits 2 without state changes. Normal no-selector behavior applies only
+without `-i`. Flags may precede or follow the selector. `-d` is accepted only by
+install, and `-i` only by default/home/env. Unsupported or repeated flags, empty
+selectors and extra arguments exit 2 before side effects. Primary output is
+prepared before printing; any failure leaves stdout empty.
 
 ### Output streams (decision recorded 2026-10-30)
 
@@ -240,7 +271,7 @@ no-default result.
 This rule applies equally when one command performs another operation, such as
 installation or default initialization through `home -i` or `env -i`. Those
 operations may print informational messages on stderr while stdout retains
-exactly the command's primary result. For example, a future invocation of
+exactly the command's primary result. For example, an invocation of
 `jvm home -i temurin-21` could produce:
 
 | Stream | Line |
@@ -250,19 +281,19 @@ exactly the command's primary result. For example, a future invocation of
 | stderr | `Default JDK set to: 21.1.2-temurin` |
 | stdout | `/home/user/.local/share/jvm/jdks/21.1.2-temurin` |
 
-The ID is illustrative; this example does not prescribe message ordering or
-settle selector resolution or default initialization for `-i`. A failed operation
-must leave stdout empty rather than print a partial primary result.
+The ID is illustrative; this example does not prescribe message ordering.
+Selector resolution and initialization follow the adopted flag policy above.
+A failed operation must leave stdout empty rather than print a partial primary result.
 
 This decision supersedes the earlier requirement that `home` and `env` print
 nothing else on either stream: their stdout remains restricted, while stderr
 may contain secondary messages. Existing installation, uninstallation and
-default-change confirmations now follow this rule in the script. The future
-`-i` flag is not implemented yet.
+default-change confirmations now follow this rule in the script. The `-i` flag
+follows the adopted policy above.
 
 ### First-letter command aliases
 
-**Future feature requested 2026-10-30:** allow commands to be invoked using
+**Adopted and implemented 2026-10-30:** commands can be invoked using
 their first letter, retaining the full command names except for the removal
 of `help` described below:
 
@@ -283,10 +314,10 @@ single-letter aliases, not arbitrary command-prefix matching.
 
 **Decision recorded 2026-10-30:** remove the `help` command and expose help only
 through `--help`, including the existing subcommand `--help` forms. This leaves
-`h` unambiguously available for `home`. When implemented, `jvm help` becomes an
-unknown command (exit 2); update command help and examples accordingly. Aliases
-and removal of `help` are not implemented yet; descriptions elsewhere of the
-current `help` command remain implementation records until that change ships.
+`h` unambiguously available for `home`. `jvm help` is an
+unknown command (exit 2). Normalize explicit aliases before shared argument
+parsing and dispatch. Full-command and alias `--help` print the main help
+without host detection, storage access, networking or external utilities.
 
 ## Scope
 
@@ -356,27 +387,26 @@ capabilities and accommodate GNU/BSD differences; do not assume GNU `readlink
 
 An individual utility is not assumed to exist on every platform. Check only the
 capabilities a command needs and give an actionable error when unavailable.
-`help` and local listing MUST NOT require networking or archive tools. Do not
+`--help` and local listing MUST NOT require networking or archive tools. Do not
 install missing dependencies automatically. Other archive formats and native
 installers are outside initial scope.
 
 ## Adopted command interface
 
-The names and exit codes are adopted. `help`, `--help`, `--version`,
+The names and exit codes are adopted. `--help`, `--version`,
 `available`, `list`, `install`, `uninstall`, `default`, `home`, and `env` are implemented.
 The following commands describe the intended complete interface.
 
 ```text
-jvm help
 jvm --help
 jvm --version
 jvm available [selector]
 jvm list [selector]
-jvm install <selector>
+jvm install [-d] <selector>
 jvm uninstall <selector>
-jvm default [selector]
-jvm home [selector]
-jvm env [selector]
+jvm default [-i] [selector]
+jvm home [-i] [selector]
+jvm env [-i] [selector]
 ```
 
 - `available` lists compatible JDKs across JVM implementations from the API's
@@ -395,7 +425,7 @@ jvm env [selector]
   is allowed.
 - `install` resolves a remote selector and installs that exact artifact. It is
   idempotent for an already complete installation. It initializes a missing
-  default, but MUST NOT replace an existing default.
+  default, but MUST NOT replace an existing default unless `-d` is supplied.
   Print `Installing <ID>...` to stderr after resolving the full ID and before
   downloading the artifact, then
   `Successfully installed <ID>` to stderr after publication. An existing complete
@@ -406,7 +436,7 @@ jvm env [selector]
   `install --help` prints the main help page to stdout with exit 0 and no stderr.
   Both forms need no external utilities and perform no host detection, storage
   access or networking. This supersedes the earlier install-specific help.
-  `-help` is invalid and exits 2, like other invalid selectors.
+  `-help` is an unsupported flag and exits 2.
 - `uninstall` removes one complete managed installation using the offline
   selection and move-before-delete procedure above.
   With no argument, print `jvm: usage: jvm uninstall <selector>` followed by
@@ -414,10 +444,11 @@ jvm env [selector]
   without host detection, storage access, networking or external utilities.
 - `default` without an argument reports the current selection, or explicitly
   reports that none exists. With an argument it selects an already installed
-  JDK; it MUST NOT silently download one.
+  JDK; it downloads only when explicitly requested with `-i`.
 - `home` prints the installed home or stable default path; `env` prints safely
   quoted Bash exports for the same path, as specified above.
-- `help` shows implemented command usage and a short selector explanation.
+- `--help` shows implemented command usage, aliases, flags and a short selector
+  explanation.
   Include a brief purpose statement, one-line command descriptions and a few
   examples. Keep it readable without a wall of text; omit routine implementation
   details and deferred commands. This clarifies the user's 2026-10-30 request
@@ -521,7 +552,8 @@ for validation, without encoding them into the ID.
 - Try an exact full-ID match first.
 - A positive integer such as `21` selects that major from the hard-coded
   default distribution, `temurin`: `install 21` means `install temurin-21`.
-  This applies only to installation; `available 21` still lists all distros.
+  This applies only to installation, including installation after a local `-i`
+  miss; `available 21` still lists all distros.
 - A selector such as `temurin-21` selects that distribution and Java major.
   Split the major from the final hyphen; distro names can contain hyphens.
 - Distribution names use canonical jdkdb-index identifiers.
@@ -673,9 +705,20 @@ component limit. Existing portable ID/path checks still apply before storage.
 normalized JDK home, using a directory symlink on Unix and `mklink /J` directory
 junction on Windows. Users add its `bin` directory to PATH once. The main help
 has a dedicated `Shell setup` section with Unix and Windows Bash instructions.
-Default selection prints no setup instructions. Windows setup converts JAVA_HOME
-to a Bash POSIX path before adding its bin to PATH, then to a native drive path
-with forward slashes for native tools. This avoids a drive colon in PATH.
+Default selection prints no setup instructions. The 2026-10-30 Windows Bash
+help correction sets JAVA_HOME to a native forward-slash Windows path, then
+converts that value to POSIX form for its bin entry in Bash's colon-separated
+PATH. This handles both native XDG overrides and POSIX HOME fallback paths.
+The two-line example is:
+
+```bash
+export JAVA_HOME="$(cygpath -m "${XDG_DATA_HOME:-$HOME/.local/share}/jvm/default")"
+export PATH="$(cygpath -u "${JAVA_HOME}")/bin:$PATH"
+```
+
+Help explains `-d` and `-i` in an `Options` section between `Selectors` and
+`Examples`. It omits the first-install-default and shell-file-editing sentences;
+the underlying installation behavior is unchanged.
 The Unix setup is:
 
 ```bash
@@ -693,20 +736,24 @@ refresh the shell environment or restart that software.
 
 `default` without a selector prints the exact ID, or `Default JDK unset: no JDKs are installed`
 and exits 0. A dangling managed reference reports an unavailable-default error.
-With a selector, exact IDs take precedence; major and distro-major selectors
-must resolve to one complete local installation. Bare majors match all distros.
-Success prints `Default JDK set to: <ID>` to stderr. No networking or cache access is involved.
+Without `-i`, a selector resolves against complete local installations only:
+exact IDs take precedence; major and distro-major selectors must resolve to one
+installation. Bare majors match all distros. Success prints
+`Default JDK set to: <ID>` to stderr. This ordinary path uses no network or cache;
+`-i` follows the adopted install-on-demand policy above.
 `default --help` uses the main help without accessing storage or external tools.
 
-Installation initializes an absent default after successful publication, including
-an idempotent install of an existing ID. It never replaces an existing reference
-or unrelated data at that path. Link failure returns 1 and explains that the JDK
+Without `-d`, installation initializes an absent default after successful
+publication, including an idempotent install of an existing ID. It never replaces
+an existing reference or unrelated data at that path. Link failure returns 1 and explains that the JDK
 was installed but default selection failed; the installed JDK is retained.
 Concurrent initialization creates the final link directly without replacement:
 the first creator wins. No shared-storage lock is introduced.
 The installer that creates the default also prints `Default JDK set to: <ID>`
 on stderr, before its installation success/already-installed message. Subsequent
-installs and losing concurrent initializers do not announce a default change.
+ordinary installs and losing concurrent initializers do not announce a default
+change. Explicit `install -d` uses the same atomic replacement as `default` and
+announces the selected ID on stderr; unrelated data remains protected.
 
 When uninstalling the default, choose from the remaining complete compatible
 inventory: first the same major, then the smallest higher major, then the largest

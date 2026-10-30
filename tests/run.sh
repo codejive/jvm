@@ -124,14 +124,14 @@ fixture() { TEST_FIXTURE=$ROOT/tests/fixtures/latest.tsv; export TEST_FIXTURE; }
 
 # Help and version run even with no external tools.
 saved_path=$PATH; PATH=/nonexistent
-run 0 help
-contains 'available [selector]'; contains 'distro-major (temurin-21)'
-contains 'list [selector]'
+run 0 --help
+contains 'available, a [selector]'; contains 'distro-major (temurin-21)'
+contains 'list, l [selector]'
 contains 'finds and installs Java Development Kits'; contains 'even offline'
 lines=0; while IFS= read -r line; do lines=$((lines+1)); done < "$TEMP/out"
-[ "$lines" -le 40 ] || fail 'help is too verbose'
+[ "$lines" -le 42 ] || fail 'help is too verbose'
 contains 'Shell setup (once, in your shell profile):'
-contains 'Windows Bash:'; contains 'cygpath -m'
+contains 'Windows Bash:'; contains 'cygpath -u'
 main_help=$(< "$TEMP/out")
 run 0 --help
 [ "$(< "$TEMP/out")" = "$main_help" ] || fail 'main help differs'
@@ -143,6 +143,15 @@ run 0 list --help
 [ "$(< "$TEMP/out")" = "$main_help" ] || fail 'list --help differs'
 run 0 default --help
 [ "$(< "$TEMP/out")" = "$main_help" ] || fail 'default --help differs'
+for cmd in available list install uninstall default home env a l i u d h e; do
+    run 0 "$cmd" --help; quiet
+    [ "$(< "$TEMP/out")" = "$main_help" ] || fail "help differs: $cmd"
+done
+for cmd in help av lis ins un def en ho; do run 2 "$cmd"; done
+for cmd in default home env d h e; do
+    run 2 "$cmd" -i
+    [ "$(< "$TEMP/err")" = 'jvm: Missing selector' ] || fail 'missing selector diagnostic'
+done
 run 0 --version
 run 2 install
 [ "$(< "$TEMP/err")" = 'jvm: usage: jvm install <selector>'$'\n''for more information run: jvm install --help' ] || fail 'incorrect no-argument install guidance'
@@ -152,7 +161,7 @@ run 0 install --help
 run 2 uninstall
 [ "$(< "$TEMP/err")" = 'jvm: usage: jvm uninstall <selector>'$'\n''for more information run: jvm uninstall --help' ] || fail 'incorrect no-argument uninstall guidance'
 run 2 install -help
-diagnostic 'selector must be a full ID, major, or distro-major'
+diagnostic 'unsupported flag:'
 PATH=$saved_path
 run 2; run 2 install; run 2 available 21 extra; run 2 available ''
 check 'help/version independent of network and archive utilities; usage exit codes'
