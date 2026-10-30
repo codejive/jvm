@@ -374,4 +374,5 @@ check 'simulated Windows absolute drive path conversion stays in test workspace'
 
 [ ! -e "$XDG_DATA_HOME" ] && [ ! -e "$XDG_CONFIG_HOME" ] && [ ! -e "$XDG_STATE_HOME" ] || fail 'unrelated storage touched'
 printf 'PASS: %s checks (offline; platform cases simulated)\n' "$passed"
-PATH=$ORIGINAL_PATH "$BASH_BIN" "$ROOT/tests/install.sh"
+PATH=$ORIGINAL_PATH "$BASH_BIN" "$ROOT/tests/install.sh" || exit $?
+PATH=$ORIGINAL_PATH "$BASH_BIN" "$ROOT/tests/home-env.sh"

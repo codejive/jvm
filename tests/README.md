@@ -7,6 +7,8 @@ bash -n ./jvm
 bash -n tests/run.sh
 bash -n tests/live-smoke.sh
 bash -n tests/install.sh
+bash -n tests/home-env.sh
+bash -n tests/default-native-windows.sh
 bash tests/run.sh
 # Installation-only checks:
 bash tests/install.sh
@@ -14,6 +16,8 @@ bash tests/install.sh
 bash tests/install.sh --selectors
 # Focused interruption/publication-race checks:
 bash tests/install.sh --publication
+# Focused offline home/env checks:
+bash tests/home-env.sh
 # Focused offline list/uninstall checks:
 bash tests/install.sh --uninstall
 ```
@@ -23,7 +27,8 @@ spaces. Its isolated PATH supplies ordinary utility wrappers and fake host,
 curl and wget commands. It makes no network calls, downloads no JDKs, and never
 reads or writes normal JDK inventories, defaults, or shell profiles. It requires
 the ordinary tools used by `jvm`, plus `chmod` to prepare executable fakes.
-`tests/run.sh` runs discovery checks followed by the installation suite.
+`tests/run.sh` runs discovery checks, the installation suite, then home/env
+checks, stopping if a suite fails.
 Temporary files are cleaned on completion or interruption. Runtime code is only
 `jvm`; no fixtures or tests need distribution.
 
@@ -305,3 +310,27 @@ the last JDK prints `Default JDK unset: no JDKs are installed` Syntax checks,
 `bash tests/run.sh --help-only`, `bash tests/install.sh --defaults` and
 `git diff --check` passed. Tests also verify that unchanged defaults and losing
 initializers do not announce a change. Script size: 40,087 bytes.
+
+## Offline home/environment output (2026-10-30)
+
+`bash tests/home-env.sh` checks exact ID, major, hyphenated distro-major and
+legacy selection, stable-default versus installation paths, ambiguity, missing
+matches, absent/broken/unmanaged/unusable defaults, invalid arguments and help.
+It uses the existing inert JDK archive fixture, isolated HOME/XDG paths and a
+PATH with no downloaders. The metadata cache is absent. Each invocation compares
+storage snapshots to verify the default and installed inventory are unchanged.
+It checks single-line home output and three-line env output, success stderr and
+failure stdout, apostrophes/spaces/dollars/backticks/other shell metacharacters,
+child-Bash evaluation preserving that child's original PATH, conversion failures
+and rejection of multiline paths. Windows conversion is simulated in this suite.
+The optional native junction smoke also checks real `cygpath` home/env output
+and evaluation for both a stable junction and an explicit installed home.
+
+Verification on 2026-10-30: syntax checks passed for `jvm`, `tests/run.sh`,
+`tests/home-env.sh` and `tests/default-native-windows.sh`. The focused home/env
+suite and the full offline suite (56 discovery checks, 17 installation groups,
+then home/env checks) passed under Git Bash 5.3.15. The native Windows junction
+smoke passed with real path conversion and child-shell evaluation. `git diff
+--check` passed. Distributed script size: 43,117 bytes, with LF line endings.
+ShellCheck was unavailable. Bash 3.2 and native Linux/macOS/Cygwin/standalone
+MSYS2 remain unverified; fixture launchers do not establish real Java execution.

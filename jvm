@@ -21,14 +21,16 @@ Commands:
   uninstall <selector>  Remove an installed JDK from user storage.
   list [selector]       Show matching JDKs installed by jvm, even offline.
   default [selector]    Show or select the persistent installed JDK default.
+  home [selector]       Print an installed JDK home or the stable default path.
+  env [selector]        Print Bash exports for an installed JDK or default.
   help, --help          Show this help.
   --version            Show the jvm version.
 
 Selectors:
   available/list: major (21), distro (temurin), or distro-major (temurin-21).
-  install/uninstall/default: full ID (21.0.12+9-temurin), major, or distro-major.
-  Bare install majors use Temurin; uninstall/default majors match all distros.
-  If install/uninstall/default match multiple IDs, choose a reported full ID.
+  install/uninstall/default/home/env: full ID (21.0.12+9-temurin), major, or distro-major.
+  Bare install majors use Temurin; other local majors match all distros.
+  If install/uninstall/default/home/env match multiple IDs, choose a reported full ID.
   list also accepts a full ID; omit available/list selectors to show all.
 
 Examples:
@@ -36,6 +38,8 @@ Examples:
   jvm install temurin-21
   jvm uninstall temurin-21
   jvm list 21
+  jvm home
+  eval "$(jvm env temurin-21)"
 
 Shell setup (once, in your shell profile):
   Unix:
@@ -515,6 +519,59 @@ default_jdk() {
     report_default "$id"
 }
 
+# Resolve offline without changing defaults or touching cache/storage directories.
+# Keep the stable reference for omitted selectors; explicit homes are physical.
+resolve_home() {
+    local selector=$1 rows id
+    installation_selector "$selector" || return $?
+    require_tools uname awk || return 1
+    detect_host && data_path || return 1
+    if [ -n "$selector" ]; then
+        default_current 2>/dev/null || CURRENT=
+        rows=$(local_rows 2>/dev/null | select_rows "$selector") || return $?
+        id=${rows%%$'\t'*}
+        RESOLVED_HOME=$(cd "$JDKS/$id" && pwd -P) || { error 'cannot resolve JDK home'; return 1; }
+    else
+        default_current 2>/dev/null && [ -n "$CURRENT" ] &&
+            read_installation "$JDKS/$CURRENT" >/dev/null 2>&1 &&
+            [ "$DATA/default" -ef "$JDKS/$CURRENT" ] && jdk_layout "$DATA/default" || {
+                error 'default JDK is missing or unusable'; return 1;
+            }
+        RESOLVED_HOME=$(cd "$DATA" && pwd -P) || { error 'cannot resolve default path'; return 1; }
+        RESOLVED_HOME=$RESOLVED_HOME/default
+    fi
+    # Both interfaces promise single-line output. Never emit broken shell code.
+    case "$RESOLVED_HOME" in ''|*[$'\r\n']*) error 'JDK home must be a nonempty single-line path'; return 1 ;; esac
+}
+
+# Literal single-quoted Bash word, escaping embedded apostrophes without eval.
+shell_quote() {
+    local value=$1
+    value=${value//\'/\'\\\'\'}
+    printf "'%s'" "$value"
+}
+
+home_environment() {
+    local command=$1 selector=$2 java_home path_home quoted_java quoted_bin usage
+    resolve_home "$selector" || return $?
+    java_home=$RESOLVED_HOME
+    path_home=$RESOLVED_HOME
+    if [ "$OS" = windows ]; then
+        require_tools cygpath || return 1
+        java_home=$(cygpath -m "$RESOLVED_HOME") &&
+            path_home=$(cygpath -u "$RESOLVED_HOME") || { error 'cannot convert JDK home path'; return 1; }
+        case "$java_home" in [a-zA-Z]:/*|//*) ;; *) error 'cannot convert native JDK home path'; return 1 ;; esac
+        case "$path_home" in /*) ;; *) error 'cannot convert Bash JDK home path'; return 1 ;; esac
+    fi
+    case "$java_home$path_home" in *[$'\r\n']*) error 'JDK home must be a single-line path'; return 1 ;; esac
+    if [ "$command" = home ]; then printf '%s\n' "$java_home"; return 0; fi
+    quoted_java=$(shell_quote "$java_home") && quoted_bin=$(shell_quote "$path_home/bin") || return 1
+    usage='jvm env'
+    # Valid installed selectors contain only shell-safe ID/major/distro characters.
+    [ -z "$selector" ] || usage="$usage $selector"
+    printf '# Use: eval "$(%s)"\nexport JAVA_HOME=%s\nexport PATH=%s:"$PATH"\n' "$usage" "$quoted_java" "$quoted_bin"
+}
+
 replacement_default() {
     local removed=$1 version=$2
     local_rows | awk -F '\t' -v removed="$removed" -v version="$version" '
@@ -908,10 +965,14 @@ case "${1:-}" in
     --version)
         [ "$#" -eq 1 ] || { error '--version takes no arguments'; exit 2; }
         printf 'jvm %s\n' "$VERSION" ;;
-    list|default)
+    list|default|home|env)
         if [ "$#" -eq 2 ] && [ "$2" = --help ]; then help_text; exit 0; fi
         [ "$#" -le 2 ] && { [ "$#" -eq 1 ] || [ -n "$2" ]; } || { error "usage: jvm $1 [selector]"; exit 2; }
-        if [ "$1" = list ]; then list_installed "${2:-}"; else default_jdk "${2:-}"; fi ;;
+        case "$1" in
+            list) list_installed "${2:-}" ;;
+            default) default_jdk "${2:-}" ;;
+            home|env) home_environment "$1" "${2:-}" ;;
+        esac ;;
     available|install|uninstall)
         if [ "$#" -eq 2 ] && [ "$2" = --help ]; then help_text; exit 0; fi
         if [ "$1" != available ] && [ "$#" -eq 1 ]; then

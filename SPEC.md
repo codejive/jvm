@@ -8,7 +8,8 @@ not need to install a separate JDK manager. JDK downloads and user preferences
 are shared across those project copies.
 
 This document distinguishes implemented discovery, installation, offline
-listing, uninstallation and persistent defaults from later milestones. Requirements expressed as MUST
+listing, uninstallation, persistent defaults and offline home/environment output
+from later milestones. Requirements expressed as MUST
 are mandatory for their stated scope. Details marked **proposed** remain design
 choices for review.
 
@@ -35,8 +36,10 @@ Adopted implementation choices explicitly authorized by the user: Bash 3.2 as
 the baseline, the command names below, exit codes 0/2/1, and a one-hour freshness
 interval. The four discovery entry points remain supported. The
 installation and offline-listing extension is described below. Persistent defaults
-and manual shell setup were subsequently authorized on 2026-10-30. Session
-switching, command execution and general JSON parsing remain deferred.
+and manual shell setup were subsequently authorized on 2026-10-30. Broader
+session-switching infrastructure, command execution and general JSON
+parsing remain deferred. Offline `home` and opt-in `env` output are implemented
+as described below.
 Help advertises implemented commands.
 
 ### Installation and offline listing (authorized 2026-10-30)
@@ -92,6 +95,63 @@ staging directories and no lock.
 
 See [tests/README.md](tests/README.md) for exact verification commands and gaps.
 
+## Offline home and environment output (implemented 2026-10-30)
+
+`home [<selector>]` and `env [<selector>]` use only the complete managed
+inventory and existing default reference. They never fetch metadata, access the
+metadata cache, create storage directories, change the persistent default or
+installed inventory, or edit shell profiles. They do not download missing JDKs.
+
+Both accept the same installed selectors as `default`: exact full ID first,
+otherwise a positive major or distro-major, including hyphenated distributions
+and legacy Java versions. Bare majors match every distribution. Multiple
+matches use the existing ambiguity diagnostic/table and exit 1; no highest
+version is chosen. No match uses `No JDK found matching: <selector>` and exits 1.
+Version ranges remain deferred. Invalid selectors and excess/empty arguments
+exit 2. Each command's `--help` prints main help without external utilities or
+storage access.
+
+Without a selector, validate that the stable default reference points to a
+usable managed installation. An absent, dangling, incompatible, unrelated or
+unusable reference reports `jvm: default JDK is missing or unusable` on stderr
+and exits 1. Never repair or select a default implicitly. Successful ordinary
+invocations have empty stderr; failures have empty stdout.
+
+### JDK home output: `home [<selector>]`
+
+Print exactly one unquoted absolute path and a newline. Explicit selection uses
+the selected installation's normalized physical JDK home. Omitted selection
+uses the stable `jvm/default` path, retaining that final reference rather than
+resolving it to an installation. Unix output is an absolute filesystem path;
+Windows output is a native absolute path with forward slashes, using `cygpath`.
+No label, comment, shell quoting or selection announcement is printed.
+
+### Shell environment output: `env [<selector>]`
+
+Use the same home/reference choice as `home`. Print exactly a usage comment and
+two Bash export statements, in that order:
+
+```bash
+# Use: eval "$(jvm env temurin-21)"
+export JAVA_HOME='/absolute/selected/home'
+export PATH='/absolute/selected/home/bin':"$PATH"
+```
+
+Without a selector, the comment is exactly `# Use: eval "$(jvm env)"`.
+Include the supplied selector in the comment; accepted selector syntax contains
+only shell-safe ID/major/distro characters. Paths are literal single-quoted
+Bash words with embedded apostrophes safely escaped. Spaces, dollar signs,
+backticks and other metacharacters are data. Preserve the literal `"$PATH"` in
+the statement for expansion by the evaluating caller; do not embed the
+producer's PATH. Prepare and validate all paths and output before printing.
+Single-line output requires rejecting paths containing CR or LF.
+
+On Windows, JAVA_HOME uses a native forward-slash path and the PATH entry uses
+the Bash environment's POSIX path, both converted with `cygpath`. A native drive
+colon never enters the PATH entry. Output does not itself change the caller's
+environment: the user explicitly evaluates it. The implementation never uses
+`eval` or sources metadata. No extra session-switching infrastructure is added.
+
 ## Scope
 
 The complete version MUST:
@@ -114,8 +174,8 @@ The complete version MUST:
 
 Future work, which MUST NOT be implemented in the initial version:
 
-- Select a JDK for the current shell session, potentially using dynamic shims
-  and a shell integration protocol.
+- Broader shell-session integration, potentially using dynamic shims and a
+  shell integration protocol, beyond the implemented opt-in `env` output.
 - Run an arbitrary command with a selected JDK.
 
 Initial scope does not require system-wide installation, automatic
@@ -167,7 +227,7 @@ installers are outside initial scope.
 ## Adopted command interface
 
 The names and exit codes are adopted. `help`, `--help`, `--version`,
-`available`, `list`, `install`, `uninstall`, and `default` are implemented.
+`available`, `list`, `install`, `uninstall`, `default`, `home`, and `env` are implemented.
 The following commands describe the intended complete interface.
 
 ```text
@@ -179,6 +239,8 @@ jvm list [selector]
 jvm install <selector>
 jvm uninstall <selector>
 jvm default [selector]
+jvm home [selector]
+jvm env [selector]
 ```
 
 - `available` lists compatible JDKs across JVM implementations from the API's
@@ -217,6 +279,8 @@ jvm default [selector]
 - `default` without an argument reports the current selection, or explicitly
   reports that none exists. With an argument it selects an already installed
   JDK; it MUST NOT silently download one.
+- `home` prints the installed home or stable default path; `env` prints safely
+  quoted Bash exports for the same path, as specified above.
 - `help` shows implemented command usage and a short selector explanation.
   Include a brief purpose statement, one-line command descriptions and a few
   examples. Keep it readable without a wall of text; omit routine implementation
@@ -236,7 +300,7 @@ jvm default [selector]
   the same layout to redirected output; repeated tabs are display padding.
 - Diagnostics and progress go to stderr; command results go to stdout. Avoid
   interactive prompts and terminal-only formatting in redirected output.
-- When install, uninstall or default matches multiple IDs, print
+- When install, uninstall, default, home or env matches multiple IDs, print
   `Multiple JDKs match, try again using one of the following IDs:` followed by
   the matching JDKs using the same table renderer as `list <selector>` (ID,
   distribution, version and JVM, with the same headers and tab alignment).
@@ -244,8 +308,8 @@ jvm default [selector]
   stderr; stdout stays empty and the command exits 1. Uninstall shows the local
   matches; install shows its matching remote candidates, including its default
   distribution filter for bare majors.
-- **Adopted:** exit 0 for success (including empty lists and no default), 2 for
-  invalid usage, and 1 for operational failures, no selector match, or ambiguity.
+- **Adopted:** exit 0 for success (including empty lists and `default` reporting
+  no default), 2 for invalid usage, and 1 for operational failures, no selector match, or ambiguity.
   A selector with no matching JDK reports `No JDK found matching: <selector>`.
 
 ## Identity and selection
@@ -334,7 +398,8 @@ for validation, without encoding them into the ID.
   fail rather than falling back to a different distribution.
   A single ID proceeds to archive-format preference and the unique-row check.
 - Print the resolved ID on installation
-  and selection. A persistent default stores the exact ID, not the selector.
+  and persistent default selection. `home` and `env` print only their specified
+  path/environment output. A persistent default stores the exact ID, not the selector.
 
 Remote resolution uses the API's own latest selection for each major version;
 the API need not supply an ordering key. Resolve within that inventory, retaining
@@ -761,7 +826,8 @@ that native verification is complete on every supported platform:
    processes, and interruptions fail without corrupting managed state.
 7. Platform/libc detection, macOS bundles, Windows paths, Bash 3.2 compatibility,
    spaces in paths, and nondefault XDG locations are covered by verification.
-8. Session selection and command execution remain unimplemented.
+8. Opt-in `env` output is implemented; broader session integration and command
+   execution remain unimplemented.
 9. TSV discovery trusts the published layout, uses explicit `file_type`, and
    lists compatible latest JDKs across JVM implementations. Unused fields stay
    untouched; repeated IDs display once without build checks or warnings.

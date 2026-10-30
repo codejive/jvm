@@ -27,8 +27,29 @@ bash "$ROOT/jvm" install 21+1-test
 bash "$ROOT/jvm" default 25
 [ "$XDG_DATA_HOME/jvm/default" -ef "$XDG_DATA_HOME/jvm/jdks/25+1-test" ]
 MSYS2_ARG_CONV_EXCL='*' "$XDG_DATA_HOME/jvm/default/bin/java.exe" /d /c exit 0
+# Native path conversion through the stable junction and explicit inventory home.
+for selector in '' 25+1-test; do
+    expected=$XDG_DATA_HOME/jvm/default
+    [ -z "$selector" ] || expected=$XDG_DATA_HOME/jvm/jdks/25+1-test
+    if [ -z "$selector" ]; then
+        bash "$ROOT/jvm" home > "$TEMP/home.out" 2> "$TEMP/home.err"
+        bash "$ROOT/jvm" env > "$TEMP/env.out" 2> "$TEMP/env.err"
+    else
+        bash "$ROOT/jvm" home "$selector" > "$TEMP/home.out" 2> "$TEMP/home.err"
+        bash "$ROOT/jvm" env "$selector" > "$TEMP/env.out" 2> "$TEMP/env.err"
+    fi
+    [ ! -s "$TEMP/home.err" ] && [ ! -s "$TEMP/env.err" ]
+    [ "$(< "$TEMP/home.out")" = "$(cygpath -m "$expected")" ]
+    bash -c '
+        set -eu
+        original=$PATH
+        code=$(< "$1")
+        eval "$code"
+        [ "$JAVA_HOME" = "$2" ] && [ "$PATH" = "$3/bin:$original" ]
+    ' bash "$TEMP/env.out" "$(cygpath -m "$expected")" "$(cygpath -u "$expected")"
+done
 bash "$ROOT/jvm" uninstall 25
 [ "$XDG_DATA_HOME/jvm/default" -ef "$XDG_DATA_HOME/jvm/jdks/21+1-test" ]
 bash "$ROOT/jvm" uninstall 21
 [ ! -L "$XDG_DATA_HOME/jvm/default" ] && [ ! -e "$XDG_DATA_HOME/jvm/default" ]
-echo 'ok - native junction creation, replacement, executable traversal and uninstall fallback'
+echo 'ok - native junction creation, replacement, executable traversal, home/env conversion and uninstall fallback'
