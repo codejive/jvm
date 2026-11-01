@@ -38,10 +38,13 @@ exact() { printf '%s\n' "$1" > "$TEMP/expected"; cmp "$TEMP/expected" "$TEMP/out
 diagnostic() { [[ $(< "$TEMP/err") = *"$1"* ]] || fail "missing diagnostic: $1"; }
 make_jdk() {
     local version=$1 distro=$2 os=${3:-linux} home
+    local major=${version#1.}
+    major=${major%%[^0-9]*}
     home=$XDG_DATA_HOME/jvm/jdks/$version-$distro
+    [[ $version = "$major"[!0-9]* ]] || home=$XDG_DATA_HOME/jvm/jdks/$major-$version-$distro
     mkdir -p "$home"
     tar -xzf "$ROOT/tests/fixtures/archives/jdk.tar.gz" -C "$home" --strip-components=1
-    printf 'jvm-install-v2\t%s-%s\t%s\t%s\thotspot\t%s\tx86_64\t.\thttps://invalid.test/jdk\t%064d\ttar.gz\t0\n' "$version" "$distro" "$distro" "$version" "$os" 0 > "$home/.jvm-manifest"
+    printf 'jvm-manifest-v1\nga\t%s\tx86_64\tjdk\thotspot\tvendor\t%s\t%s\t%s\ttar.gz\thttps://invalid.test/jdk\tjdk.tar.gz\t0\t%064d\t[]\n\n' "$os" "$distro" "$version" "$version" 0 > "$home/.jvm-manifest"
 }
 check_env() {
     local java=$1 bin=$2 selector=${3:-} omit=${4:-0} usage='jvm env' lines=3
@@ -89,7 +92,7 @@ for command in home env; do
 done
 ln -s "$base/jdks/21+1-temurin" "$base/jdks/default"
 ln -s "$base/jdks/21+1-temurin" "$base/jdks/21"
-ln -s "$base/jdks/1.8.0_482-b08-legacy" "$base/jdks/8"
+ln -s "$base/jdks/8-1.8.0_482-b08-legacy" "$base/jdks/8"
 for selector in 21+1-temurin 21 temurin-21 graalvm-community-17 8; do
     case "$selector" in graalvm*) expected=$base/jdks/17+2-graalvm-community ;; 8|21) expected=$base/jdks/$selector ;; *) expected=$base/jdks/21+1-temurin ;; esac
     run 0 home "$selector"; exact "$expected"
@@ -151,7 +154,7 @@ rm "$base/jdks/21" "$base/jdks/8"
 for command in home env; do
     run 1 "$command" 21; diagnostic 'Multiple JDKs match'; diagnostic '21+1-temurin'; diagnostic '21+9-other'
     run 0 "$command" 8
-    if [ "$command" = home ]; then exact "$base/jdks/1.8.0_482-b08-legacy"; else check_env "$base/jdks/1.8.0_482-b08-legacy" "$base/jdks/1.8.0_482-b08-legacy/bin" 8; fi
+    if [ "$command" = home ]; then exact "$base/jdks/8-1.8.0_482-b08-legacy"; else check_env "$base/jdks/8-1.8.0_482-b08-legacy" "$base/jdks/8-1.8.0_482-b08-legacy/bin" 8; fi
 done
 printf 'unrelated\n' > "$base/jdks/21"
 for command in home env; do

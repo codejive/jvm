@@ -51,8 +51,9 @@ uses the same GA latest index and cache as discovery, filtering compatible JDKs
 and zip/tar.gz before selection. It requires SHA-256, checks advertised size,
 validates archive paths and links before extraction, checks the JDK layout and
 publishes a complete installation by rename on the destination filesystem.
-Local listing uses only durable managed manifests and checks the recorded host
-and JDK layout. Empty inventory succeeds. The user restored `list [selector]`
+Local listing originally required durable managed manifests and a matching host
+and JDK layout. The 2026-11-01 directory-inventory correction below supersedes
+that visibility rule. Empty inventory succeeds. The user restored `list [selector]`
 on 2026-10-30, superseding the earlier removal of its optional selector.
 This milestone originally left defaults unchanged; the persistent-default
 extension below supersedes that behavior. No command edits shell profiles.
@@ -61,7 +62,7 @@ Exact full IDs take precedence for installation selectors. Otherwise
 accept a positive major or distro-major (including hyphenated distros). A bare
 install major uses Temurin: `install 22` is equivalent to `install temurin-22`.
 This distribution is currently hard-coded. `list`
-returns the complete managed inventory unless a selector filters it. `install` filters the latest index and
+returns the local directory inventory unless a selector filters it. `install` filters the latest index and
 requires one matching ID; multiple IDs fail with their full IDs as choices.
 Versions are never sorted or ranked, and vendor labels do not need parsing.
 This 2026-10-30 user clarification supersedes the earlier highest-version rule.
@@ -74,7 +75,7 @@ without another artifact download; an exact installed ID also works offline.
 
 ### Uninstallation (authorized 2026-10-30)
 
-`uninstall <selector>` resolves exclusively against the complete managed offline
+`uninstall <selector>` resolves exclusively against the offline directory
 inventory used by `list`. It accepts an exact full ID, positive major, or
 distro-major, including hyphenated distros and legacy versions. A bare major
 matches all locally installed distributions; it does not assume Temurin.
@@ -358,7 +359,7 @@ Extend selectors with major-version bounds:
 | `21..25` | Any major version from 21 through 25, inclusive. |
 | `temurin-21..25` | Any Temurin major version from 21 through 25, inclusive. |
 
-Range bounds apply to majors extracted from `version`. Selection among matches
+Range bounds apply to majors extracted from `java_version`. Selection among matches
 uses the highest-major rule below. Preserve exact full-ID precedence, including
 IDs whose version already contains `+`, and support hyphenated distros.
 
@@ -425,11 +426,13 @@ Version ranges remain deferred. Invalid selectors and excess/empty arguments
 exit 2. Each command's `--help` prints main help without external utilities or
 storage access.
 
-Without a selector, validate that the stable global default reference points to a
-usable managed installation. An absent reference reports
+Without a selector, validate that the stable global default reference points to an
+ordinary inventory directory with usable launchers. A valid manifest is not
+required for a global reference. An absent reference reports
 `jvm: No JDK currently set as the default` on stderr and exits 1, using the same
-wording as the `default` query. A dangling, incompatible, unrelated or unusable
-reference reports `jvm: default JDK is missing or unusable` on stderr and exits 1.
+wording as the `default` query. A dangling reference, a target outside the
+inventory or a target without usable launchers reports
+`jvm: default JDK is missing or unusable` on stderr and exits 1.
 Never repair or select a default implicitly. Successful ordinary
 invocations without secondary informational messages have empty stderr; failures
 have empty stdout. The output-stream decision below permits informational
@@ -702,9 +705,10 @@ jvm exec [-i] [selector] -- <command> [args...]
   latest index, covering the latest release of every major across distributions. No argument,
   a major, a distro, and a distro-major all use that same index and cache.
   Historical versions are outside the current discovery interface.
-- `list [selector]` lists complete managed installations offline. With no
-  selector it returns the complete inventory. If no complete managed JDKs are
-  installed, print `No JDKs are installed. Use 'install' to install one` to stdout,
+- `list [selector]` lists local JDK directories offline, including directories
+  with absent/invalid manifests or invalid launcher layouts. With no selector
+  it returns the complete directory inventory. If no such directories exist,
+  print `No JDKs are installed. Use 'install' to install one` to stdout,
   without a table header, and exit 0 whether or not a valid selector was supplied.
   An optional full ID, major, distro or distro-major filters this inventory.
   Exact IDs take precedence; majors match all distributions. Return every
@@ -713,8 +717,10 @@ jvm exec [-i] [selector] -- <command> [args...]
   invalid syntax or excess/empty arguments exit 2. No network or cache access
   is allowed.
 - `install` resolves a remote selector and installs that exact artifact. It is
-  idempotent for an already complete installation. It initializes a missing
-  default, but MUST NOT replace an existing default unless `-d` is supplied.
+  idempotent for an already complete installation, and for an exact local ID
+  with usable launchers even when its manifest is missing or invalid. It
+  initializes a missing default, but MUST NOT replace an existing default unless
+  `-d` is supplied.
   Print `Installing <ID>...` to stderr after resolving the full ID and before
   downloading the artifact, then
   `Successfully installed <ID>` to stderr after publication. An existing complete
@@ -726,7 +732,7 @@ jvm exec [-i] [selector] -- <command> [args...]
   Both forms need no external utilities and perform no host detection, storage
   access or networking. This supersedes the earlier install-specific help.
   `-help` is an unsupported flag and exits 2.
-- `uninstall` removes one complete managed installation using the offline
+- `uninstall` removes one selected local directory using the offline
   selection and move-before-delete procedure above.
   With no argument, print `jvm: usage: jvm uninstall <selector>` followed by
   `for more information run: jvm uninstall --help` on stderr and exit 2,
@@ -746,10 +752,12 @@ jvm exec [-i] [selector] -- <command> [args...]
   that help should explain the tool rather than compress usage into a few lines.
 - Full IDs MUST be shown untruncated. Discovery does not accept them as selectors;
   exact IDs are accepted by installation, uninstallation and local listing. Listings
-  show `ID`, `DISTRIBUTION`, `VERSION`, and `JVM`. Omit the platform column;
+  show `ID`, `DISTRIBUTION`, `VERSION`, and `JVM`. The `VERSION` column uses
+  upstream `java_version` in all listings, including ambiguity tables; its header
+  stays unchanged (user requested 2026-11-01). Omit the platform column;
   discovery already filters for the current host.
   Local listings and local ambiguity tables add a `DEFAULT` column showing
-  `global`, a major, or both when references select the row. IDs remain unchanged.
+  `global`, a major, or both when references select the row. Default labels do not change IDs.
 - Align listing headers and values with tabs at 8-column stops. Size each column
   from the widest displayed value or header, placing the next column at the
   following tab stop, capped at four tab stops (32 columns) per column. Longer
@@ -778,10 +786,25 @@ jvm exec [-i] [selector] -- <command> [args...]
 
 ### Full IDs
 
-A full ID MUST use `<version>-<distro>` for every JVM implementation. Use the API's
-`version` value as supplied for IDs, displayed versions, and major matching;
-`java_version` is not used. This adopts the user's manual change, confirmed
-on 2026-10-30, and supersedes the earlier Java-version-based identity decision.
+Build a full ID from `<version>-<distro>` for every JVM implementation,
+using the API's `version` value unchanged. If its leading decimal number is not
+the Java major extracted from `java_version`, prepend `<major>-`. Compare the
+whole leading number: Java 19 with vendor version `190.1` also needs `19-`.
+For example, vendor version `22.3.1+java19` with Java 19 produces
+`19-22.3.1+java19-graalvm`; legacy vendor version `1.8.0_482-b08` with Java 8
+produces `8-1.8.0_482-b08-temurin`. A version already starting with the correct
+major receives no extra prefix.
+
+**User correction (closed 2026-11-01; implemented):** all Java-major operations MUST derive their
+major from `java_version`, including discovery, installation and offline
+selectors, per-major reference initialization/validation, and default replacement.
+`version` is used only as the vendor-version portion of the ID, never to infer
+the Java major. This supersedes the 2026-10-30 major-matching decision.
+The `VERSION` column continues to display `java_version`.
+Apply the same ID derivation to discovery, installation and saved manifest
+validation. Existing directories are not renamed or migrated; the ordinary
+local-directory inventory rules still apply to them.
+
 `distro` is the canonical distribution identifier. Never append `jvm_impl` to
 the ID. This 2026-10-30 user decision prioritizes shorter IDs; collisions across
 JVM implementations fail installation if multiple rows remain after archive
@@ -810,15 +833,72 @@ supplies display fields (including the JVM column); no artifact is selected.
 Installation applies the format preference and unique-row requirement above;
 discovery does not perform those checks.
 
-Installed manifests preserve the ID even if the corresponding download later
-disappears from the upstream index. Retain platform and source artifact metadata
+Installed directory names preserve the ID even if the corresponding download
+later disappears from the upstream index. A manifest supplies metadata rather
+than permission to use or uninstall that directory. Retain platform and source artifact metadata
 for validation, without encoding them into the ID.
+
+### Local directory inventory (user correction 2026-11-01)
+
+A directory's name is its local ID. Missing or invalid metadata does not make
+working launchers unusable and must not hide a directory or prevent its removal.
+This supersedes the earlier complete-manifest-only inventory policy.
+
+List ordinary directories directly beneath `jdks/`, including hidden folders
+and manually named folders. Exclude `default` and numeric names reserved for
+references, ordinary files, directory symlinks/junctions and unsafe path names.
+Local names must be nonempty single components of at most 180 characters;
+reject `.`, `..`, leading `-`, path separators, tabs, CR and LF. Existing local
+names may contain spaces and need not follow the remote `<version>-<distro>`
+grammar. No metadata is inferred from a directory's spelling.
+
+Apply these checks in order:
+
+| Directory state | `list` output | Local command behavior |
+| --- | --- | --- |
+| Missing/unusable java or javac launcher | ID plus `(invalid JDK)` only | Exact-ID uninstall works; default/home/env/exec selection fails. |
+| Usable launchers, no manifest | ID plus `(manifest missing)` only | Exact-ID selection and uninstall work. |
+| Usable launchers, invalid/unrecognized manifest or mismatched identity/host | ID plus `(manifest invalid)` only | Exact-ID selection and uninstall work. |
+| Usable launchers and valid matching manifest | Ordinary metadata columns and default labels | Exact-ID and metadata-based selectors work. |
+
+The diagnostic rows show only the ID and message, with no guessed distro,
+version, JVM or default columns. Invalid launcher layout takes precedence over
+manifest status. Existing launcher checks apply: executable java/javac files on
+Unix; accepted native launcher suffixes on Windows. These checks establish
+layout, not proof that a binary can execute on this machine.
+
+An exact directory name takes precedence over short-selector interpretation.
+`list <ID>` and `uninstall <ID>` include diagnostic rows. Major, distro and
+distro-major filters skip them. `home`, `env`, `exec` and global `default` can
+select a working directory by exact ID without metadata, including through
+`-i`; no metadata fetch, manifest repair or invented manifest is needed.
+`install <exact-ID>` likewise reports an existing working directory as already
+installed without fetching metadata. `default -v N` requires a known major and
+fails clearly when metadata cannot establish it. An existing major reference
+whose target has no valid metadata remains unavailable for major selection;
+it never bypasses metadata requirements or silently falls back.
+
+Global default query/home/env/exec validate its target's launchers and directory
+identity without requiring its manifest. Automatic per-major initialization and
+all automatic replacement candidates still require valid host-compatible
+metadata and working launchers. An exact reinstall without metadata may
+initialize a missing global default, but cannot initialize a major reference.
+
+Uninstallation by exact ID requires neither launchers nor a manifest. Keep
+move-before-delete and scoped cleanup. Inspect references that actually point
+to the removed ID so loss of its metadata does not leave dangling references.
+For major references, use the reference name to choose a remaining known JDK
+of that major or remove the reference. If the removed global default has no
+known major, choose the first remaining complete compatible installation in
+existing inventory order, or clear the default when none remains. Unknown
+metadata directories are never chosen automatically as replacements. Failed
+moves restore prior usable selections, including those without manifests.
 
 ### Discovery selectors (implemented)
 
 - With no selector, list compatible latest JDKs across distributions, majors and
   JVM implementations.
-- A positive integer such as `21` filters by the major extracted from `version`.
+- A positive integer such as `21` filters by the major extracted from `java_version`.
 - A canonical distro such as `temurin` filters by distribution across majors.
   Hyphenated distro names such as `graalvm-community` are supported.
 - `<distro>-<major>` such as `temurin-21` filters by both. Split a positive major
@@ -854,26 +934,30 @@ With an explicit selector:
 1. Validate selector syntax, detect the host and resolve the data storage path.
    Accept a full ID, positive major without leading zeros, or distro-major,
    including hyphenated distros and legacy version IDs. Bare distro names and
-   version ranges are unsupported by these commands. No inventory scan occurs.
+   version ranges are unsupported unless they name an existing local directory
+   exactly. An existing safe local folder name is also an exact ID, including
+   names with spaces or a leading dot. No inventory scan occurs.
 2. For a positive major such as `21`, check `jdks/21` directly. If present,
    validate that it is a managed link/junction to a compatible, usable
    installation of that major. A valid reference selects its target without
    scanning the inventory. An existing invalid, unrelated, dangling, unusable
    or wrong-major reference fails without scanning or permitting installation.
    An absent reference proceeds to step 4.
-3. For a full-ID selector, check `jdks/<ID>` directly. A valid installation
-   selects that ID without scanning the inventory. A missing or invalid
-   installation proceeds to step 4; an operational manifest-read error fails
-   immediately. Distro-major selectors proceed directly to step 4.
-4. Scan the inventory: enumerate `jdks/*`, skip names that are not safe
-   installation IDs (including `default` and numeric aliases), and read each
-   candidate's manifest. Validate manifest identity, host compatibility and
-   Java launcher layout. Ignore incomplete, incompatible or unmanaged candidates;
-   operational read errors fail the scan. Collect the complete usable inventory
-   before filtering, even if an early candidate matches. An absent inventory is
+3. For an exact local ID, check `jdks/<ID>` directly. An ordinary directory
+   with usable java/javac launchers selects that ID without requiring a valid
+   manifest or scanning the inventory. An existing invalid launcher layout
+   fails with a clear error. An absent directory proceeds to step 4; an
+   operational manifest-read error fails immediately. Distro-major selectors
+   proceed directly to step 4 unless an exact directory name matches.
+4. Scan the inventory: enumerate ordinary directories directly beneath `jdks/`,
+   including hidden directories, excluding reserved references and unsafe names.
+   Classify each by launcher layout and manifest validity as specified below;
+   operational manifest-read errors fail the scan. Collect the complete directory
+   inventory before filtering, even if an early candidate matches. An absent inventory is
    empty; inaccessible or invalid storage ancestors are operational failures.
 5. Filter the collected inventory. An exact ID match takes precedence;
-   otherwise a major matches every distro of that major, and a distro-major
+   otherwise only directories with valid metadata and usable launchers
+   participate: a major matches every distro of that major, and a distro-major
    matches that distro and major. One distinct matching ID selects it. Multiple
    matching IDs print the existing options table on stderr and exit 1. Zero
    matches report `No JDK found matching: <selector>` and exit 1, unless `-i`
@@ -918,7 +1002,8 @@ selector.
 
 ### Installation selectors (implemented)
 
-- Try an exact full-ID match first.
+- First reuse an exact existing local directory with usable launchers, even
+  without a valid manifest. Otherwise try an exact full-ID match in the index.
 - A positive integer such as `21` selects that major from the hard-coded
   default distribution, `temurin`: `install 21` means `install temurin-21`.
   This applies only to installation, including installation after a local `-i`
@@ -928,7 +1013,7 @@ selector.
 - Distribution names use canonical jdkdb-index identifiers.
 - `list` is an optionally filtered offline inventory. `install` and
   `default` must resolve to a single artifact or installation.
-- Filter the latest index by the major extracted from upstream `version` and
+- Filter the latest index by the major extracted from upstream `java_version` and
   the explicit or default distro. The endpoint already selects latest releases; do not
   rank versions or reject vendor version syntax such as `+java17` or `-Final`.
 - If several distinct IDs remain, fail with their full IDs and ask the user
@@ -1004,19 +1089,58 @@ distribution, Java version, platform/libc, JVM implementation, JDK home,
 source URL, and expected/verified digest. Use a versioned, non-executable data
 format. Cache deletion must not remove installations or reset the default.
 
-**Implemented manifest v2:** `.jvm-manifest` is one UTF-8 TSV record, never
-executable or sourced. Its fields are `jvm-install-v2`, ID, distro, upstream
-version, JVM implementation, OS (including libc), architecture, relative JDK
-home, artifact URL, verified lowercase SHA-256, archive format, advertised size
-(empty if absent). The relative home is `.`: `<ID>` itself contains `bin`,
-`lib`, vendor metadata and any hidden home files. Extract to private staging,
-locate and validate the actual home, write its manifest, then rename that home
-directly to `<ID>` on the same filesystem. Discard archive wrappers and siblings
-with the operation's remaining staging files. Reject archive-provided
-`.jvm-manifest` entries in the selected home and links that would escape the
-selected home after normalization. Local listing
-requires a matching ID/platform, recognized manifest and usable java/javac
-layout; it ignores incomplete, incompatible or unmanaged directories.
+### Installation manifest (adopted 2026-11-01)
+
+**User-requested and implemented:** `.jvm-manifest` is a non-executable UTF-8
+file with exactly three lines:
+
+1. The exact format marker `jvm-manifest-v1`.
+2. An exact copy of the upstream TSV data row used to install the JDK, from
+   the same index used by `available`. This is the original artifact row,
+   not the formatted table printed by `available`. Preserve all fields,
+   empty cells, escaping, case and unknown trailing columns without rebuilding
+   the row from selected fields. Retain a source CRLF row ending when present;
+   the marker and local-values lines use LF.
+3. A TSV record for our own values, currently an empty line. No local columns
+   are defined yet; future fields can be appended as needed. The empty third
+   line is required even when there are no local values.
+
+**User-supplied upstream guarantee (2026-11-01):** the remote service may only
+append columns at the end. Existing columns will never be removed, changed or
+reordered. This guarantee is recorded from the user's instruction, not a new
+live API verification. Readers use the known column positions, accept additional
+trailing columns and ignore fields they do not understand. Starting with public
+release, our local-values row MUST follow the same append-only rule: never
+remove, change the meaning of, or reorder an existing column. New optional
+fields must not prevent older readers from using the installation. The marker
+identifies the three-line envelope; adding TSV columns does not change it.
+
+Derive the ID from the saved upstream `version` and `distro`, applying the
+`java_version` major-prefix rule above, rather than storing it twice. Read
+platform, JVM, URL, archive format, advertised size, checksum and
+`java_version` from that row. Installation verifies SHA-256 before publishing;
+the manifest preserves the original checksum spelling, while comparisons use
+lowercase. It never sources or evaluates either TSV row.
+
+This format supersedes the short-lived single-record `jvm-install-v3` format
+introduced for `java_version` display earlier on 2026-11-01, and all earlier
+manifest formats. The change preserves upstream metadata for future readers
+without duplicating its schema in our durable format.
+
+**User correction (2026-11-01, before first public release):** remove the
+redundant relative JDK home value before the local columns become a public
+append-only contract. Every installation is already flattened into `jdks/<ID>/`;
+no stored relative path is needed to locate its home. The third line starts
+empty, and readers ignore future local columns they do not understand.
+
+Extract to private staging, locate and validate the actual home, write its
+manifest, then rename that home directly to `<ID>` on the same filesystem.
+Discard archive wrappers and siblings with the operation's remaining staging
+files. Reject archive-provided `.jvm-manifest` entries in the selected home and
+links that would escape the selected home after normalization. Local listing
+uses a recognized three-line manifest with matching derived ID/platform to
+display metadata, but also shows directories without usable manifests or
+launchers, as specified under local directory inventory below.
 
 During preproduction, backward compatibility with earlier storage layouts and
 manifest formats is not required. Only the current flat layout and manifest
@@ -1044,8 +1168,8 @@ normal `Successfully installed <ID>` message. Concurrent installers may download
 and extract the same artifact independently; no waiting or stale-lock recovery
 is needed. A publication failure without a complete winner remains an error.
 Traps clean up owned staging and marked copies on HUP/INT/TERM. An uncatchable
-kill can leave staging or a marked nested copy; neither appears as an installation
-or blocks new installers. Existing incomplete or incompatible ID directories cause an error
+kill can leave staging or a marked nested copy; these are outside the direct
+JDK inventory scan and do not block new installers. Existing incomplete or incompatible ID directories cause an error
 instead of replacement. Complete installation directories are immutable.
 
 Archive inspection requires tar gzip listing/extraction or Info-ZIP-compatible
@@ -1062,9 +1186,11 @@ pathname/listing forms fail safely rather than being guessed. On Windows,
 case aliases, reserved device names and trailing dots are rejected. These
 restrictions concern archive member names; HOME and XDG paths support spaces.
 
-Selection keeps upstream version strings intact. For example,
-`22.3.3+java17-graalvm` and `22.1.0.1-Final-gluon-graalvm` both match major 22.
-Their vendor annotations are neither errors nor a reason to prefer one ID.
+Selection keeps upstream version strings intact within IDs. For example,
+`17-22.3.3+java17-graalvm` matches Java major 17 when its `java_version` is
+`17.0.19+7`; `17-22.1.0.1-Final-gluon-graalvm` likewise matches 17 when its
+`java_version` is `17.0.1+12`. Vendor annotations are neither errors nor a
+reason to prefer one ID.
 Bare `install 22` filters to Temurin; explicit distro-major/full-ID selectors
 remain available for these other distributions.
 Installation has no version comparator, recognized-version grammar or numeric
@@ -1108,10 +1234,11 @@ refresh the shell environment or restart that software.
 `default` without a selector prints the exact ID, or `No JDK currently set as the default`
 and exits 0. The unset message makes no claim about installed JDKs: installations
 can exist without a default reference. A dangling managed reference reports an unavailable-default error.
-Without `-i`, a selector resolves against complete local installations only:
-positive majors first use an existing valid per-major reference. Otherwise exact
-IDs take precedence; major and distro-major selectors must resolve to one
-installation. Bare majors without a reference match all distros. Success prints
+Without `-i`, selectors resolve entirely offline. Positive majors first use an
+existing valid per-major reference. Otherwise exact local IDs take precedence
+and require usable launchers, but no manifest; major and distro-major selectors
+require valid metadata and must resolve to one installation. Bare majors without
+a reference match all distros. Success prints
 `Default JDK set to: <ID>` to stderr. This ordinary path uses no network or cache;
 `-i` follows the adopted install-on-demand policy above.
 `default --help` uses the main help without accessing storage or external tools.
@@ -1132,9 +1259,12 @@ When uninstalling the default, choose from the remaining complete compatible
 inventory: first the same major, then the smallest higher major, then the largest
 lower major. Ties use the first ID in local inventory order (C-locale directory
 name order). This orders only extracted majors, never vendor version strings.
-If no JDK remains, remove the link/junction. After successful removal, print
+If the removed JDK's major is unknown, use the first remaining complete
+compatible ID in that order. If no complete compatible replacement remains,
+remove the link/junction. After successful removal, print
 `Default JDK set to: <ID>`
-for a replacement, or `No JDK currently set as the default` if the inventory is now empty.
+for a replacement, or `No JDK currently set as the default` when there is no
+eligible replacement, even if directories with unknown metadata remain.
 When the removed JDK is also its major's default, replace that reference with
 the first remaining usable ID of the same major in local inventory order, or
 remove it when none remains. Update both selected references before moving the
@@ -1244,8 +1374,8 @@ exact published order:
 | 5 | `jvm_impl` | Display only; not filtered or included in IDs. |
 | 6 | `vendor` | Publisher metadata; use `distro` for selectors. |
 | 7 | `distro` | Display, distro filtering, and ID construction. |
-| 8 | `java_version` | Upstream Java version; ignored by discovery. |
-| 9 | `version` | ID construction, displayed version, and major matching. |
+| 8 | `java_version` | Displayed version, all Java-major operations and ID prefix. |
+| 9 | `version` | Vendor-version portion of ID construction only. |
 | 10 | `file_type` | Archive format used for filtering and extraction. |
 | 11 | `url` | Artifact download location. |
 | 12 | `filename` | Source artifact filename. |
@@ -1276,9 +1406,11 @@ Use `release_type`, OS, architecture and image type for GA/host/JDK filtering.
 Use `jvm_impl` for display only, without filtering it or including it in IDs.
 Use `file_type` for `tar.gz`/`zip` filtering. The bracketed
 features field is inspected only for a `musl` feature on a non-musl host; it is
-not parsed or compared as build metadata. `version` supplies IDs, the displayed
-version and major matching. Major extraction accepts both modern versions such
-as `8.0.482+8` and legacy `1.8.0_482-b08` notation. `java_version`, vendor, URL,
+not parsed or compared as build metadata. `version` supplies the vendor-version
+portion of IDs; `java_version` supplies the displayed version, Java-major
+matching and the conditional major prefix on IDs. Major extraction accepts
+both modern versions such
+as `8.0.482+8` and legacy `1.8.0_482-b08` notation. Vendor, URL,
 filename, size and SHA-256 are ignored by discovery.
 
 Print each matching ID once in upstream order. Duplicate IDs, including archive
@@ -1362,8 +1494,10 @@ never schema-checked or parsed until the single listing/filtering pass.
   installation of the same ID was published by another installer. Do not use a
   shared-storage lock.
 - Failed/interrupted installation must leave existing JDKs and the default
-  usable. Clean up only temporary paths owned by that operation. Partial installs
-  must never appear in `list` or resolve as usable JDKs.
+  usable. Clean up only temporary paths owned by that operation. Staged partial
+  installs must never appear in `list` or resolve as usable JDKs. An incomplete
+  directory already directly beneath `jdks/` is shown as `(invalid JDK)` and
+  remains removable by exact ID.
 - Quote paths and handle spaces and shell metacharacters in HOME, XDG paths,
   project paths, and download data. Do not use `eval` or source manifests, API
   responses, config, or JDK `release` files.
@@ -1464,7 +1598,11 @@ six samples; discovery does not decode unused fields.
 Representative values included `1.8.0_482-b08`, `17.0.20+1-LTS`, and `11.0.32.b1`.
 These historical `java_version` samples describe upstream data, not current ID
 inputs. On 2026-10-30 the user adopted `version` for IDs, display and major
-matching. `java_version` is now ignored; build comparisons remain removed.
+matching. The 2026-11-01 display change uses `java_version` for the `VERSION`
+column. The subsequent 2026-11-01 Java-major correction uses `java_version`
+for every major operation and conditionally prefixes IDs with that major;
+`version` remains the vendor-version portion of IDs. Build comparisons remain
+removed.
 Linux x86_64 returned ETag `W/"6ae33697-2234d"`; this is an observation, not a
 stable value. Header validators are preserved as opaque strings.
 The Windows x86_64 latest response had a Temurin 21 MSI row and no supported

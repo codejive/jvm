@@ -22,7 +22,7 @@ for major in 21 25; do
     # Real native executables prove traversal, without using an actual JDK.
     cp "$(command -v cmd.exe)" "$home/bin/java.exe"
     cp "$(command -v cmd.exe)" "$home/bin/javac.exe"
-    printf 'jvm-install-v2\t%s+1-test\ttest\t%s+1\thotspot\twindows\t%s\t.\thttps://invalid.test/jdk\t%064d\tzip\t0\n' "$major" "$major" "$arch" 0 > "$home/.jvm-manifest"
+    printf 'jvm-manifest-v1\nga\twindows\t%s\tjdk\thotspot\tvendor\ttest\t%s+99\t%s+1\tzip\thttps://invalid.test/jdk\tjdk.zip\t0\t%064d\t[]\n\n' "$arch" "$major" "$major" 0 > "$home/.jvm-manifest"
 done
 bash "$ROOT/jvm" i -d 21+1-test
 [ -L "$XDG_DATA_HOME/jvm/jdks/default" ]

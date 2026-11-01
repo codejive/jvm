@@ -26,7 +26,7 @@ export XDG_CACHE_HOME="$TEMP/cache with spaces" XDG_CONFIG_HOME="$TEMP/config" X
 mkdir -p "$HOME" "$TEMP/bin"
 TOOLS=$TEMP/bin
 export MSYS=winsymlinks:nativestrict
-for tool in ln readlink mkdir mktemp rm rmdir sed awk cat mv date cp sleep wc find tar gzip unzip sha256sum openssl; do
+for tool in ln readlink mkdir mktemp rm rmdir sed awk cat cmp mv date cp sleep wc find tar gzip unzip sha256sum openssl; do
     path=$(command -v "$tool") || continue
     printf '#!%s\nexec "%s" "$@"\n' "$BASH_BIN" "$path" > "$TOOLS/$tool"
     chmod +x "$TOOLS/$tool" || exit 1
@@ -181,12 +181,122 @@ diagnostic() { [[ $(< "$TEMP/err") = *"$1"* ]] || fail "missing diagnostic: $1";
 reset() { rm -rf -- "$XDG_DATA_HOME/jvm" "$XDG_CACHE_HOME/jvm"; rm -f "$TEST_LOG" "$TEST_LOG.started"; }
 index() { printf 'trusted header\n' > "$TEST_FIXTURE"; rm -rf -- "$XDG_CACHE_HOME/jvm"; }
 row() {
-    local version=$1 distro=$2 format=${3:-tar.gz} archive=${4:-$TEST_ARCHIVE} sha bytes
+    local version=$1 distro=$2 format=${3:-tar.gz} archive=${4:-$TEST_ARCHIVE} java_version=${5:-$1} sha bytes
+    java_version=${java_version#1.}; java_version=${java_version%%[^0-9]*}+99
     sha=$(sha256sum "$archive"); sha=${sha%% *}
     bytes=$(wc -c < "$archive"); bytes=${bytes//[[:space:]]/}
-    printf 'ga\t%s\tx86_64\tjdk\topenj9\tvendor\t%s\t99+1\t%s\t%s\thttps://artifacts.invalid/%s\tjdk.%s\t%s\t%s\t[]\n' "$TEST_OS" "$distro" "$version" "$format" "$format" "$format" "$bytes" "$sha" >> "$TEST_FIXTURE"
+    printf 'ga\t%s\tx86_64\tjdk\topenj9\tvendor\t%s\t%s\t%s\t%s\thttps://artifacts.invalid/%s\tjdk.%s\t%s\t%s\t[]\n' "$TEST_OS" "$distro" "$java_version" "$version" "$format" "$format" "$format" "$bytes" "$sha" >> "$TEST_FIXTURE"
 }
 count_downloads() { awk '/https:\/\/artifacts.invalid/ {n++} END {print n+0}' "$TEST_LOG"; }
+
+manifest_checks() {
+    local manifest before mode
+    reset; index; row 21+1 vendor; row 21+1 vendor zip "$ROOT/tests/fixtures/archives/jdk.zip"
+    # Future upstream columns, empty cells, inert escapes and CRLF must survive.
+    awk 'BEGIN {FS=OFS="\t"} NR==1 {print; next} {
+        $6="vendor\\t$(exit 99)"; $12=""; $13=""; $14=toupper($14)
+        $16=""; $17="future\\nvalue"; $18=""; $19=""
+        printf "%s\r\n",$0
+    }' "$TEST_FIXTURE" > "$TEMP/extended-index"
+    mv "$TEMP/extended-index" "$TEST_FIXTURE"
+    sed -n '2p' "$TEST_FIXTURE" > "$TEMP/expected-source"
+    run 0 install vendor-21
+    manifest=$XDG_DATA_HOME/jvm/jdks/21+1-vendor/.jvm-manifest
+    sed -n '2p' "$manifest" > "$TEMP/actual-source"
+    cmp "$TEMP/expected-source" "$TEMP/actual-source" || fail 'manifest changed the selected original TSV row'
+    awk 'NR==1 && $0!="jvm-manifest-v1" {exit 1} NR==3 && $0!="" {exit 1}
+        END {if (NR!=3) exit 1}' "$manifest" || fail 'incorrect manifest envelope'
+    # Readers must also accept future local columns without networking.
+    awk 'NR==3 {$0="future local value\t"} {print}' "$manifest" > "$TEMP/extended-manifest"
+    mv "$TEMP/extended-manifest" "$manifest"
+    cp "$manifest" "$TEMP/valid-manifest"
+    before=$(< "$TEST_LOG")
+    rm -rf -- "$XDG_CACHE_HOME/jvm"
+    run 0 list 21; contains '21+1-vendor'; contains '21+99'
+    run 0 home 21+1-vendor; contains '/21+1-vendor'
+    run 0 install 21+1-vendor; diagnostic 'Already installed'
+    [ "$(< "$TEST_LOG")" = "$before" ] || fail 'manifest lookup accessed network'
+    for mode in marker truncated extra short-source; do
+        awk -v mode="$mode" 'BEGIN {FS=OFS="\t"}
+            mode=="marker" && NR==1 {$0="jvm-manifest-v999"}
+            mode=="truncated" && NR==3 {next}
+            mode=="short-source" && NR==2 {$0="ga\tlinux"}
+            {print} END {if (mode=="extra") print "unexpected fourth line"}
+        ' "$TEMP/valid-manifest" > "$manifest"
+        run 0 list; contains '21+1-vendor'; contains '(manifest invalid)'
+    done
+    cp "$TEMP/valid-manifest" "$manifest"
+    run 0 uninstall 21+1-vendor
+    check 'three-line manifests preserve exact upstream rows and accept appended upstream/local columns offline'
+    reset
+    rm -f "$TEST_REMOVE_LOG"
+}
+
+inventory_checks() {
+    local base before id
+    reset; index; row 21+1 vendor; row 21+2 other; row 25+1 vendor
+    run 0 install 21+1-vendor; run 0 install 21+2-other
+    base=$XDG_DATA_HOME/jvm/jdks
+    rm "$base/21+1-vendor/.jvm-manifest"
+    printf 'broken manifest\n' > "$base/21+2-other/.jvm-manifest"
+    before=$(< "$TEST_LOG")
+    run 0 list; contains '21+1-vendor'; contains '(manifest missing)'; contains '(manifest invalid)'
+    awk -F '\t+' 'NR>1 && (NF!=2 || $2 !~ /^\(manifest (missing|invalid)\)$/) {exit 1}' "$TEMP/out" || fail 'unknown metadata displayed for a bad manifest'
+    run 0 list 21+1-vendor; contains '(manifest missing)'
+    run 1 list 21; diagnostic 'No JDK found matching:'
+    run 1 list vendor; diagnostic 'No JDK found matching:'
+    run 1 list other-21; diagnostic 'No JDK found matching:'
+    # An existing major alias cannot establish the target major without metadata.
+    run 1 home 21; diagnostic 'default JDK for version 21 is unavailable'
+    rm "$base/21"
+    run 1 home 21; diagnostic 'No JDK found matching:'
+    run 1 default -v 21 21+1-vendor; diagnostic 'cannot determine Java major'
+    run 0 home 21+1-vendor; contains '/21+1-vendor'
+    run 0 env 21+2-other; contains 'JAVA_HOME='; contains '/21+2-other'
+    run 0 exec 21+1-vendor -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
+    contains '/21+1-vendor'
+    run 0 default 21+2-other; run 0 default; contains '21+2-other'
+    run 0 home; contains '/jdks/default'
+    run 0 default -i 21+1-vendor
+    run 0 home -i 21+2-other; contains '/21+2-other'
+    run 0 install 21+1-vendor; diagnostic 'Already installed'
+    [ "$(< "$TEST_LOG")" = "$before" ] || fail 'exact bad-manifest selection accessed the network'
+    # Folder names are identities too, including spaces and hidden folders.
+    mv "$base/21+2-other" "$base/custom JDK"
+    mkdir "$base/.manual" "$base/23+1-empty"
+    printf 'ordinary file\n' > "$base/99+1-file"
+    ln -s "$HOME" "$base/99+1-link"
+    run 0 list; contains 'custom JDK'; contains '.manual'; contains '23+1-empty'
+    awk -F '\t+' '$1==".manual" || $1=="23+1-empty" {if (NF!=2 || $2!="(invalid JDK)") exit 1}' "$TEMP/out" || fail 'invalid launcher layout did not take precedence over manifest status'
+    [[ $(< "$TEMP/out") != *99+1-* ]] || fail 'file or directory link listed as an installation'
+    run 1 uninstall 99+1-link; diagnostic 'No JDK found matching:'
+    run 0 home 'custom JDK'; contains '/custom JDK'
+    run 1 home 23+1-empty; diagnostic 'no usable java/javac launchers'
+    mv "$base/21+1-vendor/bin/javac" "$TEMP/saved-javac"
+    run 0 list 21+1-vendor; contains '(invalid JDK)'
+    run 1 default 21+1-vendor; diagnostic 'no usable java/javac launchers'
+    mv "$TEMP/saved-javac" "$base/21+1-vendor/bin/javac"
+    run 0 uninstall .manual
+    run 0 uninstall 23+1-empty
+    # A failed move preserves a usable default even without its manifest.
+    TEST_REMOVE_FAIL=1 run 1 uninstall 21+1-vendor
+    diagnostic "couldn't uninstall 21+1-vendor"
+    run 0 default; contains '21+1-vendor'
+    run 0 install 25+1-vendor
+    mv "$base/25+1-vendor/bin/javac" "$TEMP/saved-javac"
+    run 0 list 25+1-vendor; contains '(invalid JDK)'
+    run 1 list 25; diagnostic 'No JDK found matching:'
+    mv "$TEMP/saved-javac" "$base/25+1-vendor/bin/javac"
+    ln -s "$base/21+1-vendor" "$base/21"
+    run 0 uninstall 21+1-vendor
+    [ ! -e "$base/21+1-vendor" ] && [ ! -L "$base/21" ] || fail 'bad-manifest uninstall left a directory or major reference'
+    run 0 default; contains '25+1-vendor'
+    run 0 default 'custom JDK'
+    run 0 uninstall 'custom JDK'
+    run 0 default; contains '25+1-vendor'
+    check 'bad manifests remain visible and selectable by exact directory ID; short selectors and automatic defaults require metadata'
+    reset; rm -f "$TEST_REMOVE_LOG"
+}
 
 execution_checks() {
     local cmd args before saved_archive=$TEST_ARCHIVE saved_umask
@@ -451,7 +561,7 @@ uninstall_checks() {
     [ ! -e "$XDG_DATA_HOME/jvm" ] || fail 'unmatched removal created storage'
     row 21+1 temurin; row 21+2 temurin; row 21+1 other-vendor
     row 1.8.0_99-b09 old-vendor
-    for id in 21+1-temurin 21+2-temurin 21+1-other-vendor 1.8.0_99-b09-old-vendor; do run 0 install "$id"; done
+    for id in 21+1-temurin 21+2-temurin 21+1-other-vendor 8-1.8.0_99-b09-old-vendor; do run 0 install "$id"; done
     rm "$XDG_DATA_HOME/jvm/jdks/default"
     printf 'keep\n' > "$XDG_DATA_HOME/jvm/jdks/default"
     mv "$TOOLS/curl" "$TEMP/curl"; mv "$TOOLS/wget" "$TEMP/wget"
@@ -464,7 +574,7 @@ uninstall_checks() {
     [[ $(< "$TEMP/out") != *temurin* ]] || fail 'distro-major listing included another distro'
     run 0 list 21+1-temurin; contains '21+1-temurin'
     [[ $(< "$TEMP/out") != *21+2* ]] || fail 'exact ID listing included another ID'
-    run 0 list 8; contains '1.8.0_99-b09-old-vendor'
+    run 0 list 8; contains '8-1.8.0_99-b09-old-vendor'
     run 1 list 999; diagnostic 'No JDK found matching: 999'
     run 1 list missing-vendor; diagnostic 'No JDK found matching: missing-vendor'
     run 2 list ../21; run 2 list 01; run 2 list ''; run 2 list 21 extra
@@ -472,6 +582,7 @@ uninstall_checks() {
     check 'offline list filters return all matching IDs, majors, distros and distro-majors'
     run 1 uninstall 21; diagnostic 'Multiple JDKs match, try again using one of the following IDs:'; diagnostic '21+1-temurin'; diagnostic '21+2-temurin'; diagnostic '21+1-other-vendor'
     diagnostic 'DEFAULT'
+    awk -F '\t+' 'NR==2 && $3!="VERSION" {exit 1} NR>2 && $3!="21+99" {exit 1}' "$TEMP/err" || fail 'local ambiguity VERSION must show java_version'
     run 1 uninstall temurin-21; diagnostic 'Multiple JDKs match, try again using one of the following IDs:'
     diagnostic 'DEFAULT'
     [ ! -e "$TEST_REMOVE_LOG" ] || fail 'ambiguous removal moved a JDK'
@@ -483,7 +594,7 @@ uninstall_checks() {
     run 0 uninstall 21+1-temurin; diagnostic 'Successfully uninstalled 21+1-temurin'
     run 1 uninstall 21; diagnostic 'Multiple JDKs match, try again using one of the following IDs:'; diagnostic '21+2-temurin'; diagnostic '21+1-other-vendor'
     run 0 uninstall temurin-21; diagnostic 'Successfully uninstalled 21+2-temurin'
-    run 0 uninstall 8; diagnostic 'Successfully uninstalled 1.8.0_99-b09-old-vendor'
+    run 0 uninstall 8; diagnostic 'Successfully uninstalled 8-1.8.0_99-b09-old-vendor'
     run 0 list; contains '21+1-other-vendor'
     [[ $(< "$TEMP/out") != *temurin* ]] || fail 'removed JDK still listed'
     TEST_REMOVE_DELETE_FAIL=1
@@ -533,7 +644,7 @@ default_checks() {
     run 0 list; contains '21+1-vendor'
     [ ! -e "$XDG_DATA_HOME/jvm/jdks/default" ] && [ ! -e "$XDG_DATA_HOME/jvm/jdks/21" ] || fail 'read-only query created default links'
     run 0 install 21+1-vendor
-    for id in 21+2-vendor 21+1-other 23+1-vendor 25+1-vendor 17+1-vendor 1.8.0_99-old; do
+    for id in 21+2-vendor 21+1-other 23+1-vendor 25+1-vendor 17+1-vendor 8-1.8.0_99-old; do
         run 0 install "$id"
         [[ $(< "$TEMP/err") != *'Default JDK set to:'* ]] || fail 'unchanged default announced'
     done
@@ -651,7 +762,7 @@ default_checks() {
     run 0 uninstall 25+1-vendor
     run 0 default; contains '17+1-vendor'
     run 0 uninstall 17+1-vendor
-    run 0 default; contains '1.8.0_99-old'
+    run 0 default; contains '8-1.8.0_99-old'
     run 0 uninstall 8
     diagnostic 'No JDK currently set as the default'
     run 0 default; contains 'No JDK currently set as the default'
@@ -672,6 +783,53 @@ default_checks() {
     reset
 }
 
+java_major_checks() {
+    local base before
+    reset; index
+    row 22.3.1+java19 graalvm tar.gz "$TEST_ARCHIVE" 19
+    row 190.1 boundary tar.gz "$TEST_ARCHIVE" 19
+    row 19-22.3.2+java19 graalvm tar.gz "$TEST_ARCHIVE" 19
+    row 22.0.2 temurin tar.gz "$TEST_ARCHIVE" 21
+    run 0 available graalvm-19; contains '19-22.3.1+java19-graalvm'; contains '19-22.3.2+java19-graalvm'
+    run 1 available graalvm-22; diagnostic 'No JDK found matching:'
+    run 0 available boundary-19; contains '19-190.1-boundary'
+    run 0 install 19-22.3.1+java19-graalvm
+    base=$XDG_DATA_HOME/jvm/jdks
+    [ "$base/19" -ef "$base/19-22.3.1+java19-graalvm" ] || fail 'vendor major used for default initialization'
+    [ ! -e "$base/22" ] || fail 'vendor-major reference created'
+    run 0 install 21; diagnostic 'Successfully installed 21-22.0.2-temurin'
+    [ "$base/21" -ef "$base/21-22.0.2-temurin" ] || fail 'bare install used vendor major'
+    run 0 default -v 19 -i 19-22.3.2+java19-graalvm
+    [ "$base/19" -ef "$base/19-22.3.2+java19-graalvm" ] || fail 'prefixed version received duplicate prefix'
+    before=$(< "$TEST_LOG")
+    mv "$TOOLS/curl" "$TEMP/curl"; mv "$TOOLS/wget" "$TEMP/wget"
+    rm -rf -- "$XDG_CACHE_HOME/jvm"
+    run 0 list 19; contains '19-22.3.1+java19-graalvm'; contains '19-22.3.2+java19-graalvm'; contains '19+99'
+    [[ $(< "$TEMP/out") != *temurin* ]] || fail 'offline major filter used vendor version'
+    run 1 list 22; diagnostic 'No JDK found matching:'
+    run 0 home 19; contains '/jdks/19'
+    run 1 home graalvm-19; diagnostic 'Multiple JDKs match'
+    run 0 default -v 19; contains '19-22.3.2+java19-graalvm'
+    run 0 default -v 19 19-22.3.1+java19-graalvm
+    run 1 default -v 22 19-22.3.1+java19-graalvm; diagnostic 'Java major 19, expected 22'
+    run 1 default -v 22 -i 19-22.3.1+java19-graalvm; diagnostic 'Java major 19, expected 22'
+    run 0 env 19; contains '/jdks/19'
+    run 0 exec 19 -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'; contains '/19-22.3.1+java19-graalvm'
+    run 0 default 19-22.3.1+java19-graalvm
+    run 0 uninstall 19-22.3.1+java19-graalvm
+    [ "$base/19" -ef "$base/19-22.3.2+java19-graalvm" ] &&
+        [ "$base/default" -ef "$base/19-22.3.2+java19-graalvm" ] || fail 'same-Java-major replacement failed'
+    run 0 home graalvm-19; contains '/19-22.3.2+java19-graalvm'
+    run 0 uninstall graalvm-19
+    [ ! -L "$base/19" ] && [ "$base/default" -ef "$base/21-22.0.2-temurin" ] || fail 'Java-major fallback failed'
+    [ "$(< "$TEST_LOG")" = "$before" ] || fail 'offline Java-major selection accessed network'
+    mv "$TEMP/curl" "$TOOLS/curl"; mv "$TEMP/wget" "$TOOLS/wget"
+    reset
+    check 'Java majors drive discovery, installation, offline selection, references and replacement; IDs retain vendor versions'
+}
+
+if [ "${1:-}" = --manifest ]; then manifest_checks; exit 0; fi
+if [ "${1:-}" = --inventory ]; then inventory_checks; exit 0; fi
 if [ "${1:-}" = --flags ]; then flag_alias_checks; exit 0; fi
 if [ "${1:-}" = --execution ]; then execution_checks; exit 0; fi
 if [ "${1:-}" = --defaults ]; then default_checks; exit 0; fi
@@ -688,6 +846,9 @@ done
 [ ! -e "$XDG_DATA_HOME" ] || fail 'empty listing created data storage'
 run 2 install; run 2 list ''; run 2 list ../21; run 2 list extra extra
 check 'empty offline inventory succeeds without creating storage; command usage'
+java_major_checks
+manifest_checks
+inventory_checks
 uninstall_checks
 default_checks
 
@@ -705,6 +866,7 @@ run 0 install vendor-21
 mv "$TOOLS/curl" "$TEMP/curl"; mv "$TOOLS/wget" "$TEMP/wget"
 rm -rf -- "$XDG_CACHE_HOME/jvm"
 run 0 list; contains '21.0.2+9-vendor'
+awk -F '\t+' 'NR==1 && $3!="VERSION" {exit 1} NR==2 && ($1!="21.0.2+9-vendor" || $3!="21+99") {exit 1}' "$TEMP/out" || fail 'offline VERSION must show persisted java_version'
 run 0 install 21.0.2+9-vendor
 mv "$TEMP/curl" "$TOOLS/curl"; mv "$TEMP/wget" "$TOOLS/wget"
 check 'verified installation, internal links, durable offline listing and idempotent reinstall'
@@ -713,19 +875,20 @@ index; row 21.0.2+9 vendor; row 21.0.2+10 vendor; row 21.0.10+1 vendor
 row 21.0.2+9 vendor zip "$ROOT/tests/fixtures/archives/jdk.zip"
 run 1 install vendor-21; diagnostic 'Multiple JDKs match, try again using one of the following IDs:'; diagnostic '21.0.2+9-vendor'; diagnostic '21.0.10+1-vendor'
 awk -F '\t+' 'NR==2 && ($1!="ID" || $2!="DISTRIBUTION" || $3!="VERSION" || $4!="JVM") {exit 1}
+    NR>2 && $3!="21+99" {exit 1}
     END {if (NR!=5) exit 1}' "$TEMP/err" || fail 'install ambiguity must show a listing with each ID once'
 run 0 install 21.0.2+10-vendor; diagnostic '21.0.2+10-vendor'
 index; row 1.8.0_99-b09 old-vendor; row 1.8.0_100-b02 old-vendor
 run 1 install old-vendor-8; diagnostic 'Multiple JDKs match, try again using one of the following IDs:'
-run 0 install 1.8.0_99-b09-old-vendor
+run 0 install 8-1.8.0_99-b09-old-vendor
 index; row 17.0.20.b2 old-vendor; row 17.0.20.b10 old-vendor
 run 1 install old-vendor-17; diagnostic 'Multiple JDKs match, try again using one of the following IDs:'
 index; row 22.0.1+8-LTS vendor; row 22.0.1+9 vendor
 run 1 install vendor-22; diagnostic 'Multiple JDKs match, try again using one of the following IDs:'
 index; row 22.0.2+9 vendor; row 22.1.0.1-Final gluon-graalvm
-row 22.3.3+java17 graalvm
+row 22.3.3+java17 graalvm tar.gz "$TEST_ARCHIVE" 17
 run 0 install vendor-22; diagnostic '22.0.2+9-vendor'
-run 0 install graalvm-22; diagnostic '22.3.3+java17-graalvm'
+run 0 install graalvm-17; diagnostic '22.3.3+java17-graalvm'
 run 0 install gluon-graalvm-22; diagnostic '22.1.0.1-Final-gluon-graalvm'
 index; row 22.1.0.1-final lower-vendor
 run 0 install lower-vendor-22; diagnostic '22.1.0.1-final-lower-vendor'
@@ -740,14 +903,15 @@ run 0 install vendor-26; diagnostic '26.0.1-weird-vendor'
 run 0 install 26.0.1-weird-vendor
 check 'IDs without version ordering, legacy/vendor labels, exact IDs, hyphenated distros and ambiguity'
 
-index; row 22.0.2+9 temurin; row 22.3.3+java17 graalvm; row 22.1.0.1-Final gluon-graalvm
+index; row 22.0.2+9 temurin; row 22.3.3+java17 graalvm tar.gz "$TEST_ARCHIVE" 17; row 22.1.0.1-Final gluon-graalvm
 run 0 install 22; diagnostic '22.0.2+9-temurin'
 diagnostic 'Installing 22.0.2+9-temurin...'
 before=$(count_downloads)
 run 0 install temurin-22; diagnostic '22.0.2+9-temurin'
 [ "$(count_downloads)" = "$before" ] || fail 'bare major and temurin-major resolved differently'
-run 0 install graalvm-22; diagnostic '22.3.3+java17-graalvm'
-run 0 available 22; contains '22.0.2+9-temurin'; contains '22.3.3+java17-graalvm'
+run 0 install graalvm-17; diagnostic '22.3.3+java17-graalvm'
+run 0 available 22; contains '22.0.2+9-temurin'
+run 0 available 17; contains '17-22.3.3+java17-graalvm'
 index; row 23.0.2+9 other-vendor
 run 1 install 23; diagnostic 'No JDK found matching:'
 run 0 install other-vendor-23; diagnostic '23.0.2+9-other-vendor'
@@ -771,10 +935,11 @@ for major in 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27; do
     run 1 install "observed-$major"; diagnostic 'Multiple JDKs match, try again using one of the following IDs:'
     [[ $(< "$TEMP/err") != *'ordering'* ]] || fail 'vendor version syntax blocked selection'
 done
-run 1 install graalvm-22; diagnostic '22.3.3+java17-graalvm'
-run 1 install gluon-graalvm-22; diagnostic '22.1.0.1-Final-gluon-graalvm'
+run 1 install graalvm-17; diagnostic '22.3.3+java17-graalvm'
+run 1 install gluon-graalvm-22; diagnostic 'No JDK found matching:'
 [ "$(count_downloads)" = "$before" ] || fail 'ambiguous selector downloaded an arbitrary artifact'
-run 0 install 22.3.3+java17-graalvm
+run 0 install 17-22.3.3+java17-graalvm
+run 0 install 17-22.1.0.1-Final-gluon-graalvm
 run 0 install 21.0.11b1163.125-jetbrains
 check 'all 235 captured upstream version forms filter without ranking; ambiguity never downloads an arbitrary ID'
 if [ "${1:-}" = --selectors ]; then
@@ -856,7 +1021,7 @@ run 0 install vendor-21
 rm -f "$TOOLS/shasum"; mv "$TEMP/openssl" "$TOOLS/openssl"
 reset; index
 sha=$("$TEMP/sha256sum" "$TEST_ARCHIVE"); sha=${sha%% *}; bytes=$(wc -c < "$TEST_ARCHIVE")
-printf 'ga\tlinux\tx86_64\tjdk\thotspot\tv\tvendor\t99\t21+1\ttar.gz\thttps://artifacts.invalid/tar.gz\tjdk\t%s\t%s\t[]\n' "${bytes//[[:space:]]/}" "$sha" >> "$TEST_FIXTURE"
+printf 'ga\tlinux\tx86_64\tjdk\thotspot\tv\tvendor\t21+99\t21+1\ttar.gz\thttps://artifacts.invalid/tar.gz\tjdk\t%s\t%s\t[]\n' "${bytes//[[:space:]]/}" "$sha" >> "$TEST_FIXTURE"
 run 0 install vendor-21
 mv "$TEMP/sha256sum" "$TOOLS/sha256sum"
 check 'checksum mismatch/missing checksum/verifier, plus shasum and openssl adapters'
@@ -994,7 +1159,7 @@ TEST_PUBLISH_FAIL=0
 mkdir -p "$XDG_DATA_HOME/jvm/jdks/23+1-vendor/bin"
 run 1 install vendor-23; diagnostic 'incomplete or incompatible'
 run 0 list
-[[ $(< "$TEMP/out") != *23+1* ]] || fail 'unmanaged partial installation listed'
+contains '23+1-vendor'; contains '(invalid JDK)'
 check 'independent staging, race loser success, publication failure and preservation of prior installation/default'
 
 flag_alias_checks

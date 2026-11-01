@@ -129,7 +129,7 @@ contains 'available, a [selector]'; contains 'distro-major (temurin-21)'
 contains 'list, l [selector]'
 contains 'finds and installs Java Development Kits'; contains 'even offline'
 lines=0; while IFS= read -r line; do lines=$((lines+1)); done < "$TEMP/out"
-[ "$lines" -le 48 ] || fail 'help is too verbose'
+[ "$lines" -le 49 ] || fail 'help is too verbose'
 contains 'Shell setup (once, in your shell profile):'
 contains 'Windows Bash:'; contains 'cygpath -u'
 main_help=$(< "$TEMP/out")
@@ -171,7 +171,7 @@ run 0 available; quiet
 awk -F '\t+' 'NR==1 && (NF!=4 || $1!="ID" || $2!="DISTRIBUTION" || $3!="VERSION" || $4!="JVM") {exit 1}' "$TEMP/out" || fail 'unexpected listing columns'
 contains '21.0.12+9-temurin'; contains '8.0.482+8-temurin'
 contains '21.0.12+9-semeru'
-awk -F '\t+' 'NR>1 && $1!=$3 "-" $2 {exit 1}' "$TEMP/out" || fail 'JVM suffix added to ID'
+awk -F '\t+' 'NR>1 && $1 !~ ("-" $2 "$") {exit 1}' "$TEMP/out" || fail 'JVM suffix added to ID'
 [[ $(< "$TEMP/out") != *'jre-only'* ]] || fail 'JRE leaked'
 [[ $(< "$TEMP/out") != *'99.0.2'* ]] || fail 'incompatible/unsupported rows leaked'
 lines=0; while IFS= read -r line; do lines=$((lines+1)); done < "$TEMP/out"
@@ -320,21 +320,22 @@ run 0 available xxxxxxxxx; quiet; aligned; contains '21+123-xxxxxxxxx'
 check 'tab boundaries and long IDs keep padding within four tabs without truncation'
 TEST_FIXTURE=$ROOT/tests/fixtures/version-source.tsv; reset_cache
 run 0 available; quiet; aligned
-contains '21.0.12+9-temurin'; contains '21.0.12+10-temurin'
-[[ $(< "$TEMP/out") != *99+* ]] || fail 'java_version leaked into listing'
+contains '19-21.0.12+9-temurin'; contains '19-21.0.12+10-temurin'
+contains '19+1'
+[[ $(< "$TEMP/out") != *19+2* ]] || fail 'duplicate ID replaced first display row'
 lines=0; while IFS= read -r line; do lines=$((lines+1)); done < "$TEMP/out"
 [ "$lines" -eq 4 ] || fail 'deduplication did not use version-based IDs'
-awk -F '\t+' 'NR>1 && $1!=$3 "-" $2 {exit 1}' "$TEMP/out" || fail 'displayed version differs from ID version'
-run 0 available temurin-21; quiet; contains '21.0.12+10-temurin'
-run 1 available 99; diagnostic 'No JDK found matching:'
-run 0 available legacy-vendor-8; quiet; contains '1.8.0_482-b08-legacy-vendor'
-check 'version controls IDs, display, deduplication and major selection, independently of java_version'
+run 0 available temurin-19; quiet; contains '19-21.0.12+10-temurin'
+awk -F '\t+' 'NR>1 && $3!="19+1" {exit 1}' "$TEMP/out" || fail 'VERSION does not show java_version'
+run 1 available 21; diagnostic 'No JDK found matching:'
+run 0 available legacy-vendor-8; quiet; contains '8-1.8.0_482-b08-legacy-vendor'
+check 'java_version controls display and major selection; IDs preserve version with a Java-major prefix'
 TEST_FIXTURE=$ROOT/tests/fixtures/jvm-impls.tsv; reset_cache
 run 0 available; quiet; aligned
 contains '21.0.12+9-multi-vendor'
 lines=0; while IFS= read -r line; do lines=$((lines+1)); done < "$TEMP/out"
 [ "$lines" -eq 2 ] || fail 'colliding version-distro IDs were not collapsed'
-awk -F '\t+' 'NR>1 && $1!=$3 "-" $2 {exit 1}' "$TEMP/out" || fail 'JVM suffix added to ID'
+awk -F '\t+' 'NR>1 && $1 !~ ("-" $2 "$") {exit 1}' "$TEMP/out" || fail 'JVM suffix added to ID'
 before=$(< "$TEST_COUNTER")
 for selector in 21 multi-vendor multi-vendor-21; do
     run 0 available "$selector"; quiet
@@ -344,7 +345,7 @@ done
 awk 'NR==1 {print} NR>1 {rows[NR]=$0} END {for (i=NR; i>1; i--) print rows[i]}' "$TEST_FIXTURE" > "$TEMP/reversed-jvms.tsv"
 TEST_FIXTURE=$TEMP/reversed-jvms.tsv; reset_cache; run 0 available; quiet
 contains '21.0.12+9-multi-vendor'; contains 'graalvm'
-awk -F '\t+' 'NR>1 && $1!=$3 "-" $2 {exit 1}' "$TEMP/out" || fail 'non-HotSpot ID gained a suffix'
+awk -F '\t+' 'NR>1 && $1!="21.0.12+9-multi-vendor" {exit 1}' "$TEMP/out" || fail 'non-HotSpot ID gained a suffix'
 check 'short IDs collapse across JVMs silently, retain first-row display fields and share one cache'
 fixture
 

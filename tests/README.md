@@ -12,6 +12,10 @@ bash -n tests/default-native-windows.sh
 bash tests/run.sh
 # Installation-only checks:
 bash tests/install.sh
+# Focused directory visibility and exact-ID selection/removal checks:
+bash tests/install.sh --inventory
+# Focused manifest preservation/forward-compatibility checks:
+bash tests/install.sh --manifest
 # Focused list/install/uninstall selector checks:
 bash tests/install.sh --selectors
 # Focused interruption/publication-race checks:
@@ -151,10 +155,76 @@ ShellCheck were unavailable. Native Linux, macOS, Cygwin and standalone MSYS2
 checks remain outstanding. There is no CI configuration or claimed CI result.
 
 The fixtures deliberately keep `version` different from `java_version`.
-`version-source.tsv` exercises IDs, display, major filters and deduplication
-using `version`, including modern and legacy notation. Fixture-generated
-alignment and cache-replacement tests modify that same column. This prevents
-accidentally restoring the earlier `java_version` behavior.
+`version-source.tsv` exercises version-based IDs and deduplication with the
+conditional Java-major prefix, including modern and legacy notation. Major
+filters and the unchanged `VERSION` column use `java_version`. Installation checks also verify this display
+in remote/local ambiguity tables and offline lists after cache deletion.
+
+Java-major correction coverage (2026-11-01): the installation suite exercises
+`22.3.1+java19` with Java 19, a vendor version beginning with `190` for Java 19,
+and a version already prefixed with `19-`. It checks discovery, bare-major
+installation, durable manifest identity, offline list/home/env/exec/default
+selection, major mismatch rejection, and global/per-major replacement on
+uninstall. Legacy vendor versions beginning with `1.8` receive an `8-` prefix;
+modern vendor versions already beginning with their Java major keep their IDs.
+Fixtures retain distinct Java and vendor versions without assigning every JDK
+the same artificial Java major.
+
+Verification for this correction: all 56 discovery checks passed through
+`bash tests/run.sh`; after updating old installation-fixture expectations,
+`bash tests/install.sh` passed all 22 checks and `bash tests/home-env.sh` passed
+under native Git Bash 5.3.15. `bash tests/default-native-windows.sh` passed the
+isolated junction smoke check. Bash syntax checks for the script and test
+harnesses, LF/shebang review and `git diff --check` passed. Script size: 57,838
+bytes. Bash 3.2 and native Linux/macOS/Cygwin/standalone MSYS2 checks remain
+unverified; ShellCheck was unavailable. No real JDK download/execution was tested.
+
+VERSION display verification (2026-11-01): Bash syntax checks and the full
+`bash tests/run.sh` passed under native Git Bash (56 discovery checks, 19
+installation checks and the home/env suite). `git diff --check` passed.
+The distributed script was 53,707 bytes at that verification. The then-current
+manifest v3 added `java_version` for offline display; it was superseded by the
+three-line format below. Older manifest formats are not read or migrated. Native
+platform and Bash 3.2 verification gaps above remain; ShellCheck was unavailable.
+
+Manifest format checks (2026-11-01): `bash tests/install.sh --manifest` verifies
+`jvm-manifest-v1` with exactly three lines, byte-for-byte preservation of the
+selected artifact's original TSV row (including CRLF, empty cells, escaped text,
+uppercase checksum and appended unknown columns), and offline reading with
+additional local columns. The selected row is checked against the preferred
+archive variant. The third line starts empty and accepts future local columns.
+Invalid markers, truncated/extra lines and incomplete source rows are shown
+as `(manifest invalid)` when the launchers remain usable. The ordinary suite runs
+these checks too. The fixture manifests in home/env and native Windows checks
+use the same format. The append-only product contracts and field definitions
+are recorded in [SPEC.md](../SPEC.md#installation-manifest-adopted-2026-11-01).
+
+Verification on 2026-11-01: Bash syntax checks, 56 offline discovery checks,
+the focused manifest and publication suites, home/env checks and the native
+Windows junction smoke check passed under Git Bash. The publication suite also
+checks flags, aliases and command execution. The script was 54,153 bytes
+at that verification.
+Bash 3.2, Linux, macOS, Cygwin and standalone MSYS2 native verification remain
+outstanding; ShellCheck was unavailable.
+
+Local directory inventory checks (2026-11-01): `bash tests/install.sh --inventory`
+covers missing/invalid manifests, diagnostic rows without guessed metadata,
+`invalid JDK` precedence for missing launchers, exact-ID home/env/exec/default
+selection and offline `-i`, exclusion from short selectors, names with spaces,
+hidden directories, reserved aliases and non-directory entries. It checks
+exact-ID removal without launchers, default replacement without target metadata,
+major-reference cleanup and restoring a working manifestless default after a
+failed move. The general installation suite includes these checks. The manifest
+and publication checks also expect existing directories to remain visible when
+metadata or launchers are missing.
+
+Directory-inventory verification on 2026-11-01: Bash syntax checks and the full
+`bash tests/run.sh` passed under Git Bash (56 discovery checks, 21 installation
+groups and home/env checks). Focused inventory, manifest and default checks
+also passed, as did `bash tests/default-native-windows.sh`.
+`git diff --check` passed. Distributed script size: 57,140 bytes. Bash 3.2,
+Linux, macOS, Cygwin and standalone MSYS2 native verification remain outstanding;
+ShellCheck was unavailable. Simulated hosts do not establish native support.
 
 `jvm-impls.tsv` includes HotSpot, OpenJ9 and GraalVM with the same version and
 distribution, plus an archive duplicate. Their shared version-distro ID displays
@@ -223,7 +293,8 @@ Home-layout checks cover publication directly into `<ID>/bin`, preservation of
 hidden files and internal links, rootless and deeply wrapped archives, macOS
 `Contents/Home`, and simulated Windows extensionless/.exe/.bat/.cmd launchers.
 They reject multiple homes, links that would escape after flattening, and
-archive-provided manifests. Current v2 manifests record `.` as the JDK home.
+archive-provided manifests. Current `jvm-manifest-v1` manifests have an empty
+third line, reserved for future local columns; the home is the ID directory.
 Installation messages are checked on stderr/stdout, including
 the successful and already-installed sentences. These fixtures remain inert;
 the tests never execute Java or Windows batch files.
