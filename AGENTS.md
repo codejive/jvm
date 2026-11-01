@@ -13,7 +13,9 @@ independent temporary directories without a storage lock.
 The optional selector for `list [selector]` was restored on 2026-10-30.
 Persistent defaults and manual shell setup were authorized on 2026-10-30,
 including Windows junctions, first-install selection and replacement on default
-uninstallation. Session switching and command execution remain deferred.
+uninstallation. JDK command execution was authorized on 2026-11-01. The user
+subsequently removed the dedicated `shell`/`s` command while retaining `exec`/`x`.
+Broader parent-shell session switching remains deferred.
 Uninstallation was authorized on 2026-10-30, with offline
 ID/major/distro-major selection and move-before-delete removal through
 `jvm/tmp/remove-<ID>.XXXXXXXX`. Do not infer further authorization from the

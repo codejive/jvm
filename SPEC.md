@@ -8,8 +8,8 @@ not need to install a separate JDK manager. JDK downloads and user preferences
 are shared across those project copies.
 
 This document distinguishes implemented discovery, installation, offline
-listing, uninstallation, persistent defaults and offline home/environment output
-from later milestones. Requirements expressed as MUST
+listing, uninstallation, persistent defaults, offline home/environment output,
+command execution from later milestones. Requirements expressed as MUST
 are mandatory for their stated scope. Details marked **proposed** remain design
 choices for review.
 
@@ -37,8 +37,10 @@ the baseline, the command names below, exit codes 0/2/1, and a one-hour freshnes
 interval. The four discovery entry points remain supported. The
 installation and offline-listing extension is described below. Persistent defaults
 and manual shell setup were subsequently authorized on 2026-10-30. Broader
-session-switching infrastructure, command execution and general JSON
-parsing remain deferred. Offline `home` and opt-in `env` output are implemented
+session-switching infrastructure and general JSON parsing remain deferred.
+Command execution was authorized and implemented on 2026-11-01. The child-shell
+command was subsequently removed at the user's request on the same date.
+Offline `home` and opt-in `env` output are implemented
 as described below.
 Help advertises implemented commands.
 
@@ -121,12 +123,10 @@ completed features; implementation does not imply full platform verification.
    when the selected JDK's `bin` directory is already an entry in the current
    PATH. `env -f` forces the PATH export line to always be printed.
    The usage comment and JAVA_HOME export are always printed.
-5. **JDK execution and shell (proposal added 2026-11-01).** Add `exec` (alias
-   `x`) to run a command with a selected JDK and `shell` (alias `s`) to open an
-   interactive child shell using the same environment preparation. Adopt or
-   discard these commands together as one feature pair. See
-   [JDK execution and shell proposal](#jdk-execution-and-shell-proposal).
-   Both commands are planned, not implemented.
+5. **JDK execution (closed 2026-11-01; implemented).** `exec` (alias `x`)
+   runs a command with a selected JDK. See [JDK execution](#jdk-execution).
+   The paired `shell`/`s` command was excluded as unfeasible: interactive startup
+   files can override JAVA_HOME and PATH, defeating the selected environment.
 6. **Real JDK smoke testing.** Add an optional end-to-end check covering download,
    installation, default selection, actual `java`/`javac` execution and
    uninstallation in isolated storage. Current fixture tests and native Windows
@@ -143,59 +143,68 @@ completed features; implementation does not imply full platform verification.
    a project, use the basic commands and configure the shell for the persistent
    default. Keep contributor procedures in AGENTS.md and tests/README.md.
 
-Version ranges and the JDK execution and shell proposal are not implemented yet.
+Version ranges are not implemented yet.
 Broader session-switching integration remains deferred.
 Offline `home` and `env` output were subsequently authorized and implemented on
 2026-10-30; their contract follows the deferred range proposal.
 
-### JDK execution and shell proposal
+### JDK execution
 
-**Proposed (user requested roadmap entry 2026-11-01):** adopt or discard
-`exec` (`x`) and `shell` (`s`) together. Both commands resolve a JDK and prepare
+**Authorized and implemented 2026-11-01:** `exec` (`x`) resolves a JDK and prepares
 JAVA_HOME and PATH for that installation, reusing the installed selectors and
 offline-first `-i` policy of `home`/`env`.
 Resolve to the physical installation home rather than a mutable default link,
 so later default changes do not switch the selected JDK.
 
-`exec [-i] <selector> -- <command> [args...]` runs the requested command with
+`exec [-i] [selector] -- <command> [args...]` runs the requested command with
 JAVA_HOME set and the selected JDK's `bin` directory prepended to PATH. The `--`
 separator ends JVM option parsing. Preserve argument boundaries and invoke the
 command through Bash's `exec "$@"`, without evaluating a command string or
-generated `env` output. The executed command's exit status reaches the caller.
+generated `env` output. The selector is optional (user correction 2026-11-01).
+When omitted, validate the global default using the same rules and diagnostics
+as `home`/`env`, then use that installed JDK's physical home rather than the
+mutable default link. Do not scan inventory, repair a missing/unusable default
+or install implicitly. `-i` continues to require an explicit selector.
+The `--` separator and a nonempty command are required; missing parts exit 2
+before host detection, storage access or installation, reporting the full syntax:
+`jvm: usage: jvm exec [-i] [selector] -- <command> [args...]`.
+This includes invocation with no arguments and applies equally to alias `x`.
+All arguments after `--`, including JVM-looking flags, empty strings and shell
+metacharacters, belong to the child unchanged. The child's stdout/stderr, stdin,
+working directory and exit status reach the caller. A missing command exits 127;
+a command that cannot be executed exits 126, following Bash exec behavior.
+No JDK selection announcement is printed for `exec`.
 Users explicitly invoke a shell when they need shell syntax:
 
 ```bash
+./jvm exec -- java -version
 ./jvm exec 21 -- java -version
 ./jvm x -i 21 -- mvn test
 ./jvm x 21 -- bash -c 'java -version && mvn test'
 ```
 
-`shell [-i] <selector>` opens an interactive child shell using the same execution
-machinery, conceptually `./jvm x 21 -- "$SHELL" -i`, with shell selection and an
-introductory notice added. `$SHELL` can be unset or identify a login shell other
-than the current shell, so this example is not a finalized shell-selection
-policy. Project-local invocation remains supported:
-
-```bash
-./jvm shell 21
-# Java 21 is active in the new shell.
-exit
-# Return to the original shell and its previous environment.
-```
-
-Print a short notice such as `Using <ID> in a new shell. Type exit to return.`
-Neither command explicitly changes persistent defaults or the parent shell's
+The command does not explicitly change persistent defaults or the parent shell's
 environment; `-i` retains ordinary installation's default-initialization behavior.
-Neither requires shell functions, profile edits, shims, or temporary session
-links; child processes inherit the selected environment. Calling
-`shell` again from the child shell nests another shell, which should be made
-explicit to the user.
-
-Shell selection and supported shells, and handling startup files that override
-JAVA_HOME or PATH, remain implementation decisions to resolve.
+It requires no shell functions, profile edits, shims, or temporary session
+links; child processes inherit the selected environment.
+Always prepend the selected physical `bin` path, even if it already appears in
+PATH: command execution must give the selected JDK precedence. Use native
+forward-slash JAVA_HOME and POSIX PATH entries on Windows, sharing `env`'s
+conversion and validation. Restore the caller's umask after optional installation
+and clean this operation's private installation/cache staging before exec,
+because successful process replacement does not run Bash EXIT traps.
 Shell-function, shim, and mutable session-link approaches were considered and
-discarded. This roadmap entry does not authorize implementation or claim platform
-verification.
+discarded. Native real-JDK execution and broader platform verification remain
+outstanding.
+
+**User correction (2026-11-01):** retain `exec`/`x` and remove `shell`/`s`,
+superseding the earlier proposal to adopt or discard the pair together.
+The user closed this roadmap item with the dedicated shell command excluded
+as unfeasible.
+Interactive startup files such as `.bashrc` and `.zshrc` can reset JAVA_HOME
+and PATH, defeating the selected environment. No dedicated child-shell command,
+shell selection policy or startup hooks are provided. `shell` and `s` are
+unknown commands (exit 2). Users may still explicitly run a shell through `exec`.
 
 ### Per-major defaults
 
@@ -522,10 +531,10 @@ An explicit selector is required with `-i`: missing selection prints
 `jvm: Missing selector` through the stderr diagnostic helper, leaves stdout empty
 and exits 2 without state changes. Normal no-selector behavior applies only
 without `-i`. Flags may precede or follow the selector. `-d` is accepted only by
-install, `-i` only by default/home/env, and `-f` only by env. `-v <major>` is
-accepted only by `default`; a missing, repeated or invalid major exits 2.
-Unsupported or repeated flags, empty
-selectors and extra arguments exit 2 before side effects. Primary output is
+install, `-i` only by default/home/env/exec, and `-f` only by env.
+`-v <major>` is accepted only by `default`; a missing, repeated or invalid major
+exits 2. Unsupported or repeated flags, empty selectors and extra arguments
+exit 2 before side effects. Primary output is
 prepared before printing; any failure leaves stdout empty.
 
 ### Output streams (decision recorded 2026-10-30)
@@ -534,6 +543,8 @@ Reserve stdout for information that is the command's primary purpose: JDK
 listings from `available` and `list`, the current-default query result, the path
 from `home`, and the usage comment and shell statements from `env`. Help and
 version queries likewise print their requested information to stdout.
+For `exec`, both streams pass through from the child, even when it exits
+unsuccessfully; manager diagnostics use stderr.
 
 All secondary output, including progress, informational confirmations and
 default-change announcements, goes to stderr. This includes `Installing <ID>...`,
@@ -559,7 +570,8 @@ exactly the command's primary result. For example, an invocation of
 
 The ID is illustrative; this example does not prescribe message ordering.
 Selector resolution and initialization follow the adopted flag policy above.
-A failed operation must leave stdout empty rather than print a partial primary result.
+A failed manager operation must leave stdout empty rather than print a partial
+primary result; output already produced by an executed child is preserved.
 
 This decision supersedes the earlier requirement that `home` and `env` print
 nothing else on either stream: their stdout remains restricted, while stderr
@@ -569,9 +581,9 @@ follows the adopted policy above.
 
 ### First-letter command aliases
 
-**Adopted and implemented 2026-10-30:** commands can be invoked using
-their first letter, retaining the full command names except for the removal
-of `help` described below:
+**Adopted and implemented 2026-10-30, extended 2026-11-01:** commands can be
+invoked using the explicit single-letter aliases below, retaining the full
+command names except for the removal of `help` described below:
 
 | Alias | Command |
 | --- | --- |
@@ -582,11 +594,13 @@ of `help` described below:
 | `d` | `default` |
 | `e` | `env` |
 | `h` | `home` |
+| `x` | `exec` |
 
 Aliases use the same arguments, flags, behavior, output and exit status as
 their full command names. For example, `jvm l 21` means `jvm list 21`, and
 `jvm i temurin-21` means `jvm install temurin-21`. This requests explicit
-single-letter aliases, not arbitrary command-prefix matching.
+single-letter aliases, not arbitrary command-prefix matching. `x` was added on
+2026-11-01 for `exec`, since `e` already means `env`.
 
 **Decision recorded 2026-10-30:** remove the `help` command and expose help only
 through `--help`, including the existing subcommand `--help` forms. This leaves
@@ -615,10 +629,8 @@ The complete version MUST:
   and reserve failures for cases where the requested operation cannot complete
   safely (for example, no usable metadata or no selector match).
 
-Future work, which MUST NOT be implemented in the initial version:
-
-- The proposed `exec` (`x`) and `shell` (`s`) command pair described in the
-  roadmap, beyond the implemented opt-in `env` output.
+The 2026-11-01 extension adds selected-JDK command execution.
+Broader integration that switches the parent shell remains deferred.
 
 Initial scope does not require system-wide installation, automatic
 updates, importing unrelated installations, project version files, or a GUI.
@@ -669,7 +681,8 @@ installers are outside initial scope.
 ## Adopted command interface
 
 The names and exit codes are adopted. `--help`, `--version`,
-`available`, `list`, `install`, `uninstall`, `default`, `home`, and `env` are implemented.
+`available`, `list`, `install`, `uninstall`, `default`, `home`, `env` and `exec`
+are implemented.
 The following commands describe the intended complete interface.
 
 ```text
@@ -682,6 +695,7 @@ jvm uninstall <selector>
 jvm default [-i] [-v <major>] [selector]
 jvm home [-i] [selector]
 jvm env [-i] [-f] [selector]
+jvm exec [-i] [selector] -- <command> [args...]
 ```
 
 - `available` lists compatible JDKs across JVM implementations from the API's
@@ -722,6 +736,8 @@ jvm env [-i] [-f] [selector]
   JDK; it downloads only when explicitly requested with `-i`.
 - `home` prints the installed home or stable default path; `env` prints safely
   quoted Bash exports for the same path, as specified above.
+- `exec` runs a command with the
+  selected physical JDK home and its bin directory first on PATH, as specified above.
 - `--help` shows implemented command usage, aliases, flags and a short selector
   explanation.
   Include a brief purpose statement, one-line command descriptions and a few
@@ -744,7 +760,7 @@ jvm env [-i] [-f] [selector]
   only primary command results go to stdout, as specified in the output-stream
   decision above. Avoid
   interactive prompts and terminal-only formatting in redirected output.
-- When install, uninstall, default, home or env matches multiple IDs, print
+- When install, uninstall, default, home, env or exec matches multiple IDs, print
   `Multiple JDKs match, try again using one of the following IDs:` followed by
   the matching JDKs using the same table renderer as `list <selector>` (ID,
   distribution, version and JVM, with the same headers and tab alignment).
@@ -755,6 +771,8 @@ jvm env [-i] [-f] [selector]
 - **Adopted:** exit 0 for success (including empty lists and `default` reporting
   no default), 2 for invalid usage, and 1 for operational failures, no selector match, or ambiguity.
   A selector with no matching JDK reports `No JDK found matching: <selector>`.
+  `exec` propagates the executed child's status instead of mapping it
+  to these manager statuses.
 
 ## Identity and selection
 
@@ -824,9 +842,10 @@ for validation, without encoding them into the ID.
 
 ### Installed selector resolution (implemented)
 
-**Current behavior (2026-11-01):** `default`, `home` and `env` share the following
-resolution order. Here, an **inventory scan** means enumerating `jdks/*` and
-inspecting candidate installations; checking a known path is not a scan.
+**Current behavior (2026-11-01):** `default`, `home`, `env` and `exec`
+share the following resolution order. Here, an **inventory scan** means
+enumerating `jdks/*` and inspecting candidate installations; checking a known
+path is not a scan.
 This sequence does not change discovery, ordinary installation, listing or
 uninstallation selector policies.
 
@@ -867,6 +886,8 @@ With an explicit selector:
    installation. Otherwise they use the selected physical installation home.
    Full-ID and distro-major selectors always use physical homes. Existing
    platform path conversion and shell quoting rules still apply.
+   `exec` always uses the physical home of the selected ID, including when the
+   selector is a major; it never executes through a mutable default link.
 
 With `-i`, first perform the same local resolution. Only a genuine zero-match
 result permits installation; ambiguity, invalid references and operational
@@ -885,6 +906,7 @@ Without a selector, no inventory scan occurs:
 | `default` | Read and validate `jdks/default`; show its target ID or the documented no-default message. |
 | `default -v N` | Read and validate `jdks/N`; show its target ID or the documented per-version no-default message. |
 | `home` / `env` | Validate `jdks/default` and use that stable link path; fail if missing or unusable. |
+| `exec` | Validate `jdks/default` and use its target's physical home; fail if missing or unusable. `-i` still requires a selector. |
 
 The current `default` implementation also checks the destination reference it
 will query or update before resolving an explicit selector. This is a direct
@@ -1368,8 +1390,8 @@ that native verification is complete on every supported platform:
    processes, and interruptions fail without corrupting managed state.
 7. Platform/libc detection, macOS bundles, Windows paths, Bash 3.2 compatibility,
    spaces in paths, and nondefault XDG locations are covered by verification.
-8. Opt-in `env` output is implemented; broader session integration and command
-   execution remain unimplemented.
+8. Opt-in `env` output and command execution are
+   implemented; broader parent-shell session integration remains deferred.
 9. TSV discovery trusts the published layout, uses explicit `file_type`, and
    lists compatible latest JDKs across JVM implementations. Unused fields stay
    untouched; repeated IDs display once without build checks or warnings.

@@ -23,12 +23,13 @@ Commands:
   default, d [-i] [-v <major>] [selector]  Show or select a persistent JDK default.
   home, h [-i] [selector]      Print an installed JDK home or the stable default path.
   env, e [-i] [-f] [selector]  Print Bash exports for an installed JDK or default.
+  exec, x [-i] [selector] -- <command> [args...]  Run with a selected JDK or default.
   --help                      Show this help.
   --version                   Show the jvm version.
 
 Selectors:
   available/list: major (21), distro (temurin), or distro-major (temurin-21).
-  install/uninstall/default/home/env: full ID (21.0.12+9-temurin), major, or distro-major.
+  install/uninstall/default/home/env/exec: full ID, major, or distro-major.
   Bare install majors use Temurin; other local majors match all distros.
   Bare local majors use an existing per-version default, otherwise match installed JDKs.
   Ambiguous selectors need a full ID.
@@ -36,7 +37,7 @@ Selectors:
 
 Options:
   -d  install: make the installed JDK the persistent default.
-  -i  default/home/env: install if missing; requires a selector.
+  -i  default/home/env/exec: install if missing; requires a selector.
   -f  env: always print the PATH export, even when bin is already on PATH.
   -v  default: query or set the specified Java major's default.
 
@@ -48,6 +49,7 @@ Examples:
   jvm default -v 21 temurin-21
   jvm home -i 21
   eval "$(jvm env temurin-21)"
+  jvm x -i 21 -- java -version
 
 Shell setup (once, in your shell profile):
   Unix:
@@ -604,7 +606,7 @@ default_jdk() {
 }
 
 # Resolve offline without changing defaults or touching cache/storage directories.
-# Keep global and selected per-major references; inventory fallback is physical.
+# Keep global and selected per-major references unless physical output is requested.
 resolve_home() {
     local selector=$1 original=${2:-$1} rows id
     installation_selector "$selector" || return $?
@@ -613,7 +615,7 @@ resolve_home() {
     if [ -n "$selector" ]; then
         rows=$(resolve_installed "$selector") || return $?
         id=${rows%%$'\t'*}
-        if [[ $original =~ ^[1-9][0-9]*$ ]] && [ -L "$JDKS/$original" ] &&
+        if [ "${3:-}" != physical ] && [[ $original =~ ^[1-9][0-9]*$ ]] && [ -L "$JDKS/$original" ] &&
             [ "$JDKS/$original" -ef "$JDKS/$id" ]; then
             RESOLVED_HOME=$(cd "$JDKS" && pwd -P) || { error 'cannot resolve default path'; return 1; }
             RESOLVED_HOME=$RESOLVED_HOME/$original
@@ -629,8 +631,12 @@ resolve_home() {
             [ "$JDKS/default" -ef "$JDKS/$CURRENT" ] && jdk_layout "$JDKS/default" || {
                 error 'default JDK is missing or unusable'; return 1;
             }
-        RESOLVED_HOME=$(cd "$JDKS" && pwd -P) || { error 'cannot resolve default path'; return 1; }
-        RESOLVED_HOME=$RESOLVED_HOME/default
+        if [ "${3:-}" = physical ]; then
+            RESOLVED_HOME=$(cd "$JDKS/$CURRENT" && pwd -P) || { error 'cannot resolve JDK home'; return 1; }
+        else
+            RESOLVED_HOME=$(cd "$JDKS" && pwd -P) || { error 'cannot resolve default path'; return 1; }
+            RESOLVED_HOME=$RESOLVED_HOME/default
+        fi
     fi
     # Both interfaces promise single-line output. Never emit broken shell code.
     case "$RESOLVED_HOME" in ''|*[$'\r\n']*) error 'JDK home must be a nonempty single-line path'; return 1 ;; esac
@@ -643,21 +649,26 @@ shell_quote() {
     printf "'%s'" "$value"
 }
 
-home_environment() {
-    local command=$1 selector=$2 java_home path_home quoted_java quoted_bin usage
-    resolve_home "$selector" "${3:-$selector}" || return $?
-    if [ "$command" = home ]; then printf '%s\n' "$RESOLVED_HOME"; return 0; fi
-    java_home=$RESOLVED_HOME
-    path_home=$RESOLVED_HOME
+# Shared path preparation for emitted exports and direct child environments.
+jdk_environment() {
+    ENV_JAVA_HOME=$RESOLVED_HOME
+    ENV_PATH_HOME=$RESOLVED_HOME
     if [ "$OS" = windows ]; then
         require_tools cygpath || return 1
-        java_home=$(cygpath -m "$RESOLVED_HOME") &&
-            path_home=$(cygpath -u "$RESOLVED_HOME") || { error 'cannot convert JDK home path'; return 1; }
-        case "$java_home" in [a-zA-Z]:/*|//*) ;; *) error 'cannot convert native JDK home path'; return 1 ;; esac
-        case "$path_home" in /*) ;; *) error 'cannot convert Bash JDK home path'; return 1 ;; esac
+        ENV_JAVA_HOME=$(cygpath -m "$RESOLVED_HOME") &&
+            ENV_PATH_HOME=$(cygpath -u "$RESOLVED_HOME") || { error 'cannot convert JDK home path'; return 1; }
+        case "$ENV_JAVA_HOME" in [a-zA-Z]:/*|//*) ;; *) error 'cannot convert native JDK home path'; return 1 ;; esac
+        case "$ENV_PATH_HOME" in /*) ;; *) error 'cannot convert Bash JDK home path'; return 1 ;; esac
     fi
-    case "$java_home$path_home" in *[$'\r\n']*) error 'JDK home must be a single-line path'; return 1 ;; esac
-    quoted_java=$(shell_quote "$java_home") && quoted_bin=$(shell_quote "$path_home/bin") || return 1
+    case "$ENV_JAVA_HOME$ENV_PATH_HOME" in *[$'\r\n']*) error 'JDK home must be a single-line path'; return 1 ;; esac
+}
+
+home_environment() {
+    local command=$1 selector=$2 quoted_java quoted_bin usage
+    resolve_home "$selector" "${3:-$selector}" || return $?
+    if [ "$command" = home ]; then printf '%s\n' "$RESOLVED_HOME"; return 0; fi
+    jdk_environment || return 1
+    quoted_java=$(shell_quote "$ENV_JAVA_HOME") && quoted_bin=$(shell_quote "$ENV_PATH_HOME/bin") || return 1
     usage='jvm env'
     # Valid installed selectors contain only shell-safe ID/major/distro characters.
     [ "${option:-}" != -i ] || usage="$usage -i"
@@ -665,9 +676,32 @@ home_environment() {
     [ -z "${3:-$selector}" ] || usage="$usage ${3:-$selector}"
     printf '# Use: eval "$(%s)"\nexport JAVA_HOME=%s\n' "$usage" "$quoted_java"
     if [ -z "$force_env" ]; then
-        case ":${PATH:-}:" in *":$path_home/bin:"*) return 0 ;; esac
+        case ":${PATH:-}:" in *":$ENV_PATH_HOME/bin:"*) return 0 ;; esac
     fi
     printf 'export PATH=%s:"$PATH"\n' "$quoted_bin"
+}
+
+run_jdk() {
+    local selector=$1
+    shift
+    resolve_home "$selector" "$selector" physical && jdk_environment || return $?
+    # Successful exec bypasses EXIT traps. Remove installation temporaries now,
+    # then restore the caller's umask before replacing this process.
+    if [ -n "$STAGE" ]; then
+        publication_cleanup && rm -rf -- "$STAGE" || {
+            error 'cannot clean installation staging before execution'; return 1;
+        }
+        STAGE=
+    fi
+    if [ -n "$WORK" ]; then
+        rm -rf -- "$WORK" || { error 'cannot clean metadata staging before execution'; return 1; }
+        WORK=
+    fi
+    trap - EXIT HUP INT TERM
+    umask "$execution_umask"
+    export JAVA_HOME=$ENV_JAVA_HOME
+    export PATH="$ENV_PATH_HOME/bin${PATH+:$PATH}"
+    exec -- "$@"
 }
 
 replacement_default() {
@@ -1134,21 +1168,23 @@ command=${1:-}
 case "$command" in
     a) command=available ;; l) command=list ;; i) command=install ;;
     u) command=uninstall ;; d) command=default ;; e) command=env ;; h) command=home ;;
+    x) command=exec ;;
 esac
 case "$command" in
     --help|--version)
         [ "$#" -eq 1 ] || { error "$command takes no arguments"; exit 2; }
         if [ "$command" = --help ]; then help_text; else printf 'jvm %s\n' "$VERSION"; fi
         exit 0 ;;
-    available|list|install|uninstall|default|home|env) ;;
+    available|list|install|uninstall|default|home|env|exec) ;;
     *) error 'usage: jvm <command> [selector]; use jvm --help'; exit 2 ;;
 esac
 shift
 if [ "$#" -eq 1 ] && [ "$1" = --help ]; then help_text; exit 0; fi
-selector= option= major_option= force_env=
+selector= option= major_option= force_env= separator=
 while [ "$#" -gt 0 ]; do
     argument=$1
     shift
+    if [ "$command" = exec ] && [ "$argument" = -- ]; then separator=1; break; fi
     if [ "$command" = default ] && [ "$argument" = -v ]; then
         [ -z "$major_option" ] && [ "$#" -gt 0 ] && [[ $1 =~ ^[1-9][0-9]*$ ]] || {
             error '-v requires one positive Java major'; exit 2;
@@ -1161,7 +1197,7 @@ while [ "$#" -gt 0 ]; do
         env:-f)
             [ -z "$force_env" ] || { error 'duplicate flag'; exit 2; }
             force_env=1 ;;
-        install:-d|default:-i|home:-i|env:-i)
+        install:-d|default:-i|home:-i|env:-i|exec:-i)
             [ -z "$option" ] || { error 'duplicate flag'; exit 2; }
             option=$argument ;;
         *:-*) error "unsupported flag: $argument"; exit 2 ;;
@@ -1170,6 +1206,9 @@ while [ "$#" -gt 0 ]; do
             selector=$argument ;;
     esac
 done
+if [ "$command" = exec ] && { [ -z "$separator" ] || [ "$#" -eq 0 ] || [ -z "$1" ]; }; then
+    error 'usage: jvm exec [-i] [selector] -- <command> [args...]'; exit 2
+fi
 if [ -z "$selector" ]; then
     if [ -n "$option" ]; then error 'Missing selector'; exit 2; fi
     case "$command" in
@@ -1179,6 +1218,10 @@ if [ -z "$selector" ]; then
             exit 2 ;;
     esac
 fi
+case "$command" in
+    exec) installation_selector "$selector" || exit $?
+                execution_umask=$(umask) ;;
+esac
 if [ "$option" = -i ]; then
     ensure_installed "$selector" "$major_option" || exit $?
     resolved_selector=$INSTALLED_ID
@@ -1190,4 +1233,5 @@ case "$command" in
     uninstall) uninstall_jdk "$selector" ;;
     default) default_jdk "$resolved_selector" "${major_option:-default}" ;;
     home|env) home_environment "$command" "$resolved_selector" "$selector" ;;
+    exec) run_jdk "$resolved_selector" "$@" ;;
 esac

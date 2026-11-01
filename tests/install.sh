@@ -188,6 +188,132 @@ row() {
 }
 count_downloads() { awk '/https:\/\/artifacts.invalid/ {n++} END {print n+0}' "$TEST_LOG"; }
 
+execution_checks() {
+    local cmd args before saved_archive=$TEST_ARCHIVE saved_umask
+    reset; index; row 21+1 temurin; row 22+1 temurin
+    for cmd in exec x; do
+        PATH=/nonexistent run 0 "$cmd" --help
+        PATH=/nonexistent run 2 "$cmd"
+        [ "$(< "$TEMP/err")" = 'jvm: usage: jvm exec [-i] [selector] -- <command> [args...]' ] || fail 'incomplete exec usage'
+        PATH=/nonexistent run 2 "$cmd" -i
+        PATH=/nonexistent run 2 "$cmd" -f 21
+        PATH=/nonexistent run 2 "$cmd" 21 extra
+    done
+    for cmd in shell s; do
+        PATH=/nonexistent run 2 "$cmd" 21
+        PATH=/nonexistent run 2 "$cmd" --help
+    done
+    for args in '21' '21 --' '--' '-i 21 --'; do
+        PATH=/nonexistent run 2 exec $args
+        [ "$(< "$TEMP/err")" = 'jvm: usage: jvm exec [-i] [selector] -- <command> [args...]' ] || fail 'incomplete exec usage'
+    done
+    PATH=/nonexistent run 2 exec -i -i 21 -- cat
+    PATH=/nonexistent run 2 exec -i -- cat
+    diagnostic 'Missing selector'
+    PATH=/nonexistent run 2 exec 21 -- ''
+    [ ! -e "$TEST_LOG" ] && [ ! -e "$XDG_DATA_HOME/jvm" ] || fail 'execution usage had side effects'
+    printf '#!%s\n' "$BASH_BIN" > "$TEMP/child with spaces"
+    cat >> "$TEMP/child with spaces" <<'EOF'
+[ "$JAVA_HOME" = "$TEST_EXPECT_HOME" ] || exit 91
+[ "$PATH" = "$TEST_EXPECT_BIN:$TEST_BASE_PATH" ] || exit 92
+[ "$(umask)" = "$TEST_EXPECT_UMASK" ] || exit 93
+# Successful exec must clean private installation data before starting us.
+for path in "$XDG_DATA_HOME/jvm/tmp"/jdk-* "$XDG_CACHE_HOME/jvm"/.discovery.*; do
+    [ ! -d "$path" ] || exit 94
+done
+case "$1" in
+    args)
+        shift
+        [ "$#" -eq 7 ] && [ "$1" = '' ] && [ "$2" = 'two words' ] &&
+            [ "$3" = '$(touch "$HOME/should-not-exist")' ] && [ "$4" = '*' ] &&
+            [ "$5" = -- ] && [ "$6" = -i ] && [ "$7" = 'line
+break' ] || exit 95
+        printf 'child output\n'; printf 'child diagnostic\n' >&2 ;;
+    status) exit 37 ;;
+    pin|global-pin)
+        link=21; [ "$1" != global-pin ] || link=default
+        rm "$XDG_DATA_HOME/jvm/jdks/$link" || exit 97
+        ln -s "$XDG_DATA_HOME/jvm/jdks/22+1-temurin" "$XDG_DATA_HOME/jvm/jdks/$link" || exit 97
+        [ "$JAVA_HOME" = "$TEST_EXPECT_HOME" ] && [ -d "$JAVA_HOME/bin" ] || exit 98 ;;
+    pid) [ "$$" = "$TEST_EXPECT_PID" ] || exit 99 ;;
+esac
+EOF
+    PATH=$ORIGINAL_PATH chmod +x "$TEMP/child with spaces"
+    export TEST_EXPECT_HOME="$XDG_DATA_HOME/jvm/jdks/21+1-temurin"
+    export TEST_EXPECT_BIN="$TEST_EXPECT_HOME/bin" TEST_BASE_PATH=$PATH
+    saved_umask=$(umask); umask 022; export TEST_EXPECT_UMASK=$(umask)
+    run 1 exec 21 -- "$TEMP/child with spaces" status
+    diagnostic 'No JDK found matching: 21'
+    run 1 exec -- "$TEMP/child with spaces" status-check
+    diagnostic 'No JDK currently set as the default'
+    run 0 x -i 21 -- "$TEMP/child with spaces" args '' 'two words' '$(touch "$HOME/should-not-exist")' '*' -- -i $'line\nbreak'
+    [ "$(< "$TEMP/out")" = 'child output' ] || fail 'exec child stdout'
+    diagnostic 'child diagnostic'; diagnostic 'Successfully installed 21+1-temurin'
+    [ ! -e "$HOME/should-not-exist" ] || fail 'command data evaluated'
+    before=$(cat "$TEST_LOG")
+    for cmd in exec x; do run 0 "$cmd" -- "$TEMP/child with spaces" status-check; done
+    run 37 x -- "$TEMP/child with spaces" status
+    mv "$XDG_DATA_HOME/jvm/jdks/default" "$TEMP/saved-default"
+    run 1 exec -- "$TEMP/child with spaces" status-check
+    diagnostic 'No JDK currently set as the default'
+    ln -s "$XDG_DATA_HOME/jvm/jdks/missing" "$XDG_DATA_HOME/jvm/jdks/default"
+    run 1 x -- "$TEMP/child with spaces" status-check
+    diagnostic 'default JDK is missing or unusable'
+    rm "$XDG_DATA_HOME/jvm/jdks/default"
+    ln -s "$HOME" "$XDG_DATA_HOME/jvm/jdks/default"
+    run 1 exec -- "$TEMP/child with spaces" status-check
+    diagnostic 'default JDK is missing or unusable'
+    rm "$XDG_DATA_HOME/jvm/jdks/default"
+    mv "$TEMP/saved-default" "$XDG_DATA_HOME/jvm/jdks/default"
+    run 37 exec 21 -- "$TEMP/child with spaces" status
+    [ ! -s "$TEMP/err" ] || fail 'exec status stderr'
+    run 127 exec 21 -- nonexistent-jvm-test-command
+    mkdir "$TEMP/not-executable"
+    run 126 exec 21 -- "$TEMP/not-executable"
+    "$BASH_BIN" -c 'export TEST_EXPECT_PID=$$; exec "$@"' bash "$BASH_BIN" "$ROOT/jvm" x 21 -- "$TEMP/child with spaces" pid || fail 'exec did not replace JVM process'
+    [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'local execution used networking'
+    run 0 install 22
+    run 0 x -- "$TEMP/child with spaces" global-pin
+    run 0 default 21+1-temurin
+    run 0 exec 21 -- "$TEMP/child with spaces" pin
+    run 0 default; contains '21+1-temurin'
+    rm "$XDG_DATA_HOME/jvm/jdks/21"
+    run 0 exec temurin-21 -- "$TEMP/child with spaces" status-check
+    index; row 21+2 other
+    run 0 install other-21
+    rm "$XDG_DATA_HOME/jvm/jdks/21"
+    before=$(cat "$TEST_LOG")
+    run 1 x -i 21 -- "$TEMP/child with spaces" status
+    diagnostic 'Multiple JDKs match'
+    [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'ambiguous execution used networking'
+    run 0 exec -i 21+1-temurin -- "$TEMP/child with spaces" status-check
+    # Conversion is shared with env: native JAVA_HOME, POSIX PATH entry.
+    reset; TEST_SYSTEM=MINGW64_NT-10.0; TEST_OS=windows
+    TEST_ARCHIVE=$ROOT/tests/fixtures/archives/windows.zip
+    index; row 25+1 temurin zip
+    mv "$TOOLS/cygpath" "$TEMP/cygpath"
+    printf '#!%s\ncase "$1" in -m) printf "C:%%s\\n" "$2" ;; *) printf "%%s\\n" "$2" ;; esac\n' "$BASH_BIN" > "$TOOLS/cygpath"
+    PATH=$ORIGINAL_PATH chmod +x "$TOOLS/cygpath"
+    export TEST_EXPECT_HOME="C:$XDG_DATA_HOME/jvm/jdks/25+1-temurin"
+    export TEST_EXPECT_BIN="$XDG_DATA_HOME/jvm/jdks/25+1-temurin/bin"
+    run 0 x -i 25 -- "$TEMP/child with spaces" status-check
+    run 0 exec -- "$TEMP/child with spaces" status-check
+    mv "$TEMP/cygpath" "$TOOLS/cygpath"
+    TEST_SYSTEM=Linux; TEST_OS=linux; TEST_ARCHIVE=$saved_archive
+    reset; index; row 26+1 temurin
+    export TEST_EXPECT_HOME="$XDG_DATA_HOME/jvm/jdks/26+1-temurin"
+    export TEST_EXPECT_BIN="$TEST_EXPECT_HOME/bin"
+    run 0 x -i 26 -- "$TEMP/child with spaces" status-check
+    diagnostic 'Successfully installed 26+1-temurin'
+    run 0 default; contains '26+1-temurin'
+    index; row 27+1 temurin
+    TEST_ARTIFACT_STATUS=503 run 1 x -i 27 -- "$TEMP/child with spaces" status-check
+    diagnostic 'artifact transfer failed'
+    run 0 default; contains '26+1-temurin'
+    umask "$saved_umask"
+    check 'exec selectors, install-on-demand cleanup, physical homes, literal arguments, streams, status, removed shell command and simulated Windows paths'
+}
+
 flag_alias_checks() {
     local cmd args before saved_data saved_archive
     reset; index; row 21+1 temurin; row 22+1 other-vendor; row 23+1 temurin
@@ -547,6 +673,7 @@ default_checks() {
 }
 
 if [ "${1:-}" = --flags ]; then flag_alias_checks; exit 0; fi
+if [ "${1:-}" = --execution ]; then execution_checks; exit 0; fi
 if [ "${1:-}" = --defaults ]; then default_checks; exit 0; fi
 
 if [ "${1:-}" != --publication ]; then
@@ -871,6 +998,7 @@ run 0 list
 check 'independent staging, race loser success, publication failure and preservation of prior installation/default'
 
 flag_alias_checks
+execution_checks
 
 saved_data=$XDG_DATA_HOME; XDG_DATA_HOME=relative
 index; row 24+1 vendor; run 0 install vendor-24

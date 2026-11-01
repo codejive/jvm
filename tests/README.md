@@ -18,6 +18,8 @@ bash tests/install.sh --selectors
 bash tests/install.sh --publication
 # Focused flags and aliases checks:
 bash tests/install.sh --flags
+# Focused command execution checks:
+bash tests/install.sh --execution
 # Focused offline home/env checks:
 bash tests/home-env.sh
 # Focused offline list/uninstall checks:
@@ -68,6 +70,30 @@ Windows POSIX PATH comparison. The focused suite, Bash syntax checks and full
 `bash tests/run.sh` passed under native Git Bash (56 discovery checks, 18
 installation checks and the home/env suite). Script size: 51,953 bytes. Native platform and Bash 3.2
 verification gaps above are unchanged; ShellCheck was unavailable.
+
+Command execution (2026-11-01):
+`bash tests/install.sh --execution` checks aliases, usage validation without
+utilities, installed selection and ambiguity without networking, `-i`
+installation, installation failure, staging cleanup before execution, inherited
+umask, physical homes after default-link changes, literal arguments (including
+empty strings and newlines), child streams/status, missing/unexecutable commands,
+process replacement, rejection of the removed `shell`/`s` commands, and simulated
+Windows path conversion. Payloads are inert Bash scripts; these checks do not
+execute a real JDK. The original implementation passed syntax validation, the
+focused checks and `bash tests/run.sh` under native Git Bash (56 discovery
+checks, 19 installation checks and the home/env suite) before shell removal.
+After removal, Bash syntax checks, `bash tests/run.sh --help-only` and
+`bash tests/install.sh --execution` passed under native Git Bash; the full suite
+was not rerun. Script size: 53,499 bytes.
+Optional exec selector (2026-11-01): execution checks also cover the full usage
+diagnostic, no-selector execution through the global default for both `exec`
+and `x`, child status propagation, missing/dangling/unrelated defaults, retaining
+the physical home when the global reference changes, simulated Windows default
+conversion, and rejection of selectorless `-i`. The focused execution checks,
+help checks, `bash tests/home-env.sh` and Bash syntax validation passed under native Git Bash. Script
+size: 53,685 bytes.
+Native Linux/macOS/Cygwin/standalone MSYS2, Bash 3.2 and real-JDK
+execution remain unverified; ShellCheck was unavailable.
 
 Optional development checks, only when installed:
 

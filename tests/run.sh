@@ -129,7 +129,7 @@ contains 'available, a [selector]'; contains 'distro-major (temurin-21)'
 contains 'list, l [selector]'
 contains 'finds and installs Java Development Kits'; contains 'even offline'
 lines=0; while IFS= read -r line; do lines=$((lines+1)); done < "$TEMP/out"
-[ "$lines" -le 46 ] || fail 'help is too verbose'
+[ "$lines" -le 48 ] || fail 'help is too verbose'
 contains 'Shell setup (once, in your shell profile):'
 contains 'Windows Bash:'; contains 'cygpath -u'
 main_help=$(< "$TEMP/out")
@@ -143,11 +143,11 @@ run 0 list --help
 [ "$(< "$TEMP/out")" = "$main_help" ] || fail 'list --help differs'
 run 0 default --help
 [ "$(< "$TEMP/out")" = "$main_help" ] || fail 'default --help differs'
-for cmd in available list install uninstall default home env a l i u d h e; do
+for cmd in available list install uninstall default home env exec a l i u d h e x; do
     run 0 "$cmd" --help; quiet
     [ "$(< "$TEMP/out")" = "$main_help" ] || fail "help differs: $cmd"
 done
-for cmd in help av lis ins un def en ho; do run 2 "$cmd"; done
+for cmd in help shell s av lis ins un def en ho; do run 2 "$cmd"; done
 for cmd in default home env d h e; do
     run 2 "$cmd" -i
     [ "$(< "$TEMP/err")" = 'jvm: Missing selector' ] || fail 'missing selector diagnostic'
