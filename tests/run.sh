@@ -129,7 +129,7 @@ contains 'available, a [selector]'; contains 'distro-major (temurin-21)'
 contains 'list, l [selector]'
 contains 'finds and installs Java Development Kits'; contains 'even offline'
 lines=0; while IFS= read -r line; do lines=$((lines+1)); done < "$TEMP/out"
-[ "$lines" -le 42 ] || fail 'help is too verbose'
+[ "$lines" -le 46 ] || fail 'help is too verbose'
 contains 'Shell setup (once, in your shell profile):'
 contains 'Windows Bash:'; contains 'cygpath -u'
 main_help=$(< "$TEMP/out")

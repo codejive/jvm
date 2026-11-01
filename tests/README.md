@@ -34,6 +34,30 @@ checks, stopping if a suite fails.
 Temporary files are cleaned on completion or interruption. Runtime code is only
 `jvm`; no fixtures or tests need distribution.
 
+Per-major default coverage (2026-11-01) uses `tests/install.sh --defaults` and
+`tests/home-env.sh`. It checks the `jdks/default` and `jdks/<major>` references,
+independent selection, major mismatch rejection, initialization and replacement,
+stable global home/env output, major-reference precedence with inventory fallback,
+ambiguity tables, and read-only query behavior. The general suite also
+exercises concurrent initialization and failed moves. Windows path conversion
+in the home/env suite is simulated; `tests/default-native-windows.sh` is the
+optional native junction check on a Windows Bash host.
+On 2026-11-01, `bash tests/run.sh` passed all 56 discovery checks, 18
+installation checks and the home/env suite under native Git Bash on Windows.
+`bash tests/default-native-windows.sh` also passed junction creation, traversal,
+replacement and removal in isolated storage. Bash 3.2, Linux, macOS, Cygwin and
+standalone MSYS2 native runs remain unverified; ShellCheck was unavailable.
+
+Home/env selector correction (2026-11-01): explicit major, distro-major and ID
+selectors return a selected installation's physical home. Positive majors first
+use an existing valid per-major reference without scanning other installations
+and retain its stable link path in output, including with `-i`;
+absent references fall back to inventory selection and physical homes. The home/env suite covers
+missing, unrelated, dangling and wrong-major references, legacy majors and
+ambiguity without a major default. The `--flags` checks cover offline `-i`
+selection with and without a major link, ambiguity without networking, and
+returning the exact installed ID after installation races.
+
 Optional development checks, only when installed:
 
 ```bash
@@ -221,8 +245,8 @@ and the cache absent. Main and list help agree. `git diff --check` passed.
 Script size: 32,013 bytes. Existing native platform and Bash 3.2 gaps remain.
 
 Ambiguity listings (2026-10-30): `list` and install/uninstall ambiguity reports
-share the same table renderer. Tests compare uninstall diagnostic tables with
-actual `list <selector>` output and check that remote install candidates appear
+share the same table renderer. Tests check diagnostic candidate IDs and that
+remote install candidates appear
 once per ID despite multiple archive rows. Bash syntax checks and all seven
 focused `--selectors` groups passed under Git Bash; `git diff --check` passed.
 Script size: 32,454 bytes. Existing native platform and Bash 3.2 gaps remain.
@@ -308,7 +332,7 @@ ShellCheck was unavailable; the native platform/Bash 3.2 gaps above still apply.
 Default messaging update (2026-10-30): shell setup now lives only in its own
 main-help section, with Unix and Windows Bash examples. Explicit selection and
 automatic install/uninstall selection print `Default JDK set to: <ID>`; removing
-the last JDK prints `Default JDK unset: no JDKs are installed` Syntax checks,
+the last JDK prints `No JDK currently set as the default`. Syntax checks,
 `bash tests/run.sh --help-only`, `bash tests/install.sh --defaults` and
 `git diff --check` passed. Tests also verify that unchanged defaults and losing
 initializers do not announce a change. Script size: 40,087 bytes.

@@ -62,7 +62,7 @@ check_env() {
     ' bash "$TEMP/out" "$java" "$bin" || fail 'evaluated environment differs'
 }
 for command in home env; do
-    run 1 "$command"; diagnostic 'default JDK is missing or unusable'
+    run 1 "$command"; diagnostic 'No JDK currently set as the default'
     run 1 "$command" 21; diagnostic 'No JDK found matching: 21'
     for selector in '' 0 01 temurin '21+' '21..25' '$(touch bad)' --bad; do run 2 "$command" "$selector"; done
     run 2 "$command" 21 extra
@@ -75,42 +75,94 @@ make_jdk 21+1 temurin
 make_jdk 17+2 graalvm-community
 make_jdk 1.8.0_482-b08 legacy
 base=$(cd "$XDG_DATA_HOME/jvm" && pwd -P)
-ln -s "$base/jdks/21+1-temurin" "$base/default"
+run 0 default; exact 'No JDK currently set as the default'
+run 0 default -v 21; exact 'No JDK currently set as the default for version 21'
+for command in home env; do
+    run 1 "$command"; diagnostic 'No JDK currently set as the default'
+    run 0 "$command" 21
+    if [ "$command" = home ]; then exact "$base/jdks/21+1-temurin"; else check_env "$base/jdks/21+1-temurin" "$base/jdks/21+1-temurin/bin" 21; fi
+done
+ln -s "$base/jdks/21+1-temurin" "$base/jdks/default"
+ln -s "$base/jdks/21+1-temurin" "$base/jdks/21"
+ln -s "$base/jdks/1.8.0_482-b08-legacy" "$base/jdks/8"
 for selector in 21+1-temurin 21 temurin-21 graalvm-community-17 8; do
-    case "$selector" in graalvm*) expected=$base/jdks/17+2-graalvm-community ;; 8) expected=$base/jdks/1.8.0_482-b08-legacy ;; *) expected=$base/jdks/21+1-temurin ;; esac
+    case "$selector" in graalvm*) expected=$base/jdks/17+2-graalvm-community ;; 8|21) expected=$base/jdks/$selector ;; *) expected=$base/jdks/21+1-temurin ;; esac
     run 0 home "$selector"; exact "$expected"
     run 0 env "$selector"; check_env "$expected" "$expected/bin" "$selector"
 done
-run 0 home; exact "$base/default"
-run 0 env; check_env "$base/default" "$base/default/bin"
+run 0 home; exact "$base/jdks/default"
+run 0 env; check_env "$base/jdks/default" "$base/jdks/default/bin"
+make_jdk 21+2 temurin
+for command in home env; do
+    run 1 "$command" temurin-21; diagnostic 'Multiple JDKs match'
+done
+rm -rf -- "$base/jdks/21+2-temurin"
 make_jdk 21+9 other
 for command in home env; do
-    run 1 "$command" 21; diagnostic 'Multiple JDKs match, try again using one of the following IDs:'
-    diagnostic '21+1-temurin'; diagnostic '21+9-other'
+    run 0 "$command" 21
+    if [ "$command" = home ]; then exact "$base/jdks/21"; else check_env "$base/jdks/21" "$base/jdks/21/bin" 21; fi
     run 1 "$command" temurin-99; diagnostic 'No JDK found matching: temurin-99'
     run 0 "$command" 21+1-temurin
-    rm "$base/default"
-    run 1 "$command"; diagnostic 'default JDK is missing or unusable'
+    rm "$base/jdks/default"
+    run 1 "$command"; diagnostic 'No JDK currently set as the default'
     # Explicit selection does not need a usable default.
-    ln -s "$base/jdks/99+1-missing" "$base/default"
+    ln -s "$base/jdks/99+1-missing" "$base/jdks/default"
     run 1 "$command"; diagnostic 'default JDK is missing or unusable'
     run 0 "$command" temurin-21
-    rm "$base/default"
-    ln -s "$HOME" "$base/default"
+    rm "$base/jdks/default"
+    ln -s "$HOME" "$base/jdks/default"
     run 1 "$command"; diagnostic 'default JDK is missing or unusable'
-    rm "$base/default"; mkdir "$base/default"
+    rm "$base/jdks/default"; mkdir "$base/jdks/default"
     run 1 "$command"; diagnostic 'default JDK is missing or unusable'
-    rmdir "$base/default"; ln -s "$base/jdks/21+1-temurin" "$base/default"
+    rmdir "$base/jdks/default"; ln -s "$base/jdks/21+1-temurin" "$base/jdks/default"
     mv "$base/jdks/21+1-temurin/bin/javac" "$TEMP/javac"
     run 1 "$command"; diagnostic 'default JDK is missing or unusable'
     mv "$TEMP/javac" "$base/jdks/21+1-temurin/bin/javac"
 done
+# Missing references fall back to inventory; existing invalid references fail.
+rm "$base/jdks/21" "$base/jdks/8"
+for command in home env; do
+    run 1 "$command" 21; diagnostic 'Multiple JDKs match'; diagnostic '21+1-temurin'; diagnostic '21+9-other'
+    run 0 "$command" 8
+    if [ "$command" = home ]; then exact "$base/jdks/1.8.0_482-b08-legacy"; else check_env "$base/jdks/1.8.0_482-b08-legacy" "$base/jdks/1.8.0_482-b08-legacy/bin" 8; fi
+done
+printf 'unrelated\n' > "$base/jdks/21"
+for command in home env; do
+    run 1 "$command" 21; diagnostic 'not a managed link'
+done
+rm "$base/jdks/21"
+ln -s "$base/jdks/99+1-missing" "$base/jdks/21"
+for command in home env; do
+    run 1 "$command" 21; diagnostic 'default JDK for version 21 is unavailable'
+    run 1 "$command" -i 21; diagnostic 'default JDK for version 21 is unavailable'
+done
+rm "$base/jdks/21"
+ln -s "$base/jdks/17+2-graalvm-community" "$base/jdks/21"
+for command in home env; do
+    run 1 "$command" 21; diagnostic 'expected 21'
+done
+rm "$base/jdks/21"
+ln -s "$base/jdks/21+1-temurin" "$base/jdks/21"
+# Fail if the resolver scans another installation: a major reference is sufficient.
+real_awk=$(command -v awk)
+mv "$TEMP/tools/awk" "$TEMP/awk"
+printf '#!%s\nfor arg in "$@"; do case "$arg" in */17+2-graalvm-community/.jvm-manifest) exit 2 ;; esac; done\nexec "%s" "$@"\n' "$BASH_BIN" "$real_awk" > "$TEMP/tools/awk"
+chmod +x "$TEMP/tools/awk"
+for command in home env; do
+    run 0 "$command" 21
+    if [ "$command" = home ]; then exact "$base/jdks/21"; else check_env "$base/jdks/21" "$base/jdks/21/bin" 21; fi
+    run 0 "$command" -i 21
+    if [ "$command" = home ]; then exact "$base/jdks/21"; else
+        check_env "$base/jdks/21" "$base/jdks/21/bin" '-i 21'
+    fi
+done
+mv "$TEMP/awk" "$TEMP/tools/awk"
 # Simulated Windows conversion uses a drive colon for JAVA_HOME, never PATH.
 export TEST_SYSTEM=MINGW64_NT-10.0
 make_jdk 25+1 windows-test windows
-rm "$base/default"; ln -s "$base/jdks/25+1-windows-test" "$base/default"
+rm "$base/jdks/default"; ln -s "$base/jdks/25+1-windows-test" "$base/jdks/default"
 for selector in '' windows-test-25; do
-    expected=$base/default
+    expected=$base/jdks/default
     [ -z "$selector" ] || expected=$base/jdks/25+1-windows-test
     if [ -z "$selector" ]; then run 0 home; else run 0 home "$selector"; fi
     exact "$expected"
@@ -127,7 +179,7 @@ done
 export XDG_DATA_HOME=$saved_data
 export TEST_CONVERT_FAIL=1
 run 1 env; diagnostic 'cannot convert JDK home path'
-run 0 home; exact "$base/default"
+run 0 home; exact "$base/jdks/default"
 mv "$TEMP/tools/cygpath" "$TEMP/cygpath"
 run 0 home windows-test-25; exact "$base/jdks/25+1-windows-test"
 mv "$TEMP/cygpath" "$TEMP/tools/cygpath"

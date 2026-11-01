@@ -99,34 +99,245 @@ See [tests/README.md](tests/README.md) for exact verification commands and gaps.
 
 The core command set is implemented. The proposed next milestone is release
 readiness, starting with the previously requested configurable installation
-distribution, followed by validation and user documentation. This roadmap
-records planned work; it does not claim implementation or verification.
+distribution, range disambiguation and version-range selectors, followed by
+validation and user documentation. This roadmap records planned work; it does
+not claim implementation or verification.
 
 1. **Configurable installation distribution.** Let bare-major installation
    such as `install 21` use a configured distro, with Temurin as the default
    when none is configured. The future requirement is recorded under
    [Identity and selection](#identity-and-selection); the config filename and
    format remain undecided. Explicit distro selectors retain their meaning.
-2. **Real JDK smoke testing.** Add an optional end-to-end check covering download,
+2. **Range disambiguation.** Per-major defaults were selected on 2026-11-01
+   and are implemented for ordinary selectors. Their use for ranges remains
+   planned with the range syntax below.
+3. **Version-range selectors.** Add open-ended major bounds (`21+`,
+   `temurin-21+`) and inclusive major ranges (`21..25`, `temurin-21..25`).
+   This feature was added to the near-term roadmap by the user on 2026-10-30.
+   Command coverage, highest-major selection, per-major disambiguation,
+   installation distro and offline-first install-on-demand policies are below.
+   This feature is not implemented.
+4. **Smart `env` (user requested 2026-11-01).** Omit the PATH export line
+   when the selected JDK's `bin` directory is already an entry in the current
+   PATH. Add `env -f` to force the PATH export line to always be printed,
+   preserving today's behavior. Continue printing the usage comment and
+   JAVA_HOME export. This feature and `-f` are planned, not implemented.
+5. **JDK execution and shell (proposal added 2026-11-01).** Add `exec` (alias
+   `x`) to run a command with a selected JDK and `shell` (alias `s`) to open an
+   interactive child shell using the same environment preparation. Adopt or
+   discard these commands together as one feature pair. See
+   [JDK execution and shell proposal](#jdk-execution-and-shell-proposal).
+   Both commands are planned, not implemented.
+6. **Real JDK smoke testing.** Add an optional end-to-end check covering download,
    installation, default selection, actual `java`/`javac` execution and
    uninstallation in isolated storage. Current fixture tests and native Windows
    junction traversal do not establish that a downloaded Java runtime works.
    Keep live downloads separate from the deterministic offline suite, following
    the verification procedures in [AGENTS.md](AGENTS.md).
-3. **Portability checks and CI.** Run the offline suite on Linux, macOS and
+7. **Portability checks and CI.** Run the offline suite on Linux, macOS and
    Windows, including actual Bash 3.2, and add CI for repeatable coverage.
    Native Cygwin and standalone MSYS2 verification also remain outstanding.
    Record actual results and remaining gaps in
    [tests/README.md](tests/README.md); simulated hosts do not establish native
    platform support.
-4. **User README.** Add a short root README explaining how to copy `jvm` into
+8. **User README.** Add a short root README explaining how to copy `jvm` into
    a project, use the basic commands and configure the shell for the persistent
    default. Keep contributor procedures in AGENTS.md and tests/README.md.
 
-Version ranges below remain a separate future feature. Running commands with
-a selected JDK and broader session-switching integration remain deferred.
+Version ranges and the JDK execution and shell proposal are not implemented yet.
+Broader session-switching integration remains deferred.
 Offline `home` and `env` output were subsequently authorized and implemented on
 2026-10-30; their contract follows the deferred range proposal.
+
+### JDK execution and shell proposal
+
+**Proposed (user requested roadmap entry 2026-11-01):** adopt or discard
+`exec` (`x`) and `shell` (`s`) together. Both commands resolve a JDK and prepare
+JAVA_HOME and PATH for that installation, reusing the installed selectors and
+offline-first `-i` policy of `home`/`env`.
+Resolve to the physical installation home rather than a mutable default link,
+so later default changes do not switch the selected JDK.
+
+`exec [-i] <selector> -- <command> [args...]` runs the requested command with
+JAVA_HOME set and the selected JDK's `bin` directory prepended to PATH. The `--`
+separator ends JVM option parsing. Preserve argument boundaries and invoke the
+command through Bash's `exec "$@"`, without evaluating a command string or
+generated `env` output. The executed command's exit status reaches the caller.
+Users explicitly invoke a shell when they need shell syntax:
+
+```bash
+./jvm exec 21 -- java -version
+./jvm x -i 21 -- mvn test
+./jvm x 21 -- bash -c 'java -version && mvn test'
+```
+
+`shell [-i] <selector>` opens an interactive child shell using the same execution
+machinery, conceptually `./jvm x 21 -- "$SHELL" -i`, with shell selection and an
+introductory notice added. `$SHELL` can be unset or identify a login shell other
+than the current shell, so this example is not a finalized shell-selection
+policy. Project-local invocation remains supported:
+
+```bash
+./jvm shell 21
+# Java 21 is active in the new shell.
+exit
+# Return to the original shell and its previous environment.
+```
+
+Print a short notice such as `Using <ID> in a new shell. Type exit to return.`
+Neither command explicitly changes persistent defaults or the parent shell's
+environment; `-i` retains ordinary installation's default-initialization behavior.
+Neither requires shell functions, profile edits, shims, or temporary session
+links; child processes inherit the selected environment. Calling
+`shell` again from the child shell nests another shell, which should be made
+explicit to the user.
+
+Shell selection and supported shells, and handling startup files that override
+JAVA_HOME or PATH, remain implementation decisions to resolve.
+Shell-function, shim, and mutable session-link approaches were considered and
+discarded. This roadmap entry does not authorize implementation or claim platform
+verification.
+
+### Per-major defaults
+
+**Selected and implemented (2026-11-01):** retain one default installed
+JDK for each major, in addition to the global default reference.
+**Layout (user requested 2026-11-01):** place the global link at
+`jvm/jdks/default` and per-major links directly at `jvm/jdks/<major>`, for example
+`jdks/11`, `jdks/21` and `jdks/25`, alongside actual installation directories.
+This supersedes the proposed separate `defaults/` directory and moves the
+global reference from `jvm/default`. Each per-major reference points to a usable
+managed JDK home of that major, using the same platform link mechanism as the
+global default (Unix symlink or Windows directory junction); the global link
+may select any installed major.
+
+```text
+jvm/
+  jdks/
+    default -> 25.0.1-temurin/
+    21      -> 21.0.9-temurin/
+    25      -> 25.0.1-temurin/
+    21.0.9-temurin/
+    25.0.1-temurin/
+```
+
+The targets above are illustrative. Reserve `default` and positive-major names
+for aliases and exclude them from installation inventory scanning and removal
+as installations. Preserve existing link replacement and cleanup safeguards.
+Home/environment output, shell setup examples and tests use this layout.
+
+**Compatibility decision (2026-11-01):** backwards compatibility is not a goal.
+Do not retain a compatibility link at `jvm/default` or add migration machinery
+for this layout change. Users of the old path would update their shell/IDE
+configuration. The old layout is neither read nor migrated.
+
+**Advantage (recorded 2026-11-01):** per-major links provide stable JDK paths
+for IDEs and other tools that manage several Java versions. Configure each IDE
+once with paths such as `jvm/jdks/11`, `jvm/jdks/21` and
+`jvm/jdks/25`, then manage which actual installed JDK each link targets
+centrally through `jvm`. Changing a major's selected JDK would not require
+editing that JDK path separately in every IDE. Tools that cache or resolve a
+link's target may still
+need a refresh or restart to pick up a change.
+
+Apply the existing automatic default lifecycle within each major: a successful
+first installation initializes its missing major default, including an
+idempotent installation; later installations preserve an existing reference.
+When uninstalling that major's selected JDK, replace its reference with a
+remaining usable installation of the same major, using the existing inventory
+tie order. Remove the reference when none remains for that major; never point
+it at another major. Preserve the existing protections for unrelated data,
+failed changes, interrupted removal and concurrent initialization. The global
+default retains its own lifecycle, including replacement across majors.
+
+**Implemented UX (2026-11-01):** extend `default` with `-v <major>` to
+choose which major's default to query or change. Use the short flag `-v`, not
+`--major`. Without it, `default` continues to manage the global default.
+
+| Command | Behavior |
+| --- | --- |
+| `jvm default -v 21` | Show Java 21's default ID. |
+| `jvm default -v 21 temurin-21` | Set Java 21's default to the selected installed JDK. |
+| `jvm default -v 21 -i temurin-21` | Install if needed, then set Java 21's default. |
+
+A full installed ID may replace the selector. The selected JDK must match the
+major supplied to `-v`; a mismatch produces a clear error without changing the
+default. The major identifies the preference being changed, while the selector
+identifies the JDK. Explicit per-major selection leaves the global default
+unchanged. Explicit global selection, including `install -d`, leaves existing
+per-major defaults unchanged; ordinary installation still initializes a missing
+major default. The `-i` flag retains offline-first installation semantics.
+
+Reuse the `DEFAULT` column in `list` to show `global`, a major such as `21`, or
+`global,21` when both references select the same JDK. No separate command to
+list defaults or explicit unset command is included: each installed
+major should have a default, maintained by the automatic lifecycle above.
+
+Use existing selectors for home/environment output rather than adding a flag:
+
+| Command | Path behavior |
+| --- | --- |
+| `jvm home` | Return the stable global `jvm/jdks/default` path. |
+| `jvm home 21` | Return the stable `jvm/jdks/21` path if valid; otherwise, when absent, resolve against installed JDKs and return the selected physical home. |
+| `jvm home <full-ID>` | Return that specific installation's physical home. |
+| `jvm env 21` | Use the same stable reference or physical fallback path as `home 21`. |
+
+Existing path conversion and shell quoting rules still apply. No `-v` or
+`--major` flag is needed for `home` or `env`. As corrected by the user on
+2026-11-01, all explicit `home`/`env` selectors resolve against installed JDKs
+using the same selection and ambiguity rules as `default`. A positive-major
+selector first checks `jdks/<major>`. If present, validate its managed target,
+host compatibility, layout and major, and use that JDK without enumerating the
+inventory. An existing invalid reference fails without falling back or installing.
+An absent reference falls back to ordinary inventory matching: one match selects
+it, multiple matches show options, and no match fails (or permits `-i` installation).
+This rule applies to `default`, `home` and `env`, including `-i`; it does not
+change `install`, `uninstall` or `list`. Distro-major selectors do not use defaults.
+The complete lookup and scan order is specified under
+[Installed selector resolution](#installed-selector-resolution-implemented).
+
+Without a selector, missing or unusable global references make read-only
+`home`/`env` fail; these commands never repair storage.
+A missing `default -v` reference reports
+`No JDK currently set as the default for version <major>`, while an
+unusable one fails. Major selectors without a reference and explicit distro-major
+selectors retain ambiguity errors.
+Range fallback policy remains unresolved below.
+
+### Distribution preference order alternative
+
+**Unselected alternative (user requested 2026-10-30):** disambiguate
+different distributions using a configurable preference order instead of
+maintaining per-major default links. Keep the existing global default. This
+alternative does not require per-major links or per-major selection commands;
+it was not selected and is not implemented.
+
+The suggested default order is the default installation distro first (currently
+`temurin`, later configurable), followed by all other eligible distros in
+alphabetical order by canonical distro identifier. Users could override that
+order with a simple comma-separated value in a config file, for example
+`temurin,semeru,graalvm-community`. The example is a value, not adopted config
+syntax: the filename, setting name and surrounding format remain undecided.
+
+For ranges, apply distro preference after retaining the highest matching major;
+a preferred distro at major 21 must not outrank an eligible distro at major 25
+for `21+`. Honor explicit distro filters and exact IDs. A preference order ranks
+eligible candidates; it does not change `available`/`list` output order or
+authorize falling back to other distros during installation, which currently
+filters to the explicit or default installation distro. Offline-first `-i`
+selection remains unchanged: a usable local match avoids a remote lookup.
+
+**Proposed config detail:** consider explicitly listed distros in their supplied
+order, then unlisted eligible distros alphabetically, skipping absent distros.
+Whether to use that remainder policy, and how to handle whitespace, duplicate
+or unknown identifiers and empty values, remain open. Configuration is data,
+never sourced or evaluated as shell code.
+
+This alternative resolves ties between distros, but not multiple installed IDs
+of the same distro and major or multiple remote artifact rows for one ID. Those
+cases still need a deterministic policy consistent with the range-success
+requirement. Applying preferences to ordinary non-range selectors is also an
+open scope decision; their implemented ambiguity behavior is unchanged.
 
 ### Open versions and inclusive version ranges
 
@@ -139,19 +350,53 @@ Extend selectors with major-version bounds:
 | `21..25` | Any major version from 21 through 25, inclusive. |
 | `temurin-21..25` | Any Temurin major version from 21 through 25, inclusive. |
 
-These are major bounds, using the existing major extraction from `version`,
-not comparisons of complete vendor version strings. Preserve exact full-ID
-precedence, including IDs whose version already contains `+`, and support
-hyphenated distro names.
+Range bounds apply to majors extracted from `version`. Selection among matches
+uses the highest-major rule below. Preserve exact full-ID precedence, including
+IDs whose version already contains `+`, and support hyphenated distros.
 
-**Unresolved:** decide which commands accept these forms. Candidates are
-`available`, `list`, `install`, `default`, `home`, and `env`.
-`uninstall` may be excluded because ranges seem less useful for removing a
-single installation; no exclusion or bulk-uninstall behavior is adopted yet.
-Also decide how commands requiring one JDK handle multiple matches and whether
-bare installation ranges use the configured installation distro. Range syntax
-alone does not authorize highest-version selection, version sorting, historical
-index fetching or automatic installation by local commands.
+**Adopted for the planned range feature on 2026-10-30:**
+
+- Accept ranges in `available`, `list`, `install`, `default`, `home` and `env`.
+  Exclude `uninstall`; no bulk-uninstall behavior is authorized.
+- `available` and `list` return all matches in their existing listing order.
+  Commands selecting one JDK first retain only matches at the highest matching
+  Java major. Disambiguate multiple installed IDs using that major's default.
+  A range MUST NOT fail merely because multiple
+  relevant JDKs exist. This user clarification supersedes the earlier planned
+  ambiguity error at the highest major. It does not adopt complete-version
+  comparisons, vendor-version ranking or fallback to a lower major.
+- Bare installation ranges use the normal installation distro: currently
+  Temurin, later the configured distro when configurable defaults are implemented.
+  Local selection still considers all installed distros unless explicitly filtered.
+- Range-based `default/home/env -i` remains offline-first: use the highest
+  matching local major, resolving ties through the chosen policy. Only a genuine
+  local no-match permits remote installation. Multiple candidates must not cause
+  failure locally or during range-based installation; `-i` should resolve and
+  install a matching JDK when one is available. Network, unavailable-version and
+  other operational failures remain errors; checksum, archive and publication
+  safeguards are not relaxed. Operational failures do not trigger installation.
+  Continue using the exact ID returned by installation. Do not check remotely
+  for a newer JDK when a usable local match exists.
+
+For example, `home -i 21+` uses a sole installed Java 21 match without networking,
+even if Java 25 is available remotely. If Java 25 is installed too, select that
+major. With two installed IDs at major 25, the major default at `jdks/25`
+selects the installation.
+`install 21..25` instead filters
+remote candidates to the ordinary installation distro and chooses the highest
+matching major in the latest index.
+
+**Unresolved resolution details:** define a deterministic fallback when a
+major default is missing/unusable or does not match an explicit distro filter,
+and a remote tie policy when multiple eligible IDs exist before a major default
+can be created. These policies must honor the selector and the requirement that
+multiple relevant candidates do not cause range failure. Artifact-format
+preference and safe handling of multiple artifact rows for one ID also need to
+remain explicit; a local major default alone does not resolve remote artifact
+collisions. No arbitrary upstream-row preference is adopted here.
+
+These range policies are adopted for future implementation. No complete-version comparator,
+historical index fetching or range implementation is claimed here.
 
 ## Offline home and environment output (implemented 2026-10-30)
 
@@ -162,26 +407,34 @@ installed inventory, or edit shell profiles. They do not download missing JDKs.
 
 Both accept the same installed selectors as `default`: exact full ID first,
 otherwise a positive major or distro-major, including hyphenated distributions
-and legacy Java versions. Bare majors match every distribution. Multiple
-matches use the existing ambiguity diagnostic/table and exit 1; no highest
+and legacy Java versions. After syntax validation, a positive major first uses
+an existing valid per-major reference, without scanning the inventory. If that
+reference is absent, match the installed inventory. Other explicit selectors
+resolve against complete installed JDKs. Multiple matches use the existing
+ambiguity diagnostic/table and exit 1; no highest
 version is chosen. No match uses `No JDK found matching: <selector>` and exits 1.
 Version ranges remain deferred. Invalid selectors and excess/empty arguments
 exit 2. Each command's `--help` prints main help without external utilities or
 storage access.
 
-Without a selector, validate that the stable default reference points to a
-usable managed installation. An absent, dangling, incompatible, unrelated or
-unusable reference reports `jvm: default JDK is missing or unusable` on stderr
-and exits 1. Never repair or select a default implicitly. Successful ordinary
+Without a selector, validate that the stable global default reference points to a
+usable managed installation. An absent reference reports
+`jvm: No JDK currently set as the default` on stderr and exits 1, using the same
+wording as the `default` query. A dangling, incompatible, unrelated or unusable
+reference reports `jvm: default JDK is missing or unusable` on stderr and exits 1.
+Never repair or select a default implicitly. Successful ordinary
 invocations without secondary informational messages have empty stderr; failures
 have empty stdout. The output-stream decision below permits informational
 messages on stderr, including installation messages for the `-i` flag.
 
 ### JDK home output: `home [<selector>]`
 
-Print exactly one unquoted absolute path and a newline. Explicit selection uses
-the selected installation's normalized physical JDK home. Omitted selection
-uses the stable `jvm/default` path, retaining that final reference rather than
+Print exactly one unquoted absolute path and a newline. Positive-major selectors
+that use a per-major reference return its stable `jvm/jdks/<major>` path, retaining
+the final link component. Without that reference, inventory fallback returns the
+selected installation's normalized physical JDK home. Exact-ID and distro-major
+selectors always return the selected physical home.
+Omitted selection uses the stable `jvm/jdks/default` path, retaining that final reference rather than
 resolving it to an installation. Output is an absolute POSIX path in the running
 Bash environment on every platform, including Windows. A 2026-10-30 user
 correction supersedes the earlier native-path output policy: `home` does not
@@ -228,14 +481,24 @@ Installation failure preserves the previous usable default. Selection failure
 returns 1 and preserves the previous default; a successfully published JDK may
 remain installed.
 
-`default -i <selector>`, `home -i <selector>` and `env -i <selector>` first resolve
-against the managed offline inventory using the existing local selector rules:
-exact IDs take precedence and bare majors match every distribution. One match
+`default -i <selector>`, `home -i <selector>` and
+`env -i <selector>` first resolve locally using the existing selector rules:
+positive majors first check their per-major reference, before enumerating the
+inventory. Otherwise exact IDs take precedence and bare majors match every
+distribution. One match
 uses that ID without networking. Ambiguity fails with the existing local table;
 validation, storage and other operational failures also fail without installation.
 Only a genuine no-match result permits installation using ordinary install
 selectors, including Temurin for a bare major. Continue with the exact ID returned
 by installation, without resolving the original broad selector again.
+
+For bare-major `home -i` and `env -i`, an existing valid major reference selects
+its stable link path; otherwise one local match returns its physical home.
+Without a major reference, multiple matches fail without networking.
+When no installation of that major exists, `-i` installs through the ordinary
+bare-major rule and returns the stable major reference if it points at that exact
+installation, including a newly initialized reference. Otherwise return the exact
+installation's physical home, without selecting a different JDK after a race.
 
 `default -i` selects that ID persistently. `home -i` and `env -i` preserve ordinary
 installation's first-install initialization and do not replace an existing usable
@@ -248,7 +511,8 @@ An explicit selector is required with `-i`: missing selection prints
 `jvm: Missing selector` through the stderr diagnostic helper, leaves stdout empty
 and exits 2 without state changes. Normal no-selector behavior applies only
 without `-i`. Flags may precede or follow the selector. `-d` is accepted only by
-install, and `-i` only by default/home/env. Unsupported or repeated flags, empty
+install, and `-i` only by default/home/env. `-v <major>` is accepted only by
+`default`; a missing, repeated or invalid major exits 2. Unsupported or repeated flags, empty
 selectors and extra arguments exit 2 before side effects. Primary output is
 prepared before printing; any failure leaves stdout empty.
 
@@ -263,7 +527,7 @@ All secondary output, including progress, informational confirmations and
 default-change announcements, goes to stderr. This includes `Installing <ID>...`,
 `Successfully installed <ID>`, `Already installed <ID>`,
 `Successfully uninstalled <ID>`, `Default JDK set to: <ID>` and automatic
-`Default JDK unset: no JDKs are installed` announcements. Diagnostics also go to
+`No JDK currently set as the default` announcements. Diagnostics also go to
 stderr. State-changing commands need not produce stdout merely to confirm
 success. A no-selector `default` query remains primary output, including its
 no-default result.
@@ -341,9 +605,8 @@ The complete version MUST:
 
 Future work, which MUST NOT be implemented in the initial version:
 
-- Broader shell-session integration, potentially using dynamic shims and a
-  shell integration protocol, beyond the implemented opt-in `env` output.
-- Run an arbitrary command with a selected JDK.
+- The proposed `exec` (`x`) and `shell` (`s`) command pair described in the
+  roadmap, beyond the implemented opt-in `env` output.
 
 Initial scope does not require system-wide installation, automatic
 updates, importing unrelated installations, project version files, or a GUI.
@@ -404,7 +667,7 @@ jvm available [selector]
 jvm list [selector]
 jvm install [-d] <selector>
 jvm uninstall <selector>
-jvm default [-i] [selector]
+jvm default [-i] [-v <major>] [selector]
 jvm home [-i] [selector]
 jvm env [-i] [selector]
 ```
@@ -457,8 +720,8 @@ jvm env [-i] [selector]
   exact IDs are accepted by installation, uninstallation and local listing. Listings
   show `ID`, `DISTRIBUTION`, `VERSION`, and `JVM`. Omit the platform column;
   discovery already filters for the current host.
-  Local listings and local ambiguity tables add a `DEFAULT` column marked `*`
-  when a managed default reference exists. IDs themselves remain unchanged.
+  Local listings and local ambiguity tables add a `DEFAULT` column showing
+  `global`, a major, or both when references select the row. IDs remain unchanged.
 - Align listing headers and values with tabs at 8-column stops. Size each column
   from the widest displayed value or header, placing the next column at the
   following tab stop, capped at four tab stops (32 columns) per column. Longer
@@ -547,6 +810,78 @@ for validation, without encoding them into the ID.
   the distro-major interpretation.
 - `jvm available --help` prints the same short help as `jvm --help`, with exit 0.
 
+### Installed selector resolution (implemented)
+
+**Current behavior (2026-11-01):** `default`, `home` and `env` share the following
+resolution order. Here, an **inventory scan** means enumerating `jdks/*` and
+inspecting candidate installations; checking a known path is not a scan.
+This sequence does not change discovery, ordinary installation, listing or
+uninstallation selector policies.
+
+With an explicit selector:
+
+1. Validate selector syntax, detect the host and resolve the data storage path.
+   Accept a full ID, positive major without leading zeros, or distro-major,
+   including hyphenated distros and legacy version IDs. Bare distro names and
+   version ranges are unsupported by these commands. No inventory scan occurs.
+2. For a positive major such as `21`, check `jdks/21` directly. If present,
+   validate that it is a managed link/junction to a compatible, usable
+   installation of that major. A valid reference selects its target without
+   scanning the inventory. An existing invalid, unrelated, dangling, unusable
+   or wrong-major reference fails without scanning or permitting installation.
+   An absent reference proceeds to step 4.
+3. For a full-ID selector, check `jdks/<ID>` directly. A valid installation
+   selects that ID without scanning the inventory. A missing or invalid
+   installation proceeds to step 4; an operational manifest-read error fails
+   immediately. Distro-major selectors proceed directly to step 4.
+4. Scan the inventory: enumerate `jdks/*`, skip names that are not safe
+   installation IDs (including `default` and numeric aliases), and read each
+   candidate's manifest. Validate manifest identity, host compatibility and
+   Java launcher layout. Ignore incomplete, incompatible or unmanaged candidates;
+   operational read errors fail the scan. Collect the complete usable inventory
+   before filtering, even if an early candidate matches. An absent inventory is
+   empty; inaccessible or invalid storage ancestors are operational failures.
+5. Filter the collected inventory. An exact ID match takes precedence;
+   otherwise a major matches every distro of that major, and a distro-major
+   matches that distro and major. One distinct matching ID selects it. Multiple
+   matching IDs print the existing options table on stderr and exit 1. Zero
+   matches report `No JDK found matching: <selector>` and exit 1, unless `-i`
+   permits the installation fallback below. Neither the global default nor a
+   distro preference breaks ties during this filtering step.
+6. Apply the command's result. `default` updates the global reference;
+   `default -v N` requires the selected JDK to have major N and updates that
+   major's reference. `home` and `env` retain the stable `jdks/N` link path for
+   an original positive-major selector when that reference points to the selected
+   installation. Otherwise they use the selected physical installation home.
+   Full-ID and distro-major selectors always use physical homes. Existing
+   platform path conversion and shell quoting rules still apply.
+
+With `-i`, first perform the same local resolution. Only a genuine zero-match
+result permits installation; ambiguity, invalid references and operational
+failures do not. Use ordinary installation selectors, including Temurin for a
+bare major, then continue with the exact installed ID rather than resolving the
+original broad selector again. The command rechecks that exact ID directly,
+without a new inventory scan while that installation remains valid. For an
+original major selector, home/env retain the stable major link when it points to
+that exact ID, including a link initialized by installation; otherwise use the
+physical home so a competing reference change cannot select a different JDK.
+
+Without a selector, no inventory scan occurs:
+
+| Command | Direct lookup and result |
+| --- | --- |
+| `default` | Read and validate `jdks/default`; show its target ID or the documented no-default message. |
+| `default -v N` | Read and validate `jdks/N`; show its target ID or the documented per-version no-default message. |
+| `home` / `env` | Validate `jdks/default` and use that stable link path; fail if missing or unusable. |
+
+The current `default` implementation also checks the destination reference it
+will query or update before resolving an explicit selector. This is a direct
+reference check, not an inventory scan. With `-i`, the initial local/install
+resolution happens before that command-specific destination check. `-v N`
+identifies the reference being managed and imposes a major check on the selected
+JDK; it does not implicitly add a selector. `-i` always requires an explicit
+selector.
+
 ### Installation selectors (implemented)
 
 - Try an exact full-ID match first.
@@ -573,8 +908,9 @@ for validation, without encoding them into the ID.
 
 Remote resolution uses the API's own latest selection for each major version;
 the API need not supply an ordering key. Resolve within that inventory, retaining
-the ambiguity rules above. Local default resolution works offline and bare majors
-match every installed distribution. Current `list` returns all local selector
+the ambiguity rules above. Local default resolution works offline; bare majors
+first use their per-major reference, then fall back to matching every installed
+distribution when it is absent. Current `list` returns all local selector
 matches rather than resolving a single installation.
 
 **Future requirement (user requested 2026-10-30):** make the default installation
@@ -617,7 +953,8 @@ Windows; do not substitute AppData or macOS Library paths.
 | Installed JDKs and their manifests | `${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/<id>/` |
 | Private installation staging | `${XDG_DATA_HOME:-$HOME/.local/share}/jvm/tmp/jdk-<id>.XXXXXXXX/` |
 | Private removal staging | `${XDG_DATA_HOME:-$HOME/.local/share}/jvm/tmp/remove-<id>.XXXXXXXX/` |
-| Persistent default reference | `${XDG_DATA_HOME:-$HOME/.local/share}/jvm/default` |
+| Global default reference (implemented) | `${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/default` |
+| Per-major default references (implemented) | `${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/<major>` |
 | User configuration, if needed | `${XDG_CONFIG_HOME:-$HOME/.config}/jvm/` |
 | Download and metadata cache | `${XDG_CACHE_HOME:-$HOME/.cache}/jvm/` |
 | Operational state, if needed | `${XDG_STATE_HOME:-$HOME/.local/state}/jvm/` |
@@ -701,7 +1038,7 @@ component limit. Existing portable ID/path checks still apply before storage.
 
 ## Persistent default and shell integration
 
-**Authorized and implemented 2026-10-30:** `default` references the selected
+**Authorized and implemented 2026-10-30, extended 2026-11-01:** `default` references the selected
 normalized JDK home, using a directory symlink on Unix and `mklink /J` directory
 junction on Windows. Users add its `bin` directory to PATH once. The main help
 has a dedicated `Shell setup` section with Unix and Windows Bash instructions.
@@ -712,7 +1049,7 @@ PATH. This handles both native XDG overrides and POSIX HOME fallback paths.
 The two-line example is:
 
 ```bash
-export JAVA_HOME="$(cygpath -m "${XDG_DATA_HOME:-$HOME/.local/share}/jvm/default")"
+export JAVA_HOME="$(cygpath -m "${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/default")"
 export PATH="$(cygpath -u "${JAVA_HOME}")/bin:$PATH"
 ```
 
@@ -722,7 +1059,7 @@ the underlying installation behavior is unchanged.
 The Unix setup is:
 
 ```bash
-export JAVA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/jvm/default"
+export JAVA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/default"
 export PATH="$JAVA_HOME/bin:$PATH"
 ```
 
@@ -734,11 +1071,13 @@ JAVA_HOME pointing elsewhere, earlier PATH entries, command caching, or software
 that resolves JAVA_HOME once can prevent immediate adoption; describe how to
 refresh the shell environment or restart that software.
 
-`default` without a selector prints the exact ID, or `Default JDK unset: no JDKs are installed`
-and exits 0. A dangling managed reference reports an unavailable-default error.
+`default` without a selector prints the exact ID, or `No JDK currently set as the default`
+and exits 0. The unset message makes no claim about installed JDKs: installations
+can exist without a default reference. A dangling managed reference reports an unavailable-default error.
 Without `-i`, a selector resolves against complete local installations only:
-exact IDs take precedence; major and distro-major selectors must resolve to one
-installation. Bare majors match all distros. Success prints
+positive majors first use an existing valid per-major reference. Otherwise exact
+IDs take precedence; major and distro-major selectors must resolve to one
+installation. Bare majors without a reference match all distros. Success prints
 `Default JDK set to: <ID>` to stderr. This ordinary path uses no network or cache;
 `-i` follows the adopted install-on-demand policy above.
 `default --help` uses the main help without accessing storage or external tools.
@@ -761,8 +1100,14 @@ lower major. Ties use the first ID in local inventory order (C-locale directory
 name order). This orders only extracted majors, never vendor version strings.
 If no JDK remains, remove the link/junction. After successful removal, print
 `Default JDK set to: <ID>`
-for a replacement, or `Default JDK unset: no JDKs are installed` if the inventory is now empty.
-These lines follow the uninstall success message on stderr. Failed removals
+for a replacement, or `No JDK currently set as the default` if the inventory is now empty.
+When the removed JDK is also its major's default, replace that reference with
+the first remaining usable ID of the same major in local inventory order, or
+remove it when none remains. Update both selected references before moving the
+installation. If either update or the move fails, restore any prior selection
+that is still safe to restore; keep the original installation in place when
+the move was not made.
+Default-change announcements follow the uninstall success message on stderr. Failed removals
 do not announce a successful default change. Change the reference before moving
 the old installation so it never intentionally points to a removed JDK. If the
 move fails, restore the old selection provided the replacement is still current.

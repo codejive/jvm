@@ -20,7 +20,7 @@ Commands:
   install, i [-d] <selector>   Download, verify and install a JDK in user storage.
   uninstall, u <selector>      Remove an installed JDK from user storage.
   list, l [selector]           Show matching JDKs installed by jvm, even offline.
-  default, d [-i] [selector]   Show or select the persistent installed JDK default.
+  default, d [-i] [-v <major>] [selector]  Show or select a persistent JDK default.
   home, h [-i] [selector]      Print an installed JDK home or the stable default path.
   env, e [-i] [selector]       Print Bash exports for an installed JDK or default.
   --help                      Show this help.
@@ -30,28 +30,31 @@ Selectors:
   available/list: major (21), distro (temurin), or distro-major (temurin-21).
   install/uninstall/default/home/env: full ID (21.0.12+9-temurin), major, or distro-major.
   Bare install majors use Temurin; other local majors match all distros.
-  If install/uninstall/default/home/env match multiple IDs, choose a reported full ID.
+  Bare local majors use an existing per-version default, otherwise match installed JDKs.
+  Ambiguous selectors need a full ID.
   list also accepts a full ID; omit available/list selectors to show all.
 
 Options:
   -d  install: make the installed JDK the persistent default.
   -i  default/home/env: install if missing; requires a selector.
+  -v  default: query or set the specified Java major's default.
 
 Examples:
   jvm available temurin
   jvm i -d temurin-21
   jvm uninstall temurin-21
   jvm list 21
+  jvm default -v 21 temurin-21
   jvm home -i 21
   eval "$(jvm env temurin-21)"
 
 Shell setup (once, in your shell profile):
   Unix:
-  export JAVA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/jvm/default"
+  export JAVA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/default"
   export PATH="$JAVA_HOME/bin:$PATH"
 
   Windows Bash:
-  export JAVA_HOME="$(cygpath -m "${XDG_DATA_HOME:-$HOME/.local/share}/jvm/default")"
+  export JAVA_HOME="$(cygpath -m "${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/default")"
   export PATH="$(cygpath -u "${JAVA_HOME}")/bin:$PATH"
 EOF
 }
@@ -300,6 +303,27 @@ safe_id() {
         [[ $1 != *..* ]] && [[ $1 != *. ]]
 }
 
+version_major() {
+    local version=$1
+    case "$version" in 1.*) version=${version#1.} ;; esac
+    version=${version%%[^0-9]*}
+    [ -n "$version" ] || return 1
+    printf '%s\n' "$version"
+}
+
+installation_major() {
+    local row
+    row=$(read_installation "$JDKS/$1") || return 1
+    version_major "$(printf '%s\n' "$row" | awk -F '\t' '{print $3}')"
+}
+
+check_major() {
+    local actual
+    [ -z "$2" ] && return 0
+    actual=$(version_major "$1") || return 1
+    [ "$actual" = "$2" ] || { error "selected JDK has Java major $actual, expected $2"; return 1; }
+}
+
 installation_selector() {
     [ -z "$1" ] || safe_id "$1" || [[ $1 =~ ^[1-9][0-9]*$ ]] ||
         [[ $1 =~ ^[a-z][a-z0-9-]*-[1-9][0-9]*$ ]] || {
@@ -419,14 +443,14 @@ local_rows() {
 
 # Defaults are links only; never replace an unrelated file or directory.
 default_current() {
-    local target parent
+    local target parent link=$JDKS/${1:-default}
     CURRENT=
-    if [ ! -L "$DATA/default" ]; then
-        [ ! -e "$DATA/default" ] && return 0
-        error "default path is not a managed link: $DATA/default"; return 1
+    if [ ! -L "$link" ]; then
+        [ ! -e "$link" ] && return 0
+        error "default path is not a managed link: $link"; return 1
     fi
     require_tools readlink || return 1
-    target=$(readlink "$DATA/default") || return 1
+    target=$(readlink "$link") || return 1
     target=$(absolute_path "$target") || return 1
     parent=$(cd "$JDKS" && pwd -P) || return 1
     CURRENT=${target##*/}
@@ -454,10 +478,10 @@ create_default_link() {
 }
 
 default_cleanup() {
-    local stage=$1 flag=$2 published=$3 link
+    local stage=$1 flag=$2 published=$3 destination=$4 link
     if [ "$published" = 0 ] && [ -L "$stage/previous" ] &&
-        [ ! -e "$DATA/default" ] && [ ! -L "$DATA/default" ]; then
-        mv "$flag" "$stage/previous" "$DATA/default" || {
+        [ ! -e "$destination" ] && [ ! -L "$destination" ]; then
+        mv "$flag" "$stage/previous" "$destination" || {
             error "cannot restore default; recovery link retained at $stage/previous"; return 1;
         }
     fi
@@ -469,12 +493,12 @@ default_cleanup() {
 
 # Run in a subshell so private cleanup never replaces installation traps.
 set_default() (
-    local id=$1 initial=${2:-} stage target flag= published=0 previous
+    local id=$1 initial=${2:-} name=${3:-default} destination=$JDKS/${3:-default} stage target flag= published=0 previous
     require_tools mkdir mktemp mv rm rmdir readlink || return 1
-    default_current || return 1
+    default_current "$name" || return 1
     if [ -n "$initial" ] && [ -n "$CURRENT" ]; then return 0; fi
     if [ -z "$id" ]; then
-        [ -z "$CURRENT" ] || rm -- "$DATA/default" || return 1
+        [ -z "$CURRENT" ] || rm -- "$destination" || return 1
         return 0
     fi
     safe_id "$id" && read_installation "$JDKS/$id" >/dev/null || {
@@ -484,15 +508,15 @@ set_default() (
     target=$(cd "$JDKS/$id" && pwd -P) || return 1
     mkdir -p "$DATA/tmp" || return 1
     stage=$(mktemp -d "$DATA/tmp/default.XXXXXXXX") || return 1
-    trap 'default_cleanup "$stage" "$flag" "$published"' EXIT
+    trap 'default_cleanup "$stage" "$flag" "$published" "$destination"' EXIT
     trap 'exit 1' HUP INT TERM
     if [ -n "$initial" ]; then
         # Creation, unlike replacement, cannot overwrite another first installer.
-        if create_default_link "$DATA/default" "$target" 2>/dev/null; then
-            report_default "$id"
+        if create_default_link "$destination" "$target" 2>/dev/null; then
+            report_default "$id" "$name"
             return 0
         fi
-        default_current && [ -n "$CURRENT" ] && return 0
+        default_current "$name" && [ -n "$CURRENT" ] && return 0
         error 'cannot create the default JDK link'; return 1
     fi
     create_default_link "$stage/link" "$target" || { error 'cannot create the default JDK link'; return 1; }
@@ -502,64 +526,109 @@ set_default() (
         *--no-target-directory*) flag=-fT ;;
         *) flag=-fh ;;
     esac
-    default_current || return 1
+    default_current "$name" || return 1
     if [ -n "$CURRENT" ] && read_installation "$JDKS/$CURRENT" >/dev/null; then
         previous=$(cd "$JDKS/$CURRENT" && pwd -P) || return 1
         create_default_link "$stage/previous" "$previous" || {
             error 'cannot prepare default recovery link'; return 1;
         }
     fi
-    mv "$flag" "$stage/link" "$DATA/default" || { error 'cannot replace the default JDK link'; return 1; }
+    mv "$flag" "$stage/link" "$destination" || { error 'cannot replace the default JDK link'; return 1; }
     published=1
 )
 
 initialize_default() {
+    local name=${2:-default}
     # Existing unrelated data is left alone, as it was before defaults existed.
-    [ ! -e "$DATA/default" ] && [ ! -L "$DATA/default" ] || return 0
-    set_default "$1" initial || { error 'JDK installed, but default selection failed; run jvm default <ID>'; return 1; }
+    [ ! -e "$JDKS/$name" ] && [ ! -L "$JDKS/$name" ] || return 0
+    set_default "$1" initial "$name" || {
+        if [ "$name" = default ]; then error 'JDK installed, but default selection failed; run jvm default <ID>'
+        else error "JDK installed, but Java $name default selection failed; run jvm default -v $name <ID>"; fi
+        return 1;
+    }
 }
 
 report_default() {
-    if [ -n "$1" ]; then printf 'Default JDK set to: %s\n' "$1"
-    else printf 'Default JDK unset: no JDKs are installed\n'; fi
+    if [ -n "$1" ]; then
+        if [ "${2:-default}" = default ]; then printf 'Default JDK set to: %s\n' "$1"
+        else printf 'Java %s default JDK set to: %s\n' "$2" "$1"; fi
+    elif [ "${2:-default}" = default ]; then printf 'No JDK currently set as the default\n'
+    else printf 'No JDK currently set as the default for version %s\n' "$2"; fi
 } >&2
 
+# Resolve a major reference before enumerating installations. Existing invalid
+# references are errors, not permission to select another JDK or install one.
+resolve_installed() {
+    local selector=$1 row status
+    if [[ $selector =~ ^[1-9][0-9]*$ ]] &&
+        { [ -e "$JDKS/$selector" ] || [ -L "$JDKS/$selector" ]; }; then
+        default_current "$selector" || return 1
+        row=$(read_installation "$JDKS/$CURRENT") &&
+            check_major "$(printf '%s\n' "$row" | awk -F '\t' '{print $3}')" "$selector" &&
+            [ "$JDKS/$selector" -ef "$JDKS/$CURRENT" ] || {
+                error "default JDK for version $selector is unavailable"; return 1;
+            }
+        printf '%s\n' "$row"
+        return 0
+    fi
+    if safe_id "$selector"; then
+        row=$(read_installation "$JDKS/$selector"); status=$?
+        if [ "$status" -eq 0 ]; then printf '%s\n' "$row"; return 0; fi
+        [ "$status" -le 1 ] || return 1
+    fi
+    row=$(local_rows) || return 1
+    printf '%s\n' "$row" | select_rows "$selector" '' '' "${2:-}"
+}
+
 default_jdk() {
-    local selector=$1 rows id
+    local selector=$1 name=${2:-default} rows id version
     installation_selector "$selector" || return $?
     require_tools uname awk || return 1
-    detect_host && data_path && default_current || return 1
+    detect_host && data_path && default_current "$name" || return 1
     if [ -z "$selector" ]; then
-        if [ -z "$CURRENT" ]; then printf 'Default JDK unset: no JDKs are installed\n'
-        elif read_installation "$JDKS/$CURRENT" >/dev/null; then printf '%s\n' "$CURRENT"
+        if [ -z "$CURRENT" ]; then
+            if [ "$name" = default ]; then printf 'No JDK currently set as the default\n'
+            else printf 'No JDK currently set as the default for version %s\n' "$name"; fi
+        elif read_installation "$JDKS/$CURRENT" >/dev/null &&
+            { [ "$name" = default ] || [ "$(installation_major "$CURRENT")" = "$name" ]; }; then printf '%s\n' "$CURRENT"
         else error "default JDK is unavailable: $CURRENT"; return 1; fi
         return 0
     fi
-    rows=$(local_rows | select_rows "$selector") || return $?
+    rows=$(resolve_installed "$selector") || return $?
     id=${rows%%$'\t'*}
-    set_default "$id" || return 1
-    report_default "$id"
+    version=$(printf '%s\n' "$rows" | awk -F '\t' '{print $3}')
+    [ "$name" = default ] || check_major "$version" "$name" || return 1
+    set_default "$id" '' "$name" || return 1
+    report_default "$id" "$name"
 }
 
 # Resolve offline without changing defaults or touching cache/storage directories.
-# Keep the stable reference for omitted selectors; explicit homes are physical.
+# Keep global and selected per-major references; inventory fallback is physical.
 resolve_home() {
-    local selector=$1 rows id
+    local selector=$1 original=${2:-$1} rows id
     installation_selector "$selector" || return $?
     require_tools uname awk || return 1
     detect_host && data_path || return 1
     if [ -n "$selector" ]; then
-        default_current 2>/dev/null || CURRENT=
-        rows=$(local_rows 2>/dev/null | select_rows "$selector") || return $?
+        rows=$(resolve_installed "$selector") || return $?
         id=${rows%%$'\t'*}
-        RESOLVED_HOME=$(cd "$JDKS/$id" && pwd -P) || { error 'cannot resolve JDK home'; return 1; }
+        if [[ $original =~ ^[1-9][0-9]*$ ]] && [ -L "$JDKS/$original" ] &&
+            [ "$JDKS/$original" -ef "$JDKS/$id" ]; then
+            RESOLVED_HOME=$(cd "$JDKS" && pwd -P) || { error 'cannot resolve default path'; return 1; }
+            RESOLVED_HOME=$RESOLVED_HOME/$original
+        else
+            RESOLVED_HOME=$(cd "$JDKS/$id" && pwd -P) || { error 'cannot resolve JDK home'; return 1; }
+        fi
     else
+        if [ ! -e "$JDKS/default" ] && [ ! -L "$JDKS/default" ]; then
+            error 'No JDK currently set as the default'; return 1;
+        fi
         default_current 2>/dev/null && [ -n "$CURRENT" ] &&
             read_installation "$JDKS/$CURRENT" >/dev/null 2>&1 &&
-            [ "$DATA/default" -ef "$JDKS/$CURRENT" ] && jdk_layout "$DATA/default" || {
+            [ "$JDKS/default" -ef "$JDKS/$CURRENT" ] && jdk_layout "$JDKS/default" || {
                 error 'default JDK is missing or unusable'; return 1;
             }
-        RESOLVED_HOME=$(cd "$DATA" && pwd -P) || { error 'cannot resolve default path'; return 1; }
+        RESOLVED_HOME=$(cd "$JDKS" && pwd -P) || { error 'cannot resolve default path'; return 1; }
         RESOLVED_HOME=$RESOLVED_HOME/default
     fi
     # Both interfaces promise single-line output. Never emit broken shell code.
@@ -575,7 +644,7 @@ shell_quote() {
 
 home_environment() {
     local command=$1 selector=$2 java_home path_home quoted_java quoted_bin usage
-    resolve_home "$selector" || return $?
+    resolve_home "$selector" "${3:-$selector}" || return $?
     if [ "$command" = home ]; then printf '%s\n' "$RESOLVED_HOME"; return 0; fi
     java_home=$RESOLVED_HOME
     path_home=$RESOLVED_HOME
@@ -670,7 +739,7 @@ select_rows() {
 }
 
 list_installed() {
-    local selector=${1:-} rows
+    local selector=${1:-} rows id version major majors= seen=' '
     safe_id "$selector" || parse_selector "$selector" || return $?
     require_tools uname awk || return 1
     detect_host && data_path || return 1
@@ -680,21 +749,36 @@ list_installed() {
         printf '%s\n' "No JDKs are installed. Use 'install' to install one"
         return 0
     fi
+    while IFS=$'\t' read -r id _ version _; do
+        major=$(version_major "$version") || continue
+        case "$seen" in *" $major "*) continue ;; esac
+        seen="$seen$major "
+        if default_current "$major" 2>/dev/null && [ -n "$CURRENT" ] &&
+            [ "$(installation_major "$CURRENT" 2>/dev/null)" = "$major" ]; then
+            majors="$majors $major:$CURRENT"
+        fi
+    done <<< "$rows"
+    default_current 2>/dev/null || CURRENT=
+    MAJOR_DEFAULTS=$majors
     rows=$(printf '%s\n' "$rows" | select_rows "$selector" '' all) || return $?
     printf '%s\n' "$rows" | format_rows
 }
 
 format_rows() {
-    awk -F '\t' -v current="${CURRENT:-}" '
+    awk -F '\t' -v current="${CURRENT:-}" -v majors="${MAJOR_DEFAULTS:-}" '
         function add(a,b,c,d, i) {
             n++; cell[n,1]=a; cell[n,2]=b; cell[n,3]=c; cell[n,4]=d
-            cell[n,5]=(n==1 ? "DEFAULT" : (a==current ? "*" : ""))
-            for (i=1;i<5;i++) if (length(cell[n,i])>width[i]) width[i]=length(cell[n,i])
+            cell[n,5]=(n==1 ? "DEFAULT" : (a==current ? "global" : ""))
+            if (n>1) for (i=1;i<=major_count;i++) if (a==major_id[i])
+                cell[n,5]=cell[n,5] (cell[n,5]!="" ? "," : "") major_name[i]
+            for (i=1;i<=5;i++) if (length(cell[n,i])>width[i]) width[i]=length(cell[n,i])
         }
-        BEGIN {add("ID","DISTRIBUTION","VERSION","JVM")}
+        BEGIN {major_count=split(majors,parts," "); for (i=1;i<=major_count;i++) {
+            split(parts[i],pair,":"); major_name[i]=pair[1]; major_id[i]=pair[2]
+        }; add("ID","DISTRIBUTION","VERSION","JVM")}
         NF {add($1,$2,$3,$4)}
         END {for (r=1;r<=n;r++) {
-            columns=(current!="" ? 5 : 4)
+            columns=5
             for (c=1;c<=columns;c++) {
                 printf "%s",cell[r,c]
                 if (c<columns) {
@@ -886,36 +970,58 @@ extract_jdk() {
 }
 
 install_default() {
+    local major
+    major=$(installation_major "$INSTALLED_ID") || return 1
+    initialize_default "$INSTALLED_ID" "$major" || return 1
     if [ "${1:-}" = -d ]; then
         set_default "$INSTALLED_ID" || return 1
         report_default "$INSTALLED_ID"
-    else initialize_default "$INSTALLED_ID"; fi
+    else initialize_default "$INSTALLED_ID" || return 1; fi
 }
 
 uninstall_jdk() {
-    local selector=$1 rows id removal hint= replacement= was_default= version
+    local selector=$1 rows id removal hint= replacement= was_default= version major major_replacement= was_major= global_before= major_before=
     installation_selector "$selector" || return $?
     require_tools uname awk mkdir mktemp mv rm rmdir || return 1
     detect_host && data_path || return 1
-    if [ -L "$DATA/default" ]; then default_current || return 1; else CURRENT=; fi
     rows=$(local_rows | select_rows "$selector") || return $?
     id=$(printf '%s\n' "$rows" | awk -F '\t' '{print $1}')
     safe_id "$id" || { error 'unsafe installation ID'; return 1; }
+    version=$(printf '%s\n' "$rows" | awk -F '\t' '{print $3}')
+    major=$(version_major "$version") || return 1
     umask 077
     mkdir -p "$DATA/tmp" || return 1
     removal=$(mktemp -d "$DATA/tmp/remove-$id.XXXXXXXX") || return 1
-    if [ -L "$DATA/default" ]; then
-        default_current || { rmdir "$removal"; return 1; }
+    if [ -L "$JDKS/default" ]; then default_current || { rmdir "$removal"; return 1; }
+    else CURRENT=; fi
+    global_before=$CURRENT
+    if [ -L "$JDKS/$major" ]; then default_current "$major" || { rmdir "$removal"; return 1; }
+    else CURRENT=; fi
+    major_before=$CURRENT
+    if [ "$major_before" = "$id" ]; then
+        major_replacement=$(local_rows | awk -F '\t' -v removed="$id" -v major="$major" '
+            $1!=removed {v=$3; sub(/^1\./,"",v); sub(/[^0-9].*$/,"",v); if (v==major) {print $1; exit}}') || return 1
     fi
+    CURRENT=$global_before
     if [ "$CURRENT" = "$id" ]; then
-        version=$(printf '%s\n' "$rows" | awk -F '\t' '{print $3}')
         replacement=$(replacement_default "$id" "$version") || return 1
         set_default "$replacement" || { rmdir "$removal"; return 1; }
         was_default=1
     fi
+    if [ "$major_before" = "$id" ]; then
+        if ! set_default "$major_replacement" '' "$major"; then
+            [ -z "$was_default" ] || set_default "$id" || error "couldn't restore default $id"
+            rmdir "$removal" 2>/dev/null || :
+            return 1
+        fi
+        was_major=1
+    fi
     # Keep the reserved directory: ordinary mv places the home inside it.
     # Never recursively remove anything beneath jdks, even on move failure.
     if ! mv "$JDKS/$id" "$removal/" 2>/dev/null; then
+        if [ -n "$was_major" ] && default_current "$major" && [ "$CURRENT" = "$major_replacement" ]; then
+            set_default "$id" '' "$major" || error "couldn't restore Java $major default $id"
+        fi
         if [ -n "$was_default" ] && default_current && [ "$CURRENT" = "$replacement" ]; then
             set_default "$id" || error "couldn't restore default $id"
         fi
@@ -927,11 +1033,12 @@ uninstall_jdk() {
     rm -rf -- "$removal" || { error "cannot remove uninstalled JDK staging directory: $removal"; return 1; }
     printf 'Successfully uninstalled %s\n' "$id" >&2
     [ -z "$was_default" ] || report_default "$replacement"
+    [ -z "$was_major" ] || report_default "$major_replacement" "$major"
     return 0
 }
 
 install_jdk() {
-    local selector=$1 make_default=${2:-} rows result preferred count existing publish_home publish_marker
+    local selector=$1 make_default=${2:-} expected_major=${3:-} rows result preferred count existing publish_home publish_marker version
     INSTALLED_ID=
     installation_selector "$selector" || return $?
     require_tools uname awk mkdir mktemp rm sed cat mv date cp wc || return 1
@@ -939,6 +1046,10 @@ install_jdk() {
     umask 077
     # A known exact ID remains usable offline after upstream drops its record.
     if safe_id "$selector" && read_installation "$JDKS/$selector" >/dev/null; then
+        version=$(installation_major "$selector") || return 1
+        [ -z "$expected_major" ] || [ "$version" = "$expected_major" ] || {
+            error "selected JDK has Java major $version, expected $expected_major"; return 1;
+        }
         INSTALLED_ID=$selector
         install_default "$make_default" || return 1
         printf 'Already installed %s\n' "$selector" >&2; return 0
@@ -949,6 +1060,8 @@ install_jdk() {
     metadata || return 1
     rows=$(remote_rows | select_rows "$selector" "$DEFAULT_DISTRO"); result=$?
     [ "$result" -eq 0 ] || return "$result"
+    version=$(printf '%s\n' "$rows" | awk -F '\t' 'NR==1 {print $3}')
+    check_major "$version" "$expected_major" || return 1
     preferred=tar.gz; [ "$OS" != windows ] || preferred=zip
     rows=$(printf '%s\n' "$rows" | awk -F '\t' -v preferred="$preferred" '
         {rows[NR]=$0; formats[NR]=$10; if ($10==preferred) found=1}
@@ -997,15 +1110,16 @@ install_jdk() {
 
 # Resolve locally first. Only the selector helper's explicit miss permits install.
 ensure_installed() {
-    local selector=$1 rows status
+    local selector=$1 expected_major=${2:-} rows status version
     installation_selector "$selector" || return $?
     require_tools uname awk || return 1
-    detect_host && data_path && default_current || return 1
-    rows=$(local_rows) || return 1
-    rows=$(printf '%s\n' "$rows" | select_rows "$selector" '' '' probe); status=$?
+    detect_host && data_path || return 1
+    rows=$(resolve_installed "$selector" probe); status=$?
     case "$status" in
-        0) INSTALLED_ID=${rows%%$'\t'*} ;;
-        4) install_jdk "$selector" || return $? ;;
+        0) INSTALLED_ID=${rows%%$'\t'*}
+           version=$(printf '%s\n' "$rows" | awk -F '\t' '{print $3}')
+           check_major "$version" "$expected_major" || return 1 ;;
+        4) install_jdk "$selector" '' "$expected_major" || return $? ;;
         *) return 1 ;;
     esac
 }
@@ -1025,8 +1139,18 @@ case "$command" in
 esac
 shift
 if [ "$#" -eq 1 ] && [ "$1" = --help ]; then help_text; exit 0; fi
-selector= option=
-for argument in "$@"; do
+selector= option= major_option=
+while [ "$#" -gt 0 ]; do
+    argument=$1
+    shift
+    if [ "$command" = default ] && [ "$argument" = -v ]; then
+        [ -z "$major_option" ] && [ "$#" -gt 0 ] && [[ $1 =~ ^[1-9][0-9]*$ ]] || {
+            error '-v requires one positive Java major'; exit 2;
+        }
+        major_option=$1
+        shift
+        continue
+    fi
     case "$command:$argument" in
         install:-d|default:-i|home:-i|env:-i)
             [ -z "$option" ] || { error 'duplicate flag'; exit 2; }
@@ -1047,7 +1171,7 @@ if [ -z "$selector" ]; then
     esac
 fi
 if [ "$option" = -i ]; then
-    ensure_installed "$selector" || exit $?
+    ensure_installed "$selector" "$major_option" || exit $?
     resolved_selector=$INSTALLED_ID
 else resolved_selector=$selector; fi
 case "$command" in
@@ -1055,6 +1179,6 @@ case "$command" in
     list) list_installed "$selector" ;;
     install) install_jdk "$selector" "$option" ;;
     uninstall) uninstall_jdk "$selector" ;;
-    default) default_jdk "$resolved_selector" ;;
+    default) default_jdk "$resolved_selector" "${major_option:-default}" ;;
     home|env) home_environment "$command" "$resolved_selector" "$selector" ;;
 esac
