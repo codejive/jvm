@@ -58,6 +58,17 @@ ambiguity without a major default. The `--flags` checks cover offline `-i`
 selection with and without a major link, ambiguity without networking, and
 returning the exact installed ID after installation races.
 
+Smart env coverage (2026-11-01): `tests/home-env.sh` checks omission of the
+PATH export for exact entries at the beginning, middle and end of PATH,
+including empty surrounding entries and paths with spaces and shell
+metacharacters. It verifies evaluated JAVA_HOME and unchanged PATH order,
+rejects substring/trailing-slash matches, and covers `-f`, alias `e`, combined
+`-i`/`-f` in different argument orders, repeated/unsupported flags and simulated
+Windows POSIX PATH comparison. The focused suite, Bash syntax checks and full
+`bash tests/run.sh` passed under native Git Bash (56 discovery checks, 18
+installation checks and the home/env suite). Script size: 51,953 bytes. Native platform and Bash 3.2
+verification gaps above are unchanged; ShellCheck was unavailable.
+
 Optional development checks, only when installed:
 
 ```bash

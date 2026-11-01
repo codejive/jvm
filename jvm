@@ -22,7 +22,7 @@ Commands:
   list, l [selector]           Show matching JDKs installed by jvm, even offline.
   default, d [-i] [-v <major>] [selector]  Show or select a persistent JDK default.
   home, h [-i] [selector]      Print an installed JDK home or the stable default path.
-  env, e [-i] [selector]       Print Bash exports for an installed JDK or default.
+  env, e [-i] [-f] [selector]  Print Bash exports for an installed JDK or default.
   --help                      Show this help.
   --version                   Show the jvm version.
 
@@ -37,6 +37,7 @@ Selectors:
 Options:
   -d  install: make the installed JDK the persistent default.
   -i  default/home/env: install if missing; requires a selector.
+  -f  env: always print the PATH export, even when bin is already on PATH.
   -v  default: query or set the specified Java major's default.
 
 Examples:
@@ -660,8 +661,13 @@ home_environment() {
     usage='jvm env'
     # Valid installed selectors contain only shell-safe ID/major/distro characters.
     [ "${option:-}" != -i ] || usage="$usage -i"
+    [ -z "$force_env" ] || usage="$usage -f"
     [ -z "${3:-$selector}" ] || usage="$usage ${3:-$selector}"
-    printf '# Use: eval "$(%s)"\nexport JAVA_HOME=%s\nexport PATH=%s:"$PATH"\n' "$usage" "$quoted_java" "$quoted_bin"
+    printf '# Use: eval "$(%s)"\nexport JAVA_HOME=%s\n' "$usage" "$quoted_java"
+    if [ -z "$force_env" ]; then
+        case ":${PATH:-}:" in *":$path_home/bin:"*) return 0 ;; esac
+    fi
+    printf 'export PATH=%s:"$PATH"\n' "$quoted_bin"
 }
 
 replacement_default() {
@@ -1139,7 +1145,7 @@ case "$command" in
 esac
 shift
 if [ "$#" -eq 1 ] && [ "$1" = --help ]; then help_text; exit 0; fi
-selector= option= major_option=
+selector= option= major_option= force_env=
 while [ "$#" -gt 0 ]; do
     argument=$1
     shift
@@ -1152,6 +1158,9 @@ while [ "$#" -gt 0 ]; do
         continue
     fi
     case "$command:$argument" in
+        env:-f)
+            [ -z "$force_env" ] || { error 'duplicate flag'; exit 2; }
+            force_env=1 ;;
         install:-d|default:-i|home:-i|env:-i)
             [ -z "$option" ] || { error 'duplicate flag'; exit 2; }
             option=$argument ;;

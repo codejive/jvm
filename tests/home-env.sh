@@ -24,7 +24,7 @@ run() {
     local expected=$1 actual=0
     shift
     if [ -d "$XDG_DATA_HOME" ]; then tar -cf "$TEMP/before" -C "$XDG_DATA_HOME" .; fi
-    PATH="$TEMP/tools" "$BASH_BIN" "$ROOT/jvm" "$@" > "$TEMP/out" 2> "$TEMP/err" || actual=$?
+    PATH="${TEST_PATH-$TEMP/tools}" "$BASH_BIN" "$ROOT/jvm" "$@" > "$TEMP/out" 2> "$TEMP/err" || actual=$?
     [ "$actual" = "$expected" ] || fail "exit $actual expected $expected: $*"
     if [ "$expected" = 0 ]; then [ ! -s "$TEMP/err" ] || fail "success stderr: $*"
     else [ ! -s "$TEMP/out" ] && [ -s "$TEMP/err" ] || fail "failure output: $*"; fi
@@ -44,22 +44,27 @@ make_jdk() {
     printf 'jvm-install-v2\t%s-%s\t%s\t%s\thotspot\t%s\tx86_64\t.\thttps://invalid.test/jdk\t%064d\ttar.gz\t0\n' "$version" "$distro" "$distro" "$version" "$os" 0 > "$home/.jvm-manifest"
 }
 check_env() {
-    local java=$1 bin=$2 selector=${3:-} usage='jvm env'
+    local java=$1 bin=$2 selector=${3:-} omit=${4:-0} usage='jvm env' lines=3
     [ -z "$selector" ] || usage="$usage $selector"
     printf '# Use: eval "$(%s)"\n' "$usage" > "$TEMP/comment"
     head -1 "$TEMP/out" > "$TEMP/first"
     cmp "$TEMP/comment" "$TEMP/first" || fail 'usage comment'
-    [ "$(wc -l < "$TEMP/out")" -eq 3 ] || fail 'env must have three lines'
+    [ "$omit" = 0 ] || lines=2
+    [ "$(wc -l < "$TEMP/out")" -eq "$lines" ] || fail 'unexpected env line count'
     [[ $(sed -n '2p' "$TEMP/out") = "export JAVA_HOME='"* ]] || fail 'JAVA_HOME statement'
-    [[ $(sed -n '3p' "$TEMP/out") = "export PATH='"*':"$PATH"' ]] || fail 'PATH statement'
+    if [ "$omit" = 0 ]; then
+        [[ $(sed -n '3p' "$TEMP/out") = "export PATH='"*':"$PATH"' ]] || fail 'PATH statement'
+    fi
     # Only this isolated child evaluates the generated shell code.
     PATH='/child/first:/child/second with spaces' "$BASH_BIN" -c '
         set -eu
+        [ "$4" = 0 ] || PATH="/child/first:$3:/child/second with spaces"
         original=$PATH
         code=$(< "$1")
         eval "$code"
-        [ "$JAVA_HOME" = "$2" ] && [ "$PATH" = "$3:$original" ]
-    ' bash "$TEMP/out" "$java" "$bin" || fail 'evaluated environment differs'
+        [ "$JAVA_HOME" = "$2" ] || exit 1
+        if [ "$4" = 0 ]; then [ "$PATH" = "$3:$original" ]; else [ "$PATH" = "$original" ]; fi
+    ' bash "$TEMP/out" "$java" "$bin" "$omit" || fail 'evaluated environment differs'
 }
 for command in home env; do
     run 1 "$command"; diagnostic 'No JDK currently set as the default'
@@ -92,6 +97,28 @@ for selector in 21+1-temurin 21 temurin-21 graalvm-community-17 8; do
 done
 run 0 home; exact "$base/jdks/default"
 run 0 env; check_env "$base/jdks/default" "$base/jdks/default/bin"
+# Match whole literal PATH entries, at any position, preserving their order.
+bin=$base/jdks/default/bin
+for TEST_PATH in "$bin:$TEMP/tools" "$TEMP/tools:$bin:/after" "$TEMP/tools:$bin" ":$TEMP/tools::$bin:"; do
+    run 0 env; check_env "$base/jdks/default" "$bin" '' 1
+    run 0 e -f; check_env "$base/jdks/default" "$bin" '-f'
+done
+for TEST_PATH in "$TEMP/tools:$bin-extra" "$TEMP/tools:/prefix$bin" "$TEMP/tools:$bin/"; do
+    run 0 env; check_env "$base/jdks/default" "$bin"
+done
+unset TEST_PATH
+bin=$base/jdks/21/bin
+TEST_PATH="$TEMP/tools:$bin" run 0 env -i 21
+check_env "$base/jdks/21" "$bin" '-i 21' 1
+for args in '-f -i 21' '-i 21 -f' '21 -f -i'; do
+    TEST_PATH="$TEMP/tools:$bin" run 0 e $args
+    check_env "$base/jdks/21" "$bin" '-i -f 21'
+done
+for command in available list install uninstall default home a l i u d h; do
+    run 2 "$command" -f; diagnostic 'unsupported flag'
+done
+run 2 env -f -f; diagnostic 'duplicate flag'
+run 2 env -f -i; diagnostic 'Missing selector'
 make_jdk 21+2 temurin
 for command in home env; do
     run 1 "$command" temurin-21; diagnostic 'Multiple JDKs match'
@@ -168,6 +195,10 @@ for selector in '' windows-test-25; do
     exact "$expected"
     if [ -z "$selector" ]; then run 0 env; else run 0 env "$selector"; fi
     check_env "C:$expected" "$expected/bin" "$selector"
+    TEST_PATH="$TEMP/tools:$expected/bin" run 0 env ${selector:+"$selector"}
+    check_env "C:$expected" "$expected/bin" "$selector" 1
+    TEST_PATH="$TEMP/tools:$expected/bin" run 0 env -f ${selector:+"$selector"}
+    check_env "C:$expected" "$expected/bin" "-f${selector:+ $selector}"
 done
 # A usable home still cannot be represented in the promised single-line format.
 saved_data=$XDG_DATA_HOME

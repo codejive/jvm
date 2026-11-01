@@ -100,8 +100,8 @@ See [tests/README.md](tests/README.md) for exact verification commands and gaps.
 The core command set is implemented. The proposed next milestone is release
 readiness, starting with the previously requested configurable installation
 distribution, range disambiguation and version-range selectors, followed by
-validation and user documentation. This roadmap records planned work; it does
-not claim implementation or verification.
+validation and user documentation. Entries distinguish planned work from
+completed features; implementation does not imply full platform verification.
 
 1. **Configurable installation distribution.** Let bare-major installation
    such as `install 21` use a configured distro, with Temurin as the default
@@ -117,11 +117,10 @@ not claim implementation or verification.
    Command coverage, highest-major selection, per-major disambiguation,
    installation distro and offline-first install-on-demand policies are below.
    This feature is not implemented.
-4. **Smart `env` (user requested 2026-11-01).** Omit the PATH export line
+4. **Smart `env` (implemented 2026-11-01).** Omit the PATH export line
    when the selected JDK's `bin` directory is already an entry in the current
-   PATH. Add `env -f` to force the PATH export line to always be printed,
-   preserving today's behavior. Continue printing the usage comment and
-   JAVA_HOME export. This feature and `-f` are planned, not implemented.
+   PATH. `env -f` forces the PATH export line to always be printed.
+   The usage comment and JAVA_HOME export are always printed.
 5. **JDK execution and shell (proposal added 2026-11-01).** Add `exec` (alias
    `x`) to run a command with a selected JDK and `shell` (alias `s`) to open an
    interactive child shell using the same environment preparation. Adopt or
@@ -442,10 +441,11 @@ convert its result through `cygpath`, so the result is directly usable in Bash.
 Windows drive-style storage inputs still use the ordinary storage conversion.
 No label, comment, shell quoting or selection announcement is printed on stdout.
 
-### Shell environment output: `env [<selector>]`
+### Shell environment output: `env [-i] [-f] [<selector>]`
 
-Use the same home/reference choice as `home`. Print exactly a usage comment and
-two Bash export statements, in that order:
+Use the same home/reference choice as `home`. Print a usage comment and the
+JAVA_HOME export, followed by a PATH export when the selected `bin` directory
+is absent from the producer's current PATH:
 
 ```bash
 # Use: eval "$(jvm env temurin-21)"
@@ -453,7 +453,17 @@ export JAVA_HOME='/absolute/selected/home'
 export PATH='/absolute/selected/home/bin':"$PATH"
 ```
 
-Without a selector, the comment is exactly `# Use: eval "$(jvm env)"`.
+**Smart PATH output (implemented 2026-11-01):** compare the selected POSIX
+`bin` path literally against whole colon-separated PATH entries. An exact
+entry anywhere in PATH suppresses the PATH export, preserving the caller's
+entry order. Do not resolve symlinks, normalize trailing slashes, fold case or
+match path substrings; stable default paths and physical homes remain distinct
+entries. Spaces and shell metacharacters are literal data. Empty PATH entries
+do not match the selected absolute path. `env -f` always emits the PATH export,
+including when that duplicates an existing entry. It can be combined with `-i`
+and used without a selector. This behavior also applies to alias `e`.
+
+Without a selector or flags, the comment is exactly `# Use: eval "$(jvm env)"`.
 Include the supplied selector in the comment; accepted selector syntax contains
 only shell-safe ID/major/distro characters. Paths are literal single-quoted
 Bash words with embedded apostrophes safely escaped. Spaces, dollar signs,
@@ -504,15 +514,17 @@ installation's physical home, without selecting a different JDK after a race.
 installation's first-install initialization and do not replace an existing usable
 default. Home output follows the corrected POSIX policy above; env quoting and
 Windows conversion retain their existing behavior. The env
-usage comment retains the supplied selector and includes `-i` when requested;
-aliases emit the same canonical comment as their full command names.
+usage comment retains the supplied selector and includes `-i` and `-f` when
+requested, in that canonical order. Aliases emit the same canonical comment as
+their full command names.
 
 An explicit selector is required with `-i`: missing selection prints
 `jvm: Missing selector` through the stderr diagnostic helper, leaves stdout empty
 and exits 2 without state changes. Normal no-selector behavior applies only
 without `-i`. Flags may precede or follow the selector. `-d` is accepted only by
-install, and `-i` only by default/home/env. `-v <major>` is accepted only by
-`default`; a missing, repeated or invalid major exits 2. Unsupported or repeated flags, empty
+install, `-i` only by default/home/env, and `-f` only by env. `-v <major>` is
+accepted only by `default`; a missing, repeated or invalid major exits 2.
+Unsupported or repeated flags, empty
 selectors and extra arguments exit 2 before side effects. Primary output is
 prepared before printing; any failure leaves stdout empty.
 
@@ -669,7 +681,7 @@ jvm install [-d] <selector>
 jvm uninstall <selector>
 jvm default [-i] [-v <major>] [selector]
 jvm home [-i] [selector]
-jvm env [-i] [selector]
+jvm env [-i] [-f] [selector]
 ```
 
 - `available` lists compatible JDKs across JVM implementations from the API's
