@@ -22,7 +22,7 @@ Commands:
   list, l [selector]           Show JDK folders and manifest status, even offline.
   default, d [-i] [-v <major>] [selector]  Show or select a persistent JDK default.
   home, h [-i] [selector]      Print an installed JDK home or the stable default path.
-  env, e [-i] [-f] [selector]  Print Bash exports for an installed JDK or default.
+  env, e [-i] [-f] [selector]  Print Bash exports, including GRAALVM_HOME for GraalVM.
   exec, x [-i] [selector] -- <command> [args...]  Run with a selected JDK or default.
   --help                      Show this help.
   --version                   Show the jvm version.
@@ -689,7 +689,7 @@ resolve_home() {
             error 'No JDK currently set as the default'; return 1;
         fi
         default_current 2>/dev/null && [ -n "$CURRENT" ] &&
-            usable_local_row "$JDKS/$CURRENT" >/dev/null 2>&1 &&
+            rows=$(usable_local_row "$JDKS/$CURRENT" 2>/dev/null) &&
             [ "$JDKS/default" -ef "$JDKS/$CURRENT" ] && jdk_layout "$JDKS/default" || {
                 error 'default JDK is missing or unusable'; return 1;
             }
@@ -700,6 +700,7 @@ resolve_home() {
             RESOLVED_HOME=$RESOLVED_HOME/default
         fi
     fi
+    RESOLVED_IMPL=$(printf '%s\n' "$rows" | awk -F '\t' '{print $4}') || return 1
     # Both interfaces promise single-line output. Never emit broken shell code.
     case "$RESOLVED_HOME" in ''|*[$'\r\n']*) error 'JDK home must be a nonempty single-line path'; return 1 ;; esac
 }
@@ -737,6 +738,9 @@ home_environment() {
     [ -z "$force_env" ] || usage="$usage -f"
     [ -z "${3:-$selector}" ] || usage="$usage ${3:-$selector}"
     printf '# Use: eval "$(%s)"\nexport JAVA_HOME=%s\n' "$usage" "$quoted_java"
+    if [ "$RESOLVED_IMPL" = graalvm ]; then
+        printf 'export GRAALVM_HOME=%s\n' "$quoted_java"
+    fi
     if [ -z "$force_env" ]; then
         case ":${PATH:-}:" in *":$ENV_PATH_HOME/bin:"*) return 0 ;; esac
     fi

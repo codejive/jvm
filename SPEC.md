@@ -465,6 +465,16 @@ export JAVA_HOME='/absolute/selected/home'
 export PATH='/absolute/selected/home/bin':"$PATH"
 ```
 
+**GraalVM environment output (authorized and implemented 2026-11-01):** when
+the selected installation's valid manifest has `jvm_impl` exactly `graalvm`,
+emit `export GRAALVM_HOME=...` immediately after JAVA_HOME, using the same
+selected path, shell quoting and Windows native-path conversion. This applies
+to explicit selectors, global/per-major defaults, alias `e`, and `-i`/`-f`.
+The export is emitted even when smart PATH output omits PATH. Use the manifest's
+JVM type, not its distro or ID. Other JVM types and installations with missing
+or invalid manifests emit no GRAALVM_HOME statement, leaving any caller value
+untouched. This extension applies to `env`; `exec` retains its existing behavior.
+
 **Smart PATH output (implemented 2026-11-01):** compare the selected POSIX
 `bin` path literally against whole colon-separated PATH entries. An exact
 entry anywhere in PATH suppresses the PATH export, preserving the caller's
@@ -1371,7 +1381,7 @@ exact published order:
 | 2 | `os` | Validate host compatibility. |
 | 3 | `architecture` | Validate host compatibility. |
 | 4 | `image_type` | Require a JDK image. |
-| 5 | `jvm_impl` | Display only; not filtered or included in IDs. |
+| 5 | `jvm_impl` | Display; installed `env` GraalVM detection; not filtered or included in IDs. |
 | 6 | `vendor` | Publisher metadata; use `distro` for selectors. |
 | 7 | `distro` | Display, distro filtering, and ID construction. |
 | 8 | `java_version` | Displayed version, all Java-major operations and ID prefix. |
@@ -1403,7 +1413,8 @@ Literal tabs remain field boundaries (including empty fields). CRLF record
 endings are stripped. Data is never evaluated or sourced as shell code.
 
 Use `release_type`, OS, architecture and image type for GA/host/JDK filtering.
-Use `jvm_impl` for display only, without filtering it or including it in IDs.
+Discovery uses `jvm_impl` for display only, without filtering it or including
+it in IDs.
 Use `file_type` for `tar.gz`/`zip` filtering. The bracketed
 features field is inspected only for a `musl` feature on a non-musl host; it is
 not parsed or compared as build metadata. `version` supplies the vendor-version

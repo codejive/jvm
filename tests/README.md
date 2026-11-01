@@ -75,6 +75,17 @@ Windows POSIX PATH comparison. The focused suite, Bash syntax checks and full
 installation checks and the home/env suite). Script size: 51,953 bytes. Native platform and Bash 3.2
 verification gaps above are unchanged; ShellCheck was unavailable.
 
+GraalVM env coverage (2026-11-01): `tests/home-env.sh` checks GRAALVM_HOME
+for `jvm_impl=graalvm`, independently of distro naming, through exact IDs,
+distro-major selectors and global/per-major references. It evaluates exports
+with shell metacharacters in paths, omitted PATH output, alias `e`, combined
+`-i`/`-f`, and simulated Windows native-path conversion. Other JVM types and
+missing/invalid manifests preserve an inherited GRAALVM_HOME value. Syntax
+checks, the focused suite and `bash tests/run.sh` passed under native Git Bash
+5.3.15 (56 discovery checks, 22 installation checks and the home/env suite).
+Windows path conversion is simulated, and the platform gaps above remain.
+ShellCheck was unavailable. Distributed script size: 58,036 bytes.
+
 Command execution (2026-11-01):
 `bash tests/install.sh --execution` checks aliases, usage validation without
 utilities, installed selection and ambiguity without networking, `-i`

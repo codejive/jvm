@@ -37,37 +37,44 @@ run() {
 exact() { printf '%s\n' "$1" > "$TEMP/expected"; cmp "$TEMP/expected" "$TEMP/out" || fail 'unexpected exact output'; }
 diagnostic() { [[ $(< "$TEMP/err") = *"$1"* ]] || fail "missing diagnostic: $1"; }
 make_jdk() {
-    local version=$1 distro=$2 os=${3:-linux} home
+    local version=$1 distro=$2 os=${3:-linux} impl=${4:-hotspot} home
     local major=${version#1.}
     major=${major%%[^0-9]*}
     home=$XDG_DATA_HOME/jvm/jdks/$version-$distro
     [[ $version = "$major"[!0-9]* ]] || home=$XDG_DATA_HOME/jvm/jdks/$major-$version-$distro
     mkdir -p "$home"
     tar -xzf "$ROOT/tests/fixtures/archives/jdk.tar.gz" -C "$home" --strip-components=1
-    printf 'jvm-manifest-v1\nga\t%s\tx86_64\tjdk\thotspot\tvendor\t%s\t%s\t%s\ttar.gz\thttps://invalid.test/jdk\tjdk.tar.gz\t0\t%064d\t[]\n\n' "$os" "$distro" "$version" "$version" 0 > "$home/.jvm-manifest"
+    printf 'jvm-manifest-v1\nga\t%s\tx86_64\tjdk\t%s\tvendor\t%s\t%s\t%s\ttar.gz\thttps://invalid.test/jdk\tjdk.tar.gz\t0\t%064d\t[]\n\n' "$os" "$impl" "$distro" "$version" "$version" 0 > "$home/.jvm-manifest"
 }
 check_env() {
-    local java=$1 bin=$2 selector=${3:-} omit=${4:-0} usage='jvm env' lines=3
+    local java=$1 bin=$2 selector=${3:-} omit=${4:-0} graal=${5:-0} usage='jvm env' lines=3 path_line=3
     [ -z "$selector" ] || usage="$usage $selector"
     printf '# Use: eval "$(%s)"\n' "$usage" > "$TEMP/comment"
     head -1 "$TEMP/out" > "$TEMP/first"
     cmp "$TEMP/comment" "$TEMP/first" || fail 'usage comment'
     [ "$omit" = 0 ] || lines=2
+    if [ "$graal" = 1 ]; then lines=$((lines + 1)); path_line=4; fi
     [ "$(wc -l < "$TEMP/out")" -eq "$lines" ] || fail 'unexpected env line count'
     [[ $(sed -n '2p' "$TEMP/out") = "export JAVA_HOME='"* ]] || fail 'JAVA_HOME statement'
+    if [ "$graal" = 1 ]; then
+        [[ $(sed -n '3p' "$TEMP/out") = "export GRAALVM_HOME='"* ]] || fail 'GRAALVM_HOME statement'
+    fi
     if [ "$omit" = 0 ]; then
-        [[ $(sed -n '3p' "$TEMP/out") = "export PATH='"*':"$PATH"' ]] || fail 'PATH statement'
+        [[ $(sed -n "${path_line}p" "$TEMP/out") = "export PATH='"*':"$PATH"' ]] || fail 'PATH statement'
     fi
     # Only this isolated child evaluates the generated shell code.
     PATH='/child/first:/child/second with spaces' "$BASH_BIN" -c '
         set -eu
         [ "$4" = 0 ] || PATH="/child/first:$3:/child/second with spaces"
         original=$PATH
+        export GRAALVM_HOME=/previous/graalvm
         code=$(< "$1")
         eval "$code"
         [ "$JAVA_HOME" = "$2" ] || exit 1
+        if [ "$5" = 1 ]; then [ "$GRAALVM_HOME" = "$2" ] || exit 1
+        else [ "$GRAALVM_HOME" = /previous/graalvm ] || exit 1; fi
         if [ "$4" = 0 ]; then [ "$PATH" = "$3:$original" ]; else [ "$PATH" = "$original" ]; fi
-    ' bash "$TEMP/out" "$java" "$bin" "$omit" || fail 'evaluated environment differs'
+    ' bash "$TEMP/out" "$java" "$bin" "$omit" "$graal" || fail 'evaluated environment differs'
 }
 for command in home env; do
     run 1 "$command"; diagnostic 'No JDK currently set as the default'
@@ -187,8 +194,33 @@ for command in home env; do
     fi
 done
 mv "$TEMP/awk" "$TEMP/tools/awk"
+# JVM type determines GraalVM output independently of the distro/ID name.
+make_jdk 23+1 unrelated-vendor linux graalvm
+ln -s "$base/jdks/23+1-unrelated-vendor" "$base/jdks/23"
+rm "$base/jdks/default"; ln -s "$base/jdks/23+1-unrelated-vendor" "$base/jdks/default"
+for selector in '' 23 23+1-unrelated-vendor unrelated-vendor-23; do
+    case "$selector" in '') expected=$base/jdks/default ;; 23) expected=$base/jdks/23 ;; *) expected=$base/jdks/23+1-unrelated-vendor ;; esac
+    run 0 env ${selector:+"$selector"}
+    check_env "$expected" "$expected/bin" "$selector" 0 1
+    TEST_PATH="$TEMP/tools:$expected/bin" run 0 env ${selector:+"$selector"}
+    check_env "$expected" "$expected/bin" "$selector" 1 1
+done
+TEST_PATH="$TEMP/tools:$base/jdks/23/bin" run 0 e -i -f 23
+check_env "$base/jdks/23" "$base/jdks/23/bin" '-i -f 23' 0 1
+# Missing/invalid metadata remains usable by exact ID and global default.
+mv "$base/jdks/23+1-unrelated-vendor/.jvm-manifest" "$TEMP/graal-manifest"
+for state in missing invalid; do
+    [ "$state" = missing ] || printf 'invalid\n' > "$base/jdks/23+1-unrelated-vendor/.jvm-manifest"
+    run 0 env; check_env "$base/jdks/default" "$base/jdks/default/bin"
+    run 0 env 23+1-unrelated-vendor
+    check_env "$base/jdks/23+1-unrelated-vendor" "$base/jdks/23+1-unrelated-vendor/bin" 23+1-unrelated-vendor
+done
+mv "$TEMP/graal-manifest" "$base/jdks/23+1-unrelated-vendor/.jvm-manifest"
 # Simulated Windows conversion uses a drive colon for JAVA_HOME, never PATH.
 export TEST_SYSTEM=MINGW64_NT-10.0
+make_jdk 24+1 native-vendor windows graalvm
+run 0 env native-vendor-24
+check_env "C:$base/jdks/24+1-native-vendor" "$base/jdks/24+1-native-vendor/bin" native-vendor-24 0 1
 make_jdk 25+1 windows-test windows
 rm "$base/jdks/default"; ln -s "$base/jdks/25+1-windows-test" "$base/jdks/default"
 for selector in '' windows-test-25; do
