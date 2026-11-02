@@ -26,12 +26,29 @@ This runs `your_command` with a matching JDK (Java 25 or newer), downloading
 and installing Temurin if no installed JDK matches. Use `.\jvm.cmd` on Windows
 outside Bash.
 
-To avoid repeating the JDK in every command, add a `.jvmrc` file to the
+Or you can configure your PATH and JAVA_HOME for the duration of your shell session
+by running:
+
+```sh
+eval $(./jvm env 25+)
+```
+
+(You can run plain `./jvm env` if you need a reminder on how to use it with `eval`)
+
+To avoid repeating the JDK version in every command, add a `.jvmrc` file to the
 project root (see [Configuration](#configuration)):
 
 ```
 java=25+
 ```
+
+At which point the previous command can be simplified to:
+
+```sh
+eval $(./jvm env)
+```
+
+
 
 ## Using it installed
 
@@ -54,7 +71,7 @@ profile:
 export JAVA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/default"
 export PATH="$JAVA_HOME/bin:$PATH"
 
-# Windows Bash
+# Git Bash / Cygwin / MSYS2
 export JAVA_HOME="$(cygpath -m "${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/default")"
 export PATH="$(cygpath -u "${JAVA_HOME}")/bin:$PATH"
 ```

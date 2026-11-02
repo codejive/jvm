@@ -29,6 +29,7 @@ is no `help`, `shell` or `s` command; unknown commands exit 2. `--help` (also as
 a command's only argument) prints the main help to stdout without host
 detection, storage, networking or external utilities. Help gives a purpose
 statement, command descriptions, selectors, options, shell setup and examples.
+Help renders the fallback major from the script's default-version constant.
 
 Flags may precede or follow the selector. `-t` is accepted only by `available`,
 `-d` only by `install`, `-f` only by `env`, and `-v <major>` only by

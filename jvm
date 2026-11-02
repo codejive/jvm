@@ -116,7 +116,7 @@ Shell setup (once, in your shell profile):
   export JAVA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/default"
   export PATH="$JAVA_HOME/bin:$PATH"
 
-  Windows Bash:
+  Git Bash / Cygwin / MSYS2:
   export JAVA_HOME="$(cygpath -m "${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/default")"
   export PATH="$(cygpath -u "${JAVA_HOME}")/bin:$PATH"
 EOF

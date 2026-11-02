@@ -1626,7 +1626,7 @@ function Invoke-Uninstall {
 }
 
 function Show-Help {
-    @'
+    Write-Output (@'
 jvm.ps1 finds and installs Java Development Kits for this computer.
 
 Usage: .\jvm.ps1 <command> [options] [selector]
@@ -1663,8 +1663,8 @@ Options:
 Configuration (optional, literal key=value lines):
   .\.jvmrc, then $XDG_CONFIG_HOME\jvm\config (or ~/.config/jvm/config).
   Keys: java=21+ and distro=graalvm-community. No parent-directory lookup.
-  CLI selector > project java > user java. Install falls back to major 25.
-  home/env/exec then use the installed default, or major 25 if it is absent.
+  CLI selector > project java > user java. Install falls back to major {0}.
+  home/env/exec then use the installed default, or major {0} if it is absent.
 
 PowerShell examples:
   jvm install
@@ -1675,10 +1675,10 @@ PowerShell examples:
   iex (jvm env temurin-21)
   jvm x 21 --- java.exe -version
 
-Set JAVA_HOME once in your PowerShell profile:
+Shell setup (once, in your PowerShell profile):
   $env:JAVA_HOME = "$HOME\.local\share\jvm\jdks\default"
   $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
-'@ | ForEach-Object { Write-Output ($_) }
+'@ -f $script:DefaultVersion)
 }
 
 function Invoke-Jvm {
