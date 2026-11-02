@@ -81,6 +81,10 @@ The suite creates synthetic launchers, manifests, XDG roots, and Windows
 junctions only under a uniquely named temporary directory. It does not access
 the contributor's JDK inventory, default links, configuration, or profile.
 The hosted CI workflow runs it in the `Windows / PowerShell 5.1` job.
+Like the Bash harness, it prints `ok <number> - <description>` after each
+successful group of checks, followed by a `PASS:` summary with the total count
+and target executable. A failed assertion stops the suite with its diagnostic;
+the final summary is printed only when all groups pass.
 The suite requires Windows PowerShell 5.1 and Windows junction support.
 On 2026-11-02, it passed under Windows PowerShell 5.1.26100.9711, covering
 offline list/home/env, automatic and per-major defaults, junction
