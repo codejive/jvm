@@ -21,6 +21,8 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
+mkdir -p "$TEMP/project with spaces"
+cd "$TEMP/project with spaces" || exit 1
 export HOME="$TEMP/home with spaces" XDG_DATA_HOME="$TEMP/data with spaces"
 export XDG_CACHE_HOME="$TEMP/cache with spaces" XDG_CONFIG_HOME="$TEMP/config" XDG_STATE_HOME="$TEMP/state"
 mkdir -p "$HOME" "$TEMP/bin"
@@ -318,8 +320,6 @@ execution_checks() {
         [ "$(< "$TEMP/err")" = 'jvm: usage: jvm exec [-i] [selector] -- <command> [args...]' ] || fail 'incomplete exec usage'
     done
     PATH=/nonexistent run 2 exec -i -i 21 -- cat
-    PATH=/nonexistent run 2 exec -i -- cat
-    diagnostic 'Missing selector'
     PATH=/nonexistent run 2 exec 21 -- ''
     [ ! -e "$TEST_LOG" ] && [ ! -e "$XDG_DATA_HOME/jvm" ] || fail 'execution usage had side effects'
     printf '#!%s\n' "$BASH_BIN" > "$TEMP/child with spaces"
@@ -441,8 +441,10 @@ flag_alias_checks() {
     PATH=/nonexistent run 2 install -i 21
     for cmd in default home env d h e; do
         PATH=/nonexistent run 2 "$cmd" -d 21
-        PATH=/nonexistent run 2 "$cmd" -i
-        [ "$(< "$TEMP/err")" = 'jvm: Missing selector' ] || fail 'missing selector diagnostic'
+        if [ "$cmd" = default ] || [ "$cmd" = d ]; then
+            PATH=/nonexistent run 2 "$cmd" -i
+            diagnostic 'Missing selector'
+        fi
     done
     [ ! -e "$TEST_LOG" ] && [ ! -e "$XDG_DATA_HOME/jvm" ] || fail 'invalid usage had side effects'
     run 0 a temurin-21; contains '21+1-temurin'
@@ -628,6 +630,11 @@ uninstall_checks() {
 if [ "${1:-}" = --uninstall ]; then uninstall_checks; exit 0; fi
 
 default_checks() {
+    # Every existing default lifecycle/flag check must ignore malformed settings,
+    # including installs reached through default -i's shared helper.
+    mkdir -p "$XDG_CONFIG_HOME/jvm"
+    printf 'unknown=project\n' > .jvmrc
+    printf 'java=invalid\n' > "$XDG_CONFIG_HOME/jvm/config"
     reset; index
     run 0 default; contains 'No JDK currently set as the default'
     run 2 default ''; run 2 default vendor; run 2 default 21 extra
@@ -780,6 +787,8 @@ default_checks() {
     run 1 default 17; diagnostic 'not a managed link'
     [ "$(< "$XDG_DATA_HOME/jvm/jdks/default")" = unrelated ] || fail 'default overwrote unrelated data'
     check 'persistent defaults, first install, offline selection, failed/interrupted replacement, failed removal rollback and complete fallback order'
+    rm .jvmrc "$XDG_CONFIG_HOME/jvm/config"
+    rmdir "$XDG_CONFIG_HOME/jvm" "$XDG_CONFIG_HOME"
     reset
 }
 
@@ -1052,6 +1061,203 @@ range_checks() {
     reset
 }
 
+configuration_checks() {
+    local cmd before saved_config=$XDG_CONFIG_HOME args
+    mkdir -p "$XDG_CONFIG_HOME/jvm"
+    reset; index; row 21+1 temurin; row 25+1 temurin; row 22+1 vendor
+    run 0 install
+    diagnostic 'Successfully installed 25+1-temurin'
+    run 0 i -d; diagnostic 'Already installed 25+1-temurin'
+    run 0 default; contains '25+1-temurin'
+    # Neither selectorless install form inherits the installed default.
+    run 0 install vendor-22
+    run 0 default vendor-22
+    run 0 install; diagnostic 'Already installed 25+1-temurin'
+    run 0 install -d; run 0 default; contains '25+1-temurin'
+    printf 'java=22\ndistro=vendor\n' > "$XDG_CONFIG_HOME/jvm/config"
+    run 0 install; diagnostic 'Already installed 22+1-vendor'
+    printf ' # comment\n\n java = 21 \n' > .jvmrc
+    # Java and distro inherit independently, even for explicit bare selectors.
+    index; row 21+1 vendor; row 22+1 vendor; row 25+1 temurin
+    run 0 install; diagnostic 'Successfully installed 21+1-vendor'
+    printf 'distro=temurin\n' > .jvmrc
+    index; row 22+1 temurin; row 21+1 vendor; row 22+1 vendor
+    run 0 install; diagnostic 'Successfully installed 22+1-temurin'
+    printf 'java=21+1-vendor\ndistro=temurin\n' > .jvmrc
+    run 0 i; diagnostic 'Already installed 21+1-vendor'
+    printf 'java=vendor-21\ndistro=temurin\n' > .jvmrc
+    run 0 install; diagnostic 'Already installed 21+1-vendor'
+    run 0 install vendor-22; diagnostic 'Already installed 22+1-vendor'
+    printf 'java=21..25\ndistro=vendor\n' > .jvmrc
+    index; row 24+1 vendor; row 25+1 temurin
+    run 0 install; diagnostic 'Successfully installed 24+1-vendor'
+    printf 'java=temurin-25+\ndistro=vendor\n' > .jvmrc
+    run 0 install; diagnostic 'Already installed 25+1-temurin'
+    check 'configuration Java/distro precedence, explicit IDs/distros/ranges and selectorless install'
+
+    printf 'java=vendor-22\n' > .jvmrc
+    before=$(cat "$TEST_LOG")
+    for cmd in home h env e; do
+        run 0 "$cmd"; contains '/22+1-vendor'
+        run 0 "$cmd" -i; contains '/22+1-vendor'
+        run 0 "$cmd" 21+1-vendor; contains '/21+1-vendor'
+    done
+    for cmd in exec x; do
+        run 0 "$cmd" -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
+        contains '/22+1-vendor'
+        run 0 "$cmd" -i -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
+        contains '/22+1-vendor'
+    done
+    printf 'java=vendor-99\n' > .jvmrc
+    for cmd in home env; do
+        run 1 "$cmd"; diagnostic 'No JDK found matching'
+    done
+    run 1 exec -- cat; diagnostic 'No JDK found matching'
+    [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'offline configured resolution fetched metadata'
+    run 1 home -i; diagnostic 'No JDK found matching'
+    # A project miss cannot use global java or the global installed default.
+    rm .jvmrc
+    printf 'java=vendor-22\n' > "$XDG_CONFIG_HOME/jvm/config"
+    run 0 home; contains '/22+1-vendor'
+    rm "$XDG_CONFIG_HOME/jvm/config"
+    run 0 default vendor-22
+    before=$(cat "$TEST_LOG")
+    for cmd in home h env e; do
+        run 0 "$cmd" -i; contains '/default'
+    done
+    for cmd in exec x; do
+        run 0 "$cmd" -i -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
+        contains '/22+1-vendor'
+        [[ $(< "$TEMP/out") != */default* ]] || fail 'exec used mutable default'
+    done
+    rm "$XDG_DATA_HOME/jvm/jdks/default"
+    ln -s "$XDG_DATA_HOME/jvm/jdks/missing" "$XDG_DATA_HOME/jvm/jdks/default"
+    for cmd in home env; do
+        run 1 "$cmd" -i; diagnostic 'default JDK is missing or unusable'
+    done
+    run 1 exec -i -- cat; diagnostic 'default JDK is missing or unusable'
+    rm "$XDG_DATA_HOME/jvm/jdks/default"
+    printf 'unmanaged\n' > "$XDG_DATA_HOME/jvm/jdks/default"
+    run 1 home -i; diagnostic 'default JDK is missing or unusable'
+    [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'default lookup fetched metadata'
+    check 'configured home/env/exec aliases, configured misses and installed/broken default precedence'
+
+    reset; index; row 25+1 temurin
+    for cmd in home h env e; do run 1 "$cmd"; diagnostic 'No JDK currently set'; done
+    run 1 x -- cat; diagnostic 'No JDK currently set'
+    [ ! -e "$TEST_LOG" ] || fail 'selectorless offline query fetched metadata'
+    for cmd in home h env e exec x; do
+        reset
+        case "$cmd" in
+            exec|x) run 0 "$cmd" -i -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"' ;;
+            *) run 0 "$cmd" -i ;;
+        esac
+        diagnostic 'Successfully installed 25+1-temurin'
+    done
+    reset; index; row 25+1 vendor
+    printf 'distro=vendor\n' > .jvmrc
+    run 0 home -i; diagnostic 'Successfully installed 25+1-vendor'
+    # Local selection remains across distributions; distro is only for install.
+    index; row 21+1 vendor; row 21+2 vendor; row 21+1 temurin
+    run 0 install 21+1-vendor
+    printf 'java=21\ndistro=temurin\n' > .jvmrc
+    before=$(cat "$TEST_LOG")
+    run 0 home -i; contains '/21'
+    run 0 install 21+2-vendor
+    rm "$XDG_DATA_HOME/jvm/jdks/21"
+    before=$(cat "$TEST_LOG")
+    run 1 home -i; diagnostic 'Multiple JDKs match'
+    ln -s "$XDG_DATA_HOME/jvm/jdks/missing" "$XDG_DATA_HOME/jvm/jdks/21"
+    run 1 home -i
+    [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'ambiguity/broken major triggered install'
+    rm "$XDG_DATA_HOME/jvm/jdks/21"
+    printf 'java=temurin-22\ndistro=vendor\n' > .jvmrc
+    index; row 22+1 temurin
+    run 0 e -i; diagnostic 'Successfully installed 22+1-temurin'
+    check 'selectorless -i fallback, no implicit offline install, local distro independence and failures'
+
+    for args in 'java=' 'java=0' 'java=21 # inline' 'java="21"' 'java=$HOME' 'java=$(touch sentinel)' 'java=`touch sentinel`' 'distro=bad/name' 'unknown=21' 'java=21\njava=22' 'distro=vendor\ndistro=temurin' 'invalid'; do
+        printf '%b\n' "$args" > .jvmrc
+        run 1 home; [ -s "$TEMP/err" ] || fail 'missing configuration diagnostic'
+    done
+    [ ! -e sentinel ] || fail 'executed configuration data'
+    printf 'bad=config\n' > .jvmrc
+    printf 'unknown=global\n' > "$XDG_CONFIG_HOME/jvm/config"
+    # Explicit local selection and unaffected commands never consult configuration.
+    for cmd in home env; do run 0 "$cmd" -i 22+1-temurin; done
+    run 0 exec --help
+    run 0 --help; run 0 --version
+    run 0 available; run 0 list
+    run 0 d; run 0 default -v 21
+    run 2 default -i; diagnostic 'Missing selector'
+    run 2 d -i -v 22; diagnostic 'Missing selector'
+    run 2 exec -i; diagnostic 'usage:'
+    run 2 home -i -i; diagnostic 'duplicate flag'
+    run 2 install invalid; diagnostic 'selector must'
+    run 2 uninstall; diagnostic 'usage:'
+    index; row 23+1 temurin; row 23+1 vendor
+    run 0 d -i -v 23 23; diagnostic 'Successfully installed 23+1-temurin'
+    run 0 default 22+1-temurin
+    run 0 d -v 22 22+1-temurin
+    # Conflicting valid configuration must also leave default -i's Temurin
+    # installation policy and selectorless queries untouched.
+    printf 'java=21+1-vendor\ndistro=vendor\n' > .jvmrc
+    printf 'java=25\ndistro=vendor\n' > "$XDG_CONFIG_HOME/jvm/config"
+    index; row 26+1 temurin; row 26+1 vendor
+    run 0 default -i 26; diagnostic 'Successfully installed 26+1-temurin'
+    run 0 d; contains '26+1-temurin'
+    # Malformed lower priority config is skipped if project supplies the key.
+    printf 'bad=config\n' > "$XDG_CONFIG_HOME/jvm/config"
+    printf 'java=22+1-temurin\ndistro=vendor\n' > .jvmrc
+    run 0 home
+    index; row 23+1 vendor
+    run 0 install 23; diagnostic 'Successfully installed 23+1-vendor'
+    rm .jvmrc
+    run 1 home
+    rm "$XDG_CONFIG_HOME/jvm/config"
+    mkdir .jvmrc
+    run 1 home; diagnostic 'cannot read configuration'
+    rmdir .jvmrc
+    ln -s "$TEMP/absent-config" .jvmrc
+    run 1 home; diagnostic 'cannot read configuration'
+    rm .jvmrc
+    mkdir "$XDG_CONFIG_HOME/jvm/config"
+    run 1 home; diagnostic 'cannot read configuration'
+    rmdir "$XDG_CONFIG_HOME/jvm/config"
+    check 'literal parser errors, unreadable paths, lazy reads and default behavior unchanged'
+
+    mkdir -p "$HOME/.config/jvm" child
+    printf 'java=22+1-temurin' > "$HOME/.config/jvm/config"
+    XDG_CONFIG_HOME=relative
+    run 0 home; contains '/22+1-temurin'
+    XDG_CONFIG_HOME=
+    run 0 home; contains '/22+1-temurin'
+    XDG_CONFIG_HOME=$saved_config
+    # A drive-style absolute override uses the same conversion as other roots.
+    # The harness cygpath stub returns its argument, so use a native converter
+    # just for resolving this isolated configuration path.
+    if [ -x '/usr/bin/cygpath' ]; then
+        mv "$TOOLS/cygpath" "$TEMP/config-cygpath"
+        printf '#!%s\nexec /usr/bin/cygpath "$@"\n' "$BASH_BIN" > "$TOOLS/cygpath"
+        PATH=$ORIGINAL_PATH chmod +x "$TOOLS/cygpath"
+        printf 'java=22+1-temurin\n' > "$saved_config/jvm/config"
+        XDG_CONFIG_HOME=$(/usr/bin/cygpath -m "$saved_config")
+        run 0 home; contains '/22+1-temurin'
+        XDG_CONFIG_HOME=$saved_config
+        rm "$saved_config/jvm/config" "$TOOLS/cygpath"
+        mv "$TEMP/config-cygpath" "$TOOLS/cygpath"
+    fi
+    printf 'java=21+1-vendor\n' > .jvmrc
+    cd child || exit 1
+    run 0 home; contains '/default'
+    cd .. || exit 1
+    rm .jvmrc "$HOME/.config/jvm/config"
+    rmdir child "$XDG_CONFIG_HOME/jvm" "$XDG_CONFIG_HOME"
+    reset
+    check 'absolute XDG fallback, unterminated lines, spaces and current-directory-only lookup'
+}
+
+if [ "${1:-}" = --config ]; then configuration_checks; exit 0; fi
 if [ "${1:-}" = --ea ]; then ea_checks; exit 0; fi
 if [ "${1:-}" = --types ]; then type_checks; exit 0; fi
 if [ "${1:-}" = --ranges ]; then range_checks; exit 0; fi
@@ -1072,7 +1278,7 @@ for selector in 21 temurin temurin-21 21+1-temurin; do
     [ ! -s "$TEMP/err" ] || fail 'empty selected listing wrote a diagnostic'
 done
 [ ! -e "$XDG_DATA_HOME" ] || fail 'empty listing created data storage'
-run 2 install; run 2 list ''; run 2 list ../21; run 2 list extra extra
+run 2 list ''; run 2 list ../21; run 2 list extra extra
 check 'empty offline inventory succeeds without creating storage; command usage'
 ea_checks
 type_checks
@@ -1395,6 +1601,7 @@ check 'independent staging, race loser success, publication failure and preserva
 
 flag_alias_checks
 execution_checks
+configuration_checks
 
 saved_data=$XDG_DATA_HOME; XDG_DATA_HOME=relative
 index; row 24+1 vendor; run 0 install vendor-24

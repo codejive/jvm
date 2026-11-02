@@ -7,6 +7,8 @@ ORIGINAL_PATH=$PATH
 TEMP=$(mktemp -d "${TMPDIR:-/tmp}/jvm-tests.XXXXXXXX") || exit 1
 trap 'rm -rf -- "$TEMP"' EXIT
 trap 'exit 1' HUP INT TERM
+mkdir -p "$TEMP/project with spaces"
+cd "$TEMP/project with spaces" || exit 1
 export HOME="$TEMP/home with spaces"
 export XDG_CACHE_HOME="$TEMP/cache with spaces"
 export XDG_DATA_HOME="$TEMP/unused data" XDG_CONFIG_HOME="$TEMP/unused config" XDG_STATE_HOME="$TEMP/unused state"
@@ -127,10 +129,10 @@ saved_path=$PATH; PATH=/nonexistent
 run 0 --help
 contains 'available, a [-t] [selector]'; contains 'distro-major (temurin-21)'
 contains 'list, l [selector]'
-contains '21+, 21..25, temurin-21+'; contains 'remote range ties use C ID order'
+contains '21+, 21..26, temurin-21+'; contains 'remote range ties use C ID order'
 contains 'finds and installs Java Development Kits'; contains 'even offline'
 lines=0; while IFS= read -r line; do lines=$((lines+1)); done < "$TEMP/out"
-[ "$lines" -le 50 ] || fail 'help is too verbose'
+[ "$lines" -le 70 ] || fail 'help is too verbose'
 contains 'Shell setup (once, in your shell profile):'
 contains 'Windows Bash:'; contains 'cygpath -u'
 main_help=$(< "$TEMP/out")
@@ -149,13 +151,11 @@ for cmd in available list install uninstall default home env exec a l i u d h e 
     [ "$(< "$TEMP/out")" = "$main_help" ] || fail "help differs: $cmd"
 done
 for cmd in help shell s av lis ins un def en ho; do run 2 "$cmd"; done
-for cmd in default home env d h e; do
+for cmd in default d; do
     run 2 "$cmd" -i
     [ "$(< "$TEMP/err")" = 'jvm: Missing selector' ] || fail 'missing selector diagnostic'
 done
 run 0 --version
-run 2 install
-[ "$(< "$TEMP/err")" = 'jvm: usage: jvm install <selector>'$'\n''for more information run: jvm install --help' ] || fail 'incorrect no-argument install guidance'
 run 0 install --help
 [ ! -s "$TEMP/err" ] || fail 'install --help wrote a diagnostic'
 [ "$(< "$TEMP/out")" = "$main_help" ] || fail 'install --help differs from main help'
@@ -164,7 +164,7 @@ run 2 uninstall
 run 2 install -help
 diagnostic 'unsupported flag:'
 PATH=$saved_path
-run 2; run 2 install; run 2 available 21 extra; run 2 available ''
+run 2; run 2 available 21 extra; run 2 available ''
 check 'help/version independent of network and archive utilities; usage exit codes'
 if [ "${1:-}" = --help-only ]; then exit 0; fi
 
@@ -193,7 +193,7 @@ run 0 available semeru; quiet; contains '21.0.12+9-semeru'; contains 'openj9'
 run 1 available 999; diagnostic 'No JDK found matching:'
 check 'major, distro, legacy, hyphenated distro, removed exact IDs and missing match'
 [ "$(< "$TEST_COUNTER")" -eq 1 ] || fail 'selectors did not share the latest cache'
-[[ $(< "$TEST_LOG") = *'/metadata/all/linux/x86_64/jdk-latest.tsv'* ]] || fail 'wrong discovery endpoint'
+[[ $(< "$TEST_LOG") = *'https://getjvm.dev/index/metadata/all/linux/x86_64/jdk-latest.tsv'* ]] || fail 'wrong discovery endpoint'
 check 'all selectors use one latest index and cache; no history requests'
 before=$(< "$TEST_COUNTER"); TEST_PLAN=fail; run 0 available; quiet
 [ "$(< "$TEST_COUNTER")" = "$before" ] || fail 'fresh cache fetched'
@@ -231,7 +231,7 @@ for adapter in curl wget; do
     reset_cache; TEST_PLAN=retry; run 0 available; quiet
     [ "$(< "$TEST_COUNTER")" -eq 2 ] || fail '304 without body not retried'
     check "$adapter: 304 without usable body retries unconditionally"
-    printf '%s\n0\n\n\n' 'https://jbangdev.github.io/jdkdb-index/metadata/all/linux/x86_64/jdk-latest.tsv' > "$XDG_CACHE_HOME/jvm/all-linux-x86_64-jdk-latest-v1"
+    printf '%s\n0\n\n\n' 'https://getjvm.dev/index/metadata/all/linux/x86_64/jdk-latest.tsv' > "$XDG_CACHE_HOME/jvm/all-linux-x86_64-jdk-latest-v1"
     rm -f "$TEST_COUNTER"; TEST_PLAN=retry; run 0 available; quiet
     [ "$(< "$TEST_COUNTER")" -eq 2 ] || fail '304 with missing body not retried'
     check "$adapter: missing cached body triggers unconditional retry"

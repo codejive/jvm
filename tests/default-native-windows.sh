@@ -10,6 +10,8 @@ cleanup() {
     done
     rm -rf -- "$TEMP"
 }
+mkdir -p "$TEMP/project with spaces"
+cd "$TEMP/project with spaces" || exit 1
 export HOME="$TEMP/home" XDG_DATA_HOME="$TEMP/data spaces & bang! percent%"
 export XDG_CACHE_HOME="$TEMP/cache" XDG_CONFIG_HOME="$TEMP/config" XDG_STATE_HOME="$TEMP/state"
 trap cleanup EXIT
@@ -56,6 +58,13 @@ for selector in '' 25+1-test 25 21+ 21..25; do
         [ "$JAVA_HOME" = "$2" ] && [ "$PATH" = "$3/bin:$original" ]
     ' bash "$TEMP/env.out" "$(cygpath -m "$expected")" "$(cygpath -u "$expected")"
 done
+# Configured bare majors retain stable junction output, while exec uses the
+# physical installation. Selectorless -i also preserves the existing default.
+printf 'java=21\ndistro=unused\n' > .jvmrc
+[ "$(bash "$ROOT/jvm" h -i)" = "$base/jdks/21" ]
+[ "$(bash "$ROOT/jvm" x -i -- bash -c 'printf "%s" "$JAVA_HOME"')" = "$(cygpath -m "$base/jdks/21+1-test")" ]
+rm .jvmrc
+[ "$(bash "$ROOT/jvm" h -i)" = "$base/jdks/default" ]
 bash "$ROOT/jvm" uninstall 25
 [ "$XDG_DATA_HOME/jvm/jdks/default" -ef "$XDG_DATA_HOME/jvm/jdks/21+1-test" ]
 [ ! -L "$XDG_DATA_HOME/jvm/jdks/25" ]

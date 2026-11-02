@@ -60,8 +60,9 @@ extension below supersedes that behavior. No command edits shell profiles.
 
 Exact full IDs take precedence for installation selectors. Otherwise
 accept a positive major or distro-major (including hyphenated distros). A bare
-install major uses Temurin: `install 22` is equivalent to `install temurin-22`.
-This distribution is currently hard-coded. `list`
+install major uses Temurin when no distro is configured: `install 22` then
+means `install temurin-22`.
+The configuration defaults extension below now controls this distribution. `list`
 returns the local directory inventory unless a selector filters it. `install` filters the latest index and
 requires one matching ID for ordinary selectors; multiple IDs fail with their
 full IDs as choices. Range selectors now use the policy below. Complete versions
@@ -80,8 +81,8 @@ without another artifact download; an exact installed ID also works offline.
 inventory used by `list`. It accepts an exact full ID, positive major, or
 distro-major, including hyphenated distros and legacy versions. A bare major
 matches all locally installed distributions; it does not assume Temurin.
-This user clarification on 2026-10-30 applies only to uninstall; install keeps
-its Temurin default. Exact IDs take precedence. Multiple matching IDs fail with all their
+This user clarification on 2026-10-30 applies only to uninstall; install uses
+its configured distribution, falling back to Temurin. Exact IDs take precedence. Multiple matching IDs fail with all their
 full IDs and ask the user to retry using one; no match exits 1. Invalid usage
 exits 2. No metadata fetch or cache access is needed.
 
@@ -102,17 +103,15 @@ See [tests/README.md](tests/README.md) for exact verification commands and gaps.
 ## Proposed next milestones (recorded 2026-10-30)
 
 The core command set is implemented. The proposed next milestone is release
-readiness, including the requested configurable installation distribution,
-validation and user documentation. Version ranges and range disambiguation
+readiness, including validation and user documentation. Configuration defaults
+were implemented on 2026-11-02. Version ranges and range disambiguation
 were implemented on 2026-11-02. Entries distinguish planned work from
 completed features; implementation does not imply full platform verification.
 
-1. **Configurable installation distribution.** Let bare-major installation
-   such as `install 21` use a configured distro, with Temurin as the default
-   when none is configured. The future requirement is recorded under
-   [Identity and selection](#identity-and-selection); the config filename and
-   format for user-wide settings remain undecided. Explicit distro selectors
-   retain their meaning. The related project-local `.jvmrc` TODO is below.
+1. **Configurable installation distribution (implemented 2026-11-02).** Bare
+   installation selectors use project/global distro settings, then Temurin.
+   See [Project-local defaults](#project-local-defaults) for independent Java
+   and distro precedence and the unchanged `default` command policy.
 2. **Range disambiguation (implemented 2026-11-02).** Use an eligible
    per-major default, with deterministic C-order ID fallback as specified below.
 3. **Version-range selectors (implemented 2026-11-02).** Support open-ended
@@ -144,47 +143,102 @@ completed features; implementation does not imply full platform verification.
 8. **User README.** Add a short root README explaining how to copy `jvm` into
    a project, use the basic commands and configure the shell for the persistent
    default. Keep contributor procedures in AGENTS.md and tests/README.md.
-9. **Project-local `.jvmrc` (user requested 2026-11-01).** Read optional
+9. **Project-local `.jvmrc` (implemented 2026-11-02).** Read optional
    `java=<selector>` and/or `distro=<name>` defaults from `.jvmrc` in the current
    directory. Related to configurable installation distribution; see
-   [Project-local defaults](#project-local-defaults-planned). Not implemented.
+   [Project-local defaults](#project-local-defaults).
 
 Version ranges and range disambiguation are implemented as specified below.
 Broader session-switching integration remains deferred.
 Offline `home` and `env` output were subsequently authorized and implemented on
 2026-10-30; their contract follows the range feature below.
 
-### Project-local defaults (planned)
+### Project-local defaults
 
-**Future requirement (user requested 2026-11-01):** support a `.jvmrc` file
-in the current working directory, containing either or both of these lines:
+**Implemented 2026-11-02:** support `.jvmrc` in the
+current working directory and user-wide `$XDG_CONFIG_HOME/jvm/config`, falling
+back to `~/.config/jvm/config` using the existing absolute XDG/HOME path rules.
+Both files accept either or both of these keys:
 
 ```text
-java=21
+java=21+
 distro=graalvm-community
 ```
 
-When selecting a JDK without an explicit selector, look for `java=<selector>`
-and use that selector when present. For example, `jvm x -- java -version`
-with the file above selects Java 21 rather than using the global default.
-An explicit command-line selector takes precedence over `java`. The value is
-a selector, not just a major: distro-major and full-ID selectors are allowed,
-including the implemented range syntax.
+`java` is a selector, including major, distro-major, full ID and supported
+version ranges. `distro` is a distribution name. Read both files as literal
+data, never source them or evaluate their contents. Lookup of `.jvmrc` is
+limited to the current directory; do not search parent directories.
 
-For installation selectors that omit a distro, use `distro=<name>` as the
-default installation distribution. With the example above, `jvm install 21`
-means `jvm install graalvm-community-21`. Explicit distro selectors and full
-IDs retain their meaning. Either key may appear alone; an absent key preserves
-the ordinary fallback behavior for that setting. Read the file as data, never
-source it or evaluate its contents as shell code.
+Resolve each setting independently: explicit command-line selector takes
+precedence over project settings, project settings over user-wide settings.
+For `install` and installation through `home`/`env`/`exec` with `-i`, when
+the selector omits a distribution, use project `distro`, then
+user-wide `distro`, then built-in `temurin`. Explicit distro selectors and full
+IDs retain their meaning. A configured `java` containing a distro therefore
+retains that distro even if a separate `distro` setting differs.
 
-Lookup is in the current directory; parent-directory searching is not part of
-this request. Before implementation, settle whitespace/comments, duplicate or
-unknown keys, empty/invalid values and unreadable-file behavior; precedence
-between project-local and future user-wide distro settings; and exact command
-coverage, especially commands whose omitted selector currently means a query
-or unfiltered listing. This TODO does not authorize implicit installation.
-No `.jvmrc` support is implemented yet.
+Command behavior:
+
+- `install` without a selector uses project `java`, then user-wide `java`,
+  then built-in Java major `25`. With no configuration, `jvm install` means
+  `jvm install temurin-25`. The installation distro rules also apply to the
+  built-in major fallback; `install -d` accepts the same omitted selector.
+- **Latest user correction (2026-11-02):** `home`, `env` and `exec` resolve
+  explicit CLI selector, then explicitly configured project `java`, then
+  explicitly configured user-wide `java`, then the existing global installed
+  default. Without `-i`, never use built-in major `25`: if neither configuration
+  nor a default supplies selection, preserve the existing missing-default error.
+  A configured selector that fails resolution does not fall through to a lower
+  priority setting or the installed default.
+- With `-i`, `home`, `env` and `exec` may omit the selector. Use the
+  same precedence above, and use built-in major `25` only when there is no
+  explicit/configured selector and no global default is set. An existing but
+  unusable/dangling default remains an error, not permission to install Java 25.
+  Retain offline-first resolution: install only on a genuine local miss;
+  ambiguity and operational errors must not trigger installation. Distribution
+  settings govern installation, not filtering of an existing local bare-major
+  selection. Ordinary installation/default lifecycle behavior remains intact.
+  Resolving an existing default preserves its normal path/output semantics;
+  `exec` continues to use its physical home.
+- **Final user correction (2026-11-02): `default` remains entirely unchanged.**
+  Do not apply configuration or new selectorless installation behavior to it.
+  Selectorless queries print the current value; there is no new operation to
+  set a default without a selector. Preserve existing flag validation, including
+  the explicit-selector requirement for `default -i`, and existing installation
+  distro behavior. Shared helpers must not change this command or alias `d`.
+- `available` and `list` retain their current query behavior;
+  project/global `java` does not turn a query into a selection.
+  `uninstall` continues to require an explicit selector. Aliases follow their
+  corresponding commands. `exec` still requires `--` and a command.
+- Existing `default -v <major>` query/selection behavior and selected-JDK
+  major consistency checks remain unchanged.
+
+The built-in major is the fixed value `25`, not a moving latest-major policy.
+The user-wide `java` setting supersedes the earlier proposal to allow only
+user-wide `distro`. Selectorless `-i` supersedes the earlier
+explicit-selector requirement only for `home`, `env` and `exec`.
+This latest correction supersedes the earlier plan to leave `home`/`env`/`exec`
+unchanged. All proposed changes to `default`, including selectorless
+`default -i` and configuration-based selection or installation, are withdrawn.
+
+Agreed parsing policy: allow blank lines, full-line `#` comments and surrounding
+whitespace. Reject duplicate or unknown keys, empty or invalid values, and
+unreadable files when a command needs settings from that file. Values are
+literal; shell quoting, variable expansion and inline comments are not syntax.
+A missing file leaves its settings unset. No command writes configuration or
+edits shell profiles.
+
+Settings are read after CLI syntax validation, only when needed. An explicit
+selector skips Java settings. Installation distro settings are read only for a
+bare-major/range installation, after a genuine local miss for `-i`. A local
+match does not require distro configuration. Consult the project file first;
+consult the global file only if the needed key is absent. Validate every key in
+a file when consulting it, including otherwise unused settings. A malformed
+lower-priority file is irrelevant when the project file supplies the needed key.
+Help and unaffected commands never read either file. No configuration directories
+are created. The offline harness covers this behavior; actual verification and
+remaining platform gaps are recorded in [tests/README.md](tests/README.md).
 
 ### JDK execution
 
@@ -199,10 +253,10 @@ JAVA_HOME set and the selected JDK's `bin` directory prepended to PATH. The `--`
 separator ends JVM option parsing. Preserve argument boundaries and invoke the
 command through Bash's `exec "$@"`, without evaluating a command string or
 generated `env` output. The selector is optional (user correction 2026-11-01).
-When omitted, validate the global default using the same rules and diagnostics
-as `home`/`env`, then use that installed JDK's physical home rather than the
-mutable default link. Do not scan inventory, repair a missing/unusable default
-or install implicitly. `-i` continues to require an explicit selector.
+When omitted, apply the configuration precedence above, then validate the global
+default using the same rules and diagnostics as `home`/`env`. Use its physical
+home. Only `-i` may install after a local miss, or use major 25 when both settings
+and the global default are absent. A broken default remains an error.
 The `--` separator and a nonempty command are required; missing parts exit 2
 before host detection, storage access or installation, reporting the full syntax:
 `jvm: usage: jvm exec [-i] [selector] -- <command> [args...]`.
@@ -462,8 +516,8 @@ matching major in the latest index.
   existing safe local directory names resembling ranges. `uninstall` does not
   interpret ranges but may remove such a directory by its exact name.
 
-No complete-version comparator, historical index fetching, configuration file,
-new storage format or runtime dependency is introduced by this feature.
+No complete-version comparator, historical index fetching, new storage format
+or runtime dependency is introduced by ranges. Configuration is described above.
 
 ## Offline home and environment output (implemented 2026-10-30)
 
@@ -485,8 +539,8 @@ excess/empty arguments
 exit 2. Each command's `--help` prints main help without external utilities or
 storage access.
 
-Without a selector, validate that the stable global default reference points to an
-ordinary inventory directory with usable launchers. A valid manifest is not
+Without an explicit or configured selector, validate that the stable global
+default reference points to an ordinary inventory directory with usable launchers. A valid manifest is not
 required for a global reference. An absent reference reports
 `jvm: No JDK currently set as the default` on stderr and exits 1, using the same
 wording as the `default` query. A dangling reference, a target outside the
@@ -599,11 +653,11 @@ usage comment retains the supplied selector and includes `-i` and `-f` when
 requested, in that canonical order. Aliases emit the same canonical comment as
 their full command names.
 
-An explicit selector is required with `-i`: missing selection prints
-`jvm: Missing selector` through the stderr diagnostic helper, leaves stdout empty
-and exits 2 without state changes. Normal no-selector behavior applies only
-without `-i`. Flags may precede or follow the selector. `-d` is accepted only by
-install, `-i` only by default/home/env/exec, and `-f` only by env.
+`default -i` requires an explicit selector. Missing selection prints
+`jvm: Missing selector` on stderr, leaves stdout empty and exits 2 without state
+changes. `home`, `env` and `exec -i` allow omitted selectors using the
+configuration/default/major-25 precedence above. Flags may precede or follow the
+selector. `-d` is accepted only by install, `-i` only by default/home/env/exec, and `-f` only by env.
 `-v <major>` is accepted only by `default`; a missing, repeated or invalid major
 exits 2. Unsupported or repeated flags, empty selectors and extra arguments
 exit 2 before side effects. Primary output is
@@ -705,8 +759,8 @@ The 2026-11-01 extension adds selected-JDK command execution.
 Broader integration that switches the parent shell remains deferred.
 
 Initial scope does not require system-wide installation, automatic
-updates, importing unrelated installations, or a GUI. Project version defaults
-in `.jvmrc` are a later requested TODO as described above, not implemented.
+updates, importing unrelated installations, or a GUI. Project and user-wide
+configuration defaults are implemented as described above.
 Discovering arbitrary JDKs on PATH or in vendor-specific directories is separate
 from listing installations managed by `jvm`.
 
@@ -763,7 +817,7 @@ jvm --help
 jvm --version
 jvm available [-t] [selector]
 jvm list [selector]
-jvm install [-d] <selector>
+jvm install [-d] [selector]
 jvm uninstall <selector>
 jvm default [-i] [-v <major>] [selector]
 jvm home [-i] [selector]
@@ -799,12 +853,11 @@ jvm exec [-i] [selector] -- <command> [args...]
   downloading the artifact, then
   `Successfully installed <ID>` to stderr after publication. An existing complete
   installation reports `Already installed <ID>` on stderr without another download.
-  With no argument, print exactly two lines on stderr:
-  `jvm: usage: jvm install <selector>` followed by
-  `for more information run: jvm install --help`. Exit 2.
-  `install --help` prints the main help page to stdout with exit 0 and no stderr.
-  Both forms need no external utilities and perform no host detection, storage
-  access or networking. This supersedes the earlier install-specific help.
+  With no selector, use project Java, user-wide Java, then major 25, with the
+  independent installation distro policy described above. This also applies to
+  `install -d`. An installed global default does not supply this selector.
+  `install --help` prints the main help page to stdout with exit 0 and no stderr,
+  without external utilities, configuration, host detection, storage or networking.
   `-help` is an unsupported flag and exits 2.
 - `uninstall` removes one selected local directory using the offline
   selection and move-before-delete procedure above.
@@ -1071,22 +1124,23 @@ original major selector, home/env retain the stable major link when it points to
 that exact ID, including a link initialized by installation; otherwise use the
 physical home so a competing reference change cannot select a different JDK.
 
-Without a selector, no inventory scan occurs:
+Without an explicit or configured selector, no inventory scan occurs before
+checking the global reference (configuration never applies to `default`):
 
 | Command | Direct lookup and result |
 | --- | --- |
 | `default` | Read and validate `jdks/default`; show its target ID or the documented no-default message. |
 | `default -v N` | Read and validate `jdks/N`; show its target ID or the documented per-version no-default message. |
-| `home` / `env` | Validate `jdks/default` and use that stable link path; fail if missing or unusable. |
-| `exec` | Validate `jdks/default` and use its target's physical home; fail if missing or unusable. `-i` still requires a selector. |
+| `home` / `env` | Validate `jdks/default` and use that stable link path. With `-i`, an absent reference permits major 25 installation; an unusable reference fails. |
+| `exec` | Validate `jdks/default` and use its target's physical home. With `-i`, an absent reference permits major 25 installation; an unusable reference fails. |
 
 The current `default` implementation also checks the destination reference it
 will query or update before resolving an explicit selector. This is a direct
 reference check, not an inventory scan. With `-i`, the initial local/install
 resolution happens before that command-specific destination check. `-v N`
 identifies the reference being managed and imposes a major check on the selected
-JDK; it does not implicitly add a selector. `-i` always requires an explicit
-selector.
+JDK; it does not implicitly add a selector. `default -i` always requires an
+explicit selector.
 
 ### Installation selectors (implemented)
 
@@ -1103,10 +1157,10 @@ The rules below describe ordinary selectors; range selectors additionally use
 
 - First reuse an exact existing local directory with usable launchers, even
   without a valid manifest. Otherwise try an exact full-ID match in the index.
-- A positive integer such as `21` selects that major from the hard-coded
-  default distribution, `temurin`: `install 21` means `install temurin-21`.
-  This applies only to installation, including installation after a local `-i`
-  miss; `available 21` still lists all distros.
+- A positive integer such as `21` selects that major from the configured
+  installation distribution, falling back to `temurin`. This applies to install
+  and installation after a home/env/exec `-i` local miss. `default -i` always
+  retains its Temurin policy; `available 21` still lists all distros.
 - A selector such as `temurin-21` selects that distribution and Java major.
   Split the major from the final hyphen; distro names can contain hyphens.
 - Distribution names use canonical jdkdb-index identifiers.
@@ -1117,7 +1171,7 @@ The rules below describe ordinary selectors; range selectors additionally use
   rank versions or reject vendor version syntax such as `+java17` or `-Final`.
 - If several distinct IDs remain, fail with their full IDs and ask the user
   to supply a full ID. Beyond the explicit/default distro filter, do not prefer
-  a vendor, JVM, build or API row order. If Temurin has no compatible match,
+  a vendor, JVM, build or API row order. If the selected distro has no compatible match,
   fail rather than falling back to a different distribution.
   A single ID proceeds to archive-format preference and the unique-row check.
 - Print the resolved ID on installation
@@ -1131,14 +1185,10 @@ first use their per-major reference, then fall back to matching every installed
 distribution when it is absent. Current `list` returns all local selector
 matches rather than resolving a single installation.
 
-**Future requirement (user requested 2026-10-30):** make the default installation
-distribution configurable in a config file. The current implementation always
-uses `temurin`; it does not read configuration yet. The file format and exact
-filename remain undecided, within the XDG configuration location described below.
-The related 2026-11-01 project-local `.jvmrc` requirement uses a specified
-filename and `java=`/`distro=` keys in the current directory; see
-[Project-local defaults](#project-local-defaults-planned). It does not settle
-the user-wide config format or precedence between the two configuration sources.
+**Configuration (implemented 2026-11-02):** Java selection and the installation
+distribution are configurable in project `.jvmrc` and user-wide `jvm/config`.
+See [Project-local defaults](#project-local-defaults) for paths, parsing,
+precedence and selectorless behavior. `default -i` retains its Temurin policy.
 
 ## Host compatibility
 
@@ -1405,9 +1455,24 @@ processes. Native Cygwin/MSYS2 and macOS replacement remain verification gaps.
 
 ## Metadata API
 
-Use [jdkdb-index API](https://jbangdev.github.io/jdkdb-index/) as the discovery
+Use [getjvm.dev index](https://getjvm.dev/index) as the discovery
 source and the artifact URLs it returns for downloads. Isolate API normalization
 from selection and installation so schema changes remain contained.
+
+### Index base migration (verified 2026-11-02)
+
+The runtime base is `https://getjvm.dev/index`. HTTPS requests for its
+[OpenAPI definition](https://getjvm.dev/index/openapi.yaml),
+[Windows x86_64 all-release latest TSV](https://getjvm.dev/index/metadata/all/windows/x86_64/jdk-latest.tsv)
+and [Linux x86_64 all-release latest TSV](https://getjvm.dev/index/metadata/all/linux/x86_64/jdk-latest.tsv)
+returned HTTP 302 redirects to the corresponding `jbangdev.github.io/jdkdb-index`
+paths, followed by HTTP 200. The inspected OpenAPI still advertises the original
+server and the existing 15-column TSV schema. Representative responses retained
+that header and field layout (479 Windows rows and 500 Linux rows at inspection).
+The existing HTTPS redirect policy needs no change. Earlier source links below
+record their original research locations. Native Windows Git Bash discovery and
+a second cached invocation succeeded with isolated HOME/XDG paths; this does
+not establish artifact download or real-JDK execution.
 
 ### Observed contract (2026-10-19)
 

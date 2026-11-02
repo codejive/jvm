@@ -30,6 +30,8 @@ bash tests/install.sh --ranges
 bash tests/install.sh --publication
 # Focused flags and aliases checks:
 bash tests/install.sh --flags
+# Focused configuration parsing, defaults and precedence:
+bash tests/install.sh --config
 # Focused command execution checks:
 bash tests/install.sh --execution
 # Focused offline home/env checks:
@@ -38,8 +40,9 @@ bash tests/home-env.sh
 bash tests/install.sh --uninstall
 ```
 
-The offline suite creates temporary HOME and XDG roots, including paths with
-spaces. Its isolated PATH supplies ordinary utility wrappers and fake host,
+The offline suite creates temporary working directories, HOME and XDG roots,
+including paths with spaces. It never reads the contributor's `.jvmrc` or user
+configuration. Its isolated PATH supplies ordinary utility wrappers and fake host,
 curl and wget commands. It makes no network calls, downloads no JDKs, and never
 reads or writes normal JDK inventories, defaults, or shell profiles. It requires
 the ordinary tools used by `jvm`, plus `chmod` to prepare executable fakes.
@@ -47,6 +50,46 @@ the ordinary tools used by `jvm`, plus `chmod` to prepare executable fakes.
 checks, stopping if a suite fails.
 Temporary files are cleaned on completion or interruption. Runtime code is only
 `jvm`; no fixtures or tests need distribution.
+
+Configuration defaults (2026-11-02): `bash tests/install.sh --config` covers
+independent project/global Java and distro inheritance, explicit selectors,
+full IDs and ranges, selectorless install/`-d`, selectorless home/env/exec with
+and without `-i`, aliases, installed defaults versus major 25, broken references,
+configured misses, local ambiguity and operational failures without installation.
+It also checks literal parsing, duplicate/unknown/empty/invalid settings,
+nonregular/unreadable configuration paths, missing files, lower-priority lazy
+reads, XDG fallback and native drive-path conversion when available, paths with
+spaces, and current-directory-only lookup. Unaffected queries/help and both
+conflicting and malformed configuration around `default -i` are covered.
+The existing `--defaults` lifecycle group now runs with malformed project and
+global configuration throughout. The native Windows smoke additionally checks
+configured bare-major junction output, selectorless `-i` using the global default,
+and configured exec using the physical home.
+
+Verification on 2026-11-02: Bash syntax validation passed for `jvm` and every
+`tests/*.sh` script. The focused `--config` (five groups), `--flags`,
+`--defaults`, and home/env suites passed under native Git Bash 5.3.15 on Windows.
+The final `bash tests/run.sh` passed all 56 discovery checks, 34 installation
+checks (including the five configuration groups), and the home/env suite.
+`git diff --check` passed after the final documentation update.
+The native Windows junction smoke passed with real `mklink /J`, native executable
+traversal and path conversion in isolated storage. ShellCheck was unavailable.
+The distributed script measures 66,698 bytes and has LF line endings. Bash 3.2
+and native Linux, macOS, Cygwin and standalone MSYS2 remain unverified. Fixture
+launchers and copied Windows executables do not establish real-JDK execution.
+
+Index base migration (2026-11-02): `BASE` now uses `https://getjvm.dev/index`.
+Bash syntax validation and `bash tests/run.sh --discovery` passed all 56 checks,
+including both simulated transfer adapters and a full-origin endpoint assertion.
+`bash tests/live-smoke.sh temurin-21` passed under native Windows Git Bash with
+curl, returning `21.0.13+9-temurin` twice (initial fetch and fresh cache reuse).
+Direct HTTPS checks retrieved the new OpenAPI URL and Windows/Linux x86_64
+all-release latest TSVs through HTTP 302 redirects to the original index host,
+followed by HTTP 200, preserving the 15-column contract. No JDK artifact was
+downloaded or executed. Native wget was unavailable. Historical research links
+in SPEC.md retain their original locations. The current script is 66,884 bytes;
+`git diff --check` passed. The full installation suite was not rerun for this
+base-URL change; the native platform gaps above remain unchanged.
 
 Per-major default coverage (2026-11-01) uses `tests/install.sh --defaults` and
 `tests/home-env.sh`. It checks the `jdks/default` and `jdks/<major>` references,

@@ -7,6 +7,8 @@ TEMP=$(mktemp -d "${TMPDIR:-/tmp}/jvm-home-env.XXXXXXXX")
 trap 'rm -rf -- "$TEMP"' EXIT
 trap 'exit 1' HUP INT TERM
 export MSYS=winsymlinks:nativestrict
+mkdir -p "$TEMP/project with spaces"
+cd "$TEMP/project with spaces" || exit 1
 export HOME="$TEMP/home" XDG_DATA_HOME="$TEMP/data spaces '\$dollar\`tick & (stuff)!"
 export XDG_CACHE_HOME="$TEMP/cache" XDG_CONFIG_HOME="$TEMP/config" XDG_STATE_HOME="$TEMP/state"
 mkdir -p "$HOME" "$TEMP/tools"
@@ -128,7 +130,6 @@ for command in available list install uninstall default home a l i u d h; do
     run 2 "$command" -f; diagnostic 'unsupported flag'
 done
 run 2 env -f -f; diagnostic 'duplicate flag'
-run 2 env -f -i; diagnostic 'Missing selector'
 make_jdk 21+2 temurin
 for command in home env; do
     run 1 "$command" temurin-21; diagnostic 'Multiple JDKs match'

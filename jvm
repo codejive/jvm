@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 
 DEFAULT_DISTRO=temurin
+DEFAULT_VERSION=25
 
 LC_ALL=C
 export LC_ALL
 VERSION=0.2.0
-BASE=https://jbangdev.github.io/jdkdb-index
+BASE=https://getjvm.dev/index
 WORK= STAGE= CURRENT=
+PROJECT_CONFIG_READ= GLOBAL_CONFIG_READ=
 
 error() { printf 'jvm: %s\n' "$*" >&2; }
 help_text() {
@@ -18,7 +20,7 @@ Usage: jvm <command> [options] [selector]
 
 Commands:
   available, a [-t] [selector]      Show compatible JDKs available to download.
-  install, i [-d] <selector>   Download, verify and install a JDK in user storage.
+  install, i [-d] [selector]   Download, verify and install a JDK in user storage.
   uninstall, u <selector>      Remove an installed JDK from user storage.
   list, l [selector]           Show JDK folders and manifest status, even offline.
   default, d [-i] [-v <major>] [selector]  Show or select a persistent JDK default.
@@ -31,9 +33,9 @@ Commands:
 Selectors:
   available/list: major (21), distro (temurin), or distro-major (temurin-21).
   install/uninstall/default/home/env/exec: full ID, major, or distro-major.
-  Ranges (except uninstall): 21+, 21..25, temurin-21+; listings show all matches.
+  Ranges (except uninstall): 21+, 21..26, temurin-21+; listings show all matches.
   Ranges select the highest major, then its eligible default, then C ID order.
-  Bare install majors/ranges use Temurin; remote range ties use C ID order.
+  Bare install majors/ranges use configured distro or Temurin; remote range ties use C ID order.
   Majors use java_version; IDs use version, with a Java-major prefix if needed.
   Bare local majors use an existing per-version default, otherwise match installed JDKs.
   Existing folder names are exact local IDs; ordinary ambiguity needs an exact ID.
@@ -42,17 +44,28 @@ Selectors:
 Options:
   -t  available: show release type/features in a final TYPE column.
   -d  install: make the installed JDK the persistent default.
-  -i  default/home/env/exec: install if missing; requires a selector.
+  -i  default/home/env/exec: install if missing; default requires a selector.
   -f  env: always print the PATH export, even when bin is already on PATH.
   -v  default: query or set the specified Java major's default.
 
+Configuration (optional, literal key=value lines):
+  ./.jvmrc, then $XDG_CONFIG_HOME/jvm/config (or ~/.config/jvm/config).
+  Keys: java=21+ and distro=graalvm-community. No parent-directory lookup.
+EOF
+    printf '  CLI selector > project java > user java. Install falls back to major %s.\n' "$DEFAULT_VERSION"
+    printf '  home/env/exec then use the installed default; -i uses %s only if it is absent.\n' "$DEFAULT_VERSION"
+    while IFS= read -r line; do printf '%s\n' "$line"; done <<'EOF'
+  Installation distro: explicit selector > project distro > user distro > temurin.
+  Configuration does not affect default, available, list, uninstall or help.
+
 Examples:
+  jvm install
   jvm i -d temurin-21
   jvm uninstall temurin-21
   jvm default -v 21 temurin-21
   jvm home -i 21
   eval "$(jvm env temurin-21)"
-  jvm x -i 21..25 -- java -version
+  jvm x -i 21..26 -- java -version
 
 Shell setup (once, in your shell profile):
   Unix:
@@ -380,6 +393,72 @@ data_path() {
     fi
     DATA=$root/jvm
     JDKS=$DATA/jdks
+}
+
+# Configuration is literal data. Load a file only when one of its settings is
+# needed; validate the whole file once it is consulted.
+read_config() {
+    local file=$1 line key value java_seen= distro_seen=
+    CONFIG_JAVA= CONFIG_DISTRO=
+    [ -e "$file" ] || [ -L "$file" ] || return 0
+    [ -f "$file" ] && [ -r "$file" ] || { error "cannot read configuration: $file"; return 1; }
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=${line#"${line%%[![:space:]]*}"}
+        line=${line%"${line##*[![:space:]]}"}
+        case "$line" in ''|'#'*) continue ;; esac
+        case "$line" in *=*) ;; *) error "invalid configuration line: $file"; return 1 ;; esac
+        key=${line%%=*}; value=${line#*=}
+        key=${key%"${key##*[![:space:]]}"}
+        value=${value#"${value%%[![:space:]]*}"}
+        case "$key" in
+            java)
+                [ -z "$java_seen" ] && [ -n "$value" ] &&
+                    { safe_id "$value" || [[ $value =~ ^[1-9][0-9]*$ ]] ||
+                      [[ $value =~ ^[a-z][a-z0-9-]*-[1-9][0-9]*$ ]] || parse_range "$value"; } &&
+                    [ "${#value}" -le 180 ] || {
+                        error "duplicate or invalid java setting: $file"; return 1;
+                    }
+                java_seen=1; CONFIG_JAVA=$value ;;
+            distro)
+                [ -z "$distro_seen" ] && [[ $value =~ ^[a-z][a-z0-9-]*$ ]] &&
+                    [ "${#value}" -le 180 ] || {
+                        error "duplicate or invalid distro setting: $file"; return 1;
+                    }
+                distro_seen=1; CONFIG_DISTRO=$value ;;
+            *) error "unknown configuration key: $key ($file)"; return 1 ;;
+        esac
+    done < "$file"
+}
+
+config_setting() {
+    local key=$1 root home
+    if [ -z "${PROJECT_CONFIG_READ:-}" ]; then
+        read_config ./.jvmrc || return 1
+        PROJECT_JAVA=$CONFIG_JAVA; PROJECT_DISTRO=$CONFIG_DISTRO
+        PROJECT_CONFIG_READ=1
+    fi
+    if [ "$key" = java ]; then SETTING=$PROJECT_JAVA; else SETTING=$PROJECT_DISTRO; fi
+    [ -z "$SETTING" ] || return 0
+    if [ -z "${GLOBAL_CONFIG_READ:-}" ]; then
+        root=$(absolute_path "${XDG_CONFIG_HOME:-}") || root=
+        if [ -z "$root" ]; then
+            home=$(absolute_path "${HOME:-}") || { error 'need an absolute HOME or XDG_CONFIG_HOME'; return 1; }
+            root=$home/.config
+        fi
+        read_config "$root/jvm/config" || return 1
+        GLOBAL_JAVA=$CONFIG_JAVA; GLOBAL_DISTRO=$CONFIG_DISTRO
+        GLOBAL_CONFIG_READ=1
+    fi
+    if [ "$key" = java ]; then SETTING=$GLOBAL_JAVA; else SETTING=$GLOBAL_DISTRO; fi
+}
+
+# The opt-in policy belongs to install/home/env/exec, never default -i.
+installation_distro() {
+    INSTALL_DISTRO=$DEFAULT_DISTRO
+    if [[ $1 =~ ^[1-9][0-9]*$ ]] || { parse_range "$1" && [ -z "$RANGE_DISTRO" ]; }; then
+        config_setting distro || return 1
+        INSTALL_DISTRO=${SETTING:-$DEFAULT_DISTRO}
+    fi
 }
 
 installation_cleanup() {
@@ -1234,7 +1313,7 @@ uninstall_jdk() {
 }
 
 install_jdk() {
-    local selector=$1 make_default=${2:-} expected_major=${3:-} rows result preferred count existing publish_home publish_marker version
+    local selector=$1 make_default=${2:-} expected_major=${3:-} rows result preferred count existing publish_home publish_marker version install_distro=$DEFAULT_DISTRO
     INSTALLED_ID=
     installation_selector "$selector" local || return $?
     require_tools uname awk mkdir mktemp rm sed cat mv date cp wc || return 1
@@ -1249,11 +1328,15 @@ install_jdk() {
         printf 'Already installed %s\n' "$selector" >&2; return 0
     fi
     installation_selector "$selector" || return $?
+    if [ "${4:-}" = config ]; then
+        installation_distro "$selector" || return 1
+        install_distro=$INSTALL_DISTRO
+    fi
     cache_path || return 1
     trap installation_cleanup EXIT
     trap 'exit 1' HUP INT TERM
     metadata || return 1
-    rows=$(remote_rows | select_rows "$selector" "$DEFAULT_DISTRO"); result=$?
+    rows=$(remote_rows | select_rows "$selector" "$install_distro"); result=$?
     [ "$result" -eq 0 ] || return "$result"
     version=$(printf '%s\n' "$rows" | awk -F '\t' 'NR==1 {print $12}')
     check_major "$version" "$expected_major" || return 1
@@ -1316,7 +1399,7 @@ ensure_installed() {
         0) INSTALLED_ID=${rows%%$'\t'*}
            version=$(printf '%s\n' "$rows" | awk -F '\t' '{print $12}')
            check_major "$version" "$expected_major" || return 1 ;;
-        4) install_jdk "$selector" '' "$expected_major" || return $? ;;
+        4) install_jdk "$selector" '' "$expected_major" "${3:-}" || return $? ;;
         *) return 1 ;;
     esac
 }
@@ -1370,26 +1453,45 @@ if [ "$command" = exec ] && { [ -z "$separator" ] || [ "$#" -eq 0 ] || [ -z "$1"
     error 'usage: jvm exec [-i] [selector] -- <command> [args...]'; exit 2
 fi
 if [ -z "$selector" ]; then
-    if [ -n "$option" ]; then error 'Missing selector'; exit 2; fi
+    if [ "$command" = default ] && [ -n "$option" ]; then error 'Missing selector'; exit 2; fi
     case "$command" in
-        install|uninstall)
+        uninstall)
             error "usage: jvm $command <selector>"
             printf 'for more information run: jvm %s --help\n' "$command" >&2
             exit 2 ;;
     esac
 fi
 case "$command" in
+    install|home|env|exec)
+        installation_selector "$selector" local || exit $?
+        if [ -z "$selector" ]; then
+            config_setting java || exit 1
+            selector=$SETTING
+        fi
+        if [ -z "$selector" ]; then
+            if [ "$command" = install ]; then selector=$DEFAULT_VERSION
+            elif [ "$option" = -i ]; then
+                data_path || exit 1
+                # An existing reference, including a broken one, must take the
+                # normal default path. Only an absent reference permits DEFAULT_VERSION.
+                if [ ! -e "$JDKS/default" ] && [ ! -L "$JDKS/default" ]; then selector=$DEFAULT_VERSION; fi
+            fi
+        fi ;;
+esac
+case "$command" in
     exec) installation_selector "$selector" local || exit $?
                 execution_umask=$(umask) ;;
 esac
-if [ "$option" = -i ]; then
-    ensure_installed "$selector" "$major_option" || exit $?
+if [ "$option" = -i ] && [ -n "$selector" ]; then
+    config_policy=
+    [ "$command" = default ] || config_policy=config
+    ensure_installed "$selector" "$major_option" "$config_policy" || exit $?
     resolved_selector=$INSTALLED_ID
 else resolved_selector=$selector; fi
 case "$command" in
     available) available "$selector" ;;
     list) list_installed "$selector" ;;
-    install) install_jdk "$selector" "$option" ;;
+    install) install_jdk "$selector" "$option" '' config ;;
     uninstall) uninstall_jdk "$selector" ;;
     default) default_jdk "$resolved_selector" "${major_option:-default}" ;;
     home|env) home_environment "$command" "$resolved_selector" "$selector" ;;
