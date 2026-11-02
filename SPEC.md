@@ -132,15 +132,19 @@ completed features; implementation does not imply full platform verification.
    `tests/jdk-smoke.sh` covers download, verified installation, first-install
    default selection, offline listing/reinstall, actual `java`/`javac` execution
    and uninstallation in isolated storage. It passed with Temurin 21 on native
-   Windows Git Bash. Other native hosts and Bash 3.2 remain unverified.
+   Windows Git Bash. Other real-JDK host/interpreter combinations remain
+   unverified.
    Live downloads remain separate from the deterministic offline suite;
    commands and results are recorded in [tests/README.md](tests/README.md).
-7. **Portability checks and CI.** Run the offline suite on Linux, macOS and
-   Windows, including actual Bash 3.2, and add CI for repeatable coverage.
-   Native Cygwin and standalone MSYS2 verification also remain outstanding.
-   Record actual results and remaining gaps in
-   [tests/README.md](tests/README.md); simulated hosts do not establish native
-   platform support.
+7. **Portability checks and CI (configured 2026-11-02).** GitHub Actions runs
+   the offline suite on Linux and macOS with Bash 3.2 and current Bash, and on
+   Windows with current Git Bash/MSYS2/Cygwin plus Bash 3.2 on Cygwin. Bash 3.2
+   means an actual interpreter, with explicit version checks; a compatibility
+   mode does not qualify. Windows jobs also run the native junction smoke.
+   Real-JDK downloads are opt-in for manual workflow runs. Configuration alone
+   does not establish that hosted jobs or native platforms have passed;
+   actual results and remaining gaps are recorded in
+   [tests/README.md](tests/README.md).
 8. **User README.** Add a short root README explaining how to copy `jvm` into
    a project, use the basic commands and configure the shell for the persistent
    default. Keep contributor procedures in AGENTS.md and tests/README.md.

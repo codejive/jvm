@@ -165,6 +165,11 @@ EOF
 export PATH=$TOOLS
 passed=0
 fail() { printf 'FAIL: %s\n' "$*" >&2; cat "$TEMP/err" >&2; exit 1; }
+dangling_link() {
+    # Older MSYS2 cannot create a native symlink to a nonexistent target.
+    # Create a directory link first, then remove its temporary target.
+    mkdir "$1" && ln -s "$1" "$2" && rmdir "$1" || fail 'cannot prepare dangling link'
+}
 check() { passed=$((passed+1)); printf 'ok %s - %s\n' "$passed" "$*"; }
 run() {
     local expected=$1 actual
@@ -366,7 +371,7 @@ EOF
     mv "$XDG_DATA_HOME/jvm/jdks/default" "$TEMP/saved-default"
     run 1 exec -- "$TEMP/child with spaces" status-check
     diagnostic 'No JDK currently set as the default'
-    ln -s "$XDG_DATA_HOME/jvm/jdks/missing" "$XDG_DATA_HOME/jvm/jdks/default"
+    dangling_link "$XDG_DATA_HOME/jvm/jdks/missing" "$XDG_DATA_HOME/jvm/jdks/default"
     run 1 x -- "$TEMP/child with spaces" status-check
     diagnostic 'default JDK is missing or unusable'
     rm "$XDG_DATA_HOME/jvm/jdks/default"
@@ -1024,7 +1029,8 @@ range_checks() {
     run 0 home 21..25; contains '/25+10-temurin'
     run 1 home temurin-25; diagnostic 'Multiple JDKs match'
     for id in missing 26+1-other-vendor; do
-        ln -s "$base/$id" "$base/25"
+        if [ "$id" = missing ]; then dangling_link "$base/$id" "$base/25"
+        else ln -s "$base/$id" "$base/25" || fail 'cannot prepare major link'; fi
         run 0 home 21..25; contains '/25+10-temurin'
         rm "$base/25"
     done
@@ -1131,7 +1137,7 @@ configuration_checks() {
         [[ $(< "$TEMP/out") != */default* ]] || fail 'exec used mutable default'
     done
     rm "$XDG_DATA_HOME/jvm/jdks/default"
-    ln -s "$XDG_DATA_HOME/jvm/jdks/missing" "$XDG_DATA_HOME/jvm/jdks/default"
+    dangling_link "$XDG_DATA_HOME/jvm/jdks/missing" "$XDG_DATA_HOME/jvm/jdks/default"
     for cmd in home env; do
         run 1 "$cmd" -i; diagnostic 'default JDK is missing or unusable'
     done
@@ -1167,7 +1173,7 @@ configuration_checks() {
     rm "$XDG_DATA_HOME/jvm/jdks/21"
     before=$(cat "$TEST_LOG")
     run 1 home -i; diagnostic 'Multiple JDKs match'
-    ln -s "$XDG_DATA_HOME/jvm/jdks/missing" "$XDG_DATA_HOME/jvm/jdks/21"
+    dangling_link "$XDG_DATA_HOME/jvm/jdks/missing" "$XDG_DATA_HOME/jvm/jdks/21"
     run 1 home -i
     [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'ambiguity/broken major triggered install'
     rm "$XDG_DATA_HOME/jvm/jdks/21"
@@ -1218,7 +1224,7 @@ configuration_checks() {
     mkdir .jvmrc
     run 1 home; diagnostic 'cannot read configuration'
     rmdir .jvmrc
-    ln -s "$TEMP/absent-config" .jvmrc
+    dangling_link "$TEMP/absent-config" .jvmrc
     run 1 home; diagnostic 'cannot read configuration'
     rm .jvmrc
     mkdir "$XDG_CONFIG_HOME/jvm/config"

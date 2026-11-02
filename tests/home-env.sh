@@ -22,6 +22,10 @@ printf '#!%s\necho "GNU libc"\n' "$BASH_BIN" > "$TEMP/tools/ldd"
 printf '#!%s\n[ "$TEST_CONVERT_FAIL" = 0 ] || exit 1\ncase "$1" in -m) printf "C:%%s\\n" "$2" ;; -u) printf "%%s\\n" "${2#C:}" ;; esac\n' "$BASH_BIN" > "$TEMP/tools/cygpath"
 chmod +x "$TEMP/tools/"*
 fail() { echo "FAIL: $*" >&2; cat "$TEMP/err" >&2; exit 1; }
+dangling_link() {
+    # Native directory links need an existing target on older MSYS2 versions.
+    mkdir "$1" && ln -s "$1" "$2" && rmdir "$1" || fail 'cannot prepare dangling link'
+}
 run() {
     local expected=$1 actual=0
     shift
@@ -144,7 +148,7 @@ for command in home env; do
     rm "$base/jdks/default"
     run 1 "$command"; diagnostic 'No JDK currently set as the default'
     # Explicit selection does not need a usable default.
-    ln -s "$base/jdks/99+1-missing" "$base/jdks/default"
+    dangling_link "$base/jdks/99+1-missing" "$base/jdks/default"
     run 1 "$command"; diagnostic 'default JDK is missing or unusable'
     run 0 "$command" temurin-21
     rm "$base/jdks/default"
@@ -169,7 +173,7 @@ for command in home env; do
     run 1 "$command" 21; diagnostic 'not a managed link'
 done
 rm "$base/jdks/21"
-ln -s "$base/jdks/99+1-missing" "$base/jdks/21"
+dangling_link "$base/jdks/99+1-missing" "$base/jdks/21"
 for command in home env; do
     run 1 "$command" 21; diagnostic 'default JDK for version 21 is unavailable'
     run 1 "$command" -i 21; diagnostic 'default JDK for version 21 is unavailable'

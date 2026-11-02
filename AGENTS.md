@@ -74,6 +74,14 @@ them. Do not claim a command ran or a platform passed unless verified.
 
 When implementation exists:
 
+- Local platform or Bash-version validation requires express user confirmation
+  for the proposed local checks before running them. This includes
+  `tests/ci.sh`, native junction and real-JDK smoke tests, WSL/container platform
+  runs, and building or installing alternative shells or platform tooling for
+  validation. A request to create or change CI does not authorize these local
+  runs. Prefer the configured hosted CI jobs; report unverified platforms rather
+  than starting local platform tests without confirmation. This restriction does
+  not require confirmation for the configured jobs running in hosted CI.
 - Run Bash syntax validation (`bash -n ./jvm`) and relevant behavioral tests.
   Use ShellCheck when available as a development tool, not a runtime dependency.
 - Use a lightweight Bash test harness and small checked-in metadata fixtures.
@@ -98,6 +106,7 @@ When implementation exists:
   distinctions, and Windows native executable/link behavior.
 - Check Bash 3.2 and current Bash. Before claiming platform support, run native
   smoke checks on Linux, macOS, Cygwin, MSYS2, and Git Bash where available.
+  Use hosted CI or obtain the express confirmation required above for local runs.
   Distinguish simulated platform tests from native verification and report gaps.
 - Measure distributed script size after meaningful growth. Prefer meaningful
   regression tests to tests that merely mirror private helper implementation.

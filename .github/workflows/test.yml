@@ -1,0 +1,143 @@
+name: Bash portability
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      real_jdk:
+        description: Also download, compile/run and uninstall a real JDK
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bash-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unix:
+    name: ${{ matrix.os }} / Bash ${{ matrix.bash }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+        bash: ['3.2', current]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Bash 3.2 build dependencies
+        if: runner.os == 'Linux' && matrix.bash == '3.2'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y gcc make bison libc6-dev
+      - name: macOS fixture checksum utility
+        if: runner.os == 'macOS'
+        run: |
+          brew install coreutils
+          mkdir "$RUNNER_TEMP/checksum-bin"
+          ln -s "$(brew --prefix coreutils)/bin/gsha256sum" "$RUNNER_TEMP/checksum-bin/sha256sum"
+          printf '%s\n' "$RUNNER_TEMP/checksum-bin" >> "$GITHUB_PATH"
+      - name: Select actual Bash interpreter
+        env:
+          BASH_TARGET: ${{ matrix.bash }}
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            if [ "$BASH_TARGET" = 3.2 ]; then
+              interpreter=/bin/bash
+            else
+              brew install bash
+              interpreter="$(brew --prefix bash)/bin/bash"
+            fi
+          elif [ "$BASH_TARGET" = 3.2 ]; then
+            bash tests/build-bash32.sh "$RUNNER_TEMP/bash-3.2"
+            interpreter="$RUNNER_TEMP/bash-3.2/bin/bash"
+          else
+            interpreter=/bin/bash
+          fi
+          printf 'TEST_BASH=%s\n' "$interpreter" >> "$GITHUB_ENV"
+      - name: Syntax and full offline suite
+        env:
+          BASH_TARGET: ${{ matrix.bash }}
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            export PATH="$RUNNER_TEMP/checksum-bin:/usr/bin:/bin:/usr/sbin:/sbin"
+          fi
+          "$TEST_BASH" tests/ci.sh "$BASH_TARGET"
+      - name: Optional real JDK lifecycle
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.real_jdk }}
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            export PATH="$RUNNER_TEMP/checksum-bin:/usr/bin:/bin:/usr/sbin:/sbin"
+          fi
+          "$TEST_BASH" tests/jdk-smoke.sh
+
+  windows:
+    name: Windows / ${{ matrix.environment }} / Bash ${{ matrix.bash }}
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - environment: Git Bash
+            bash: current
+            shell: bash
+          - environment: MSYS2
+            bash: current
+            shell: 'msys2 {0}'
+          - environment: Cygwin
+            bash: current
+            shell: 'D:\cygwin\bin\bash.exe --noprofile --norc -o igncr -e {0}'
+          - environment: Cygwin
+            bash: '3.2'
+            shell: 'D:\cygwin\bin\bash.exe --noprofile --norc -o igncr -e {0}'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        if: matrix.environment == 'MSYS2'
+        with:
+          msystem: MSYS
+          update: true
+          install: curl tar gzip unzip diffutils coreutils gawk sed findutils openssl
+      - uses: cygwin/cygwin-install-action@5a1b0cd107181fa6bb6bf3f90d500f4fb3132f18 # v7
+        if: matrix.environment == 'Cygwin'
+        with:
+          install-dir: 'D:\cygwin'
+          add-to-path: false
+          packages: curl gcc-core make bison tar gzip unzip diffutils coreutils gawk sed findutils openssl
+      - name: Build actual Bash 3.2
+        if: matrix.bash == '3.2'
+        run: >-
+          export PATH="/usr/bin:$(cygpath -u "$SYSTEMROOT")/system32";
+          bash tests/build-bash32.sh "$(cygpath -u "$RUNNER_TEMP")/bash-3.2"
+      - name: Syntax, full offline suite and native junction smoke
+        env:
+          BASH_TARGET: ${{ matrix.bash }}
+          TEST_ENVIRONMENT: ${{ matrix.environment }}
+        run: >-
+          if [ "$TEST_ENVIRONMENT" = Cygwin ]; then export PATH="/usr/bin:$(cygpath -u "$SYSTEMROOT")/system32"; fi;
+          if [ "$BASH_TARGET" = 3.2 ]; then interpreter="$(cygpath -u "$RUNNER_TEMP")/bash-3.2/bin/bash"; else interpreter="$BASH"; fi;
+          "$interpreter" tests/ci.sh "$BASH_TARGET"
+      - name: Optional real JDK lifecycle
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.real_jdk }}
+        env:
+          BASH_TARGET: ${{ matrix.bash }}
+          TEST_ENVIRONMENT: ${{ matrix.environment }}
+        run: >-
+          if [ "$TEST_ENVIRONMENT" = Cygwin ]; then export PATH="/usr/bin:$(cygpath -u "$SYSTEMROOT")/system32"; fi;
+          if [ "$BASH_TARGET" = 3.2 ]; then interpreter="$(cygpath -u "$RUNNER_TEMP")/bash-3.2/bin/bash"; else interpreter="$BASH"; fi;
+          "$interpreter" tests/jdk-smoke.sh

@@ -52,6 +52,79 @@ checks, stopping if a suite fails.
 Temporary files are cleaned on completion or interruption. Runtime code is only
 `jvm`; no fixtures or tests need distribution.
 
+## GitHub Actions portability checks
+
+[`.github/workflows/test.yml`](../.github/workflows/test.yml) runs on pushes,
+pull requests and manual dispatch. Each matrix entry checks the actual Bash
+version, syntax-checks `jvm` and every test script, and runs the full offline
+suite. Windows entries also run the native junction smoke.
+
+| Runner | Environment | Interpreters |
+| --- | --- | --- |
+| `ubuntu-24.04` | Linux/glibc | Private GNU Bash 3.2.57 build; system Bash |
+| `macos-15` | Native macOS | `/bin/bash` 3.2; Homebrew Bash |
+| `windows-2025` | Git Bash | Bundled current Bash |
+| `windows-2025` | MSYS2 | Current MSYS Bash |
+| `windows-2025` | Cygwin | Private GNU Bash 3.2.57 build; current Cygwin Bash |
+
+The Bash 3.2 entries fail if the interpreter is not actually version 3.2.
+`tests/ci.sh` also puts that interpreter first on PATH for bare `bash` calls
+and env-based shebangs. The harness and junction smoke pass the same interpreter
+to child invocations. A newer Bash in compatibility mode is not a substitute.
+Git Bash and MSYS2 use their current native binaries; the Windows 3.2 job uses
+Cygwin's runtime, and does not establish 3.2 coverage for those other runtimes.
+
+The build helper downloads the
+[GNU Bash 3.2.57 release](https://ftp.gnu.org/gnu/bash/bash-3.2.57.tar.gz),
+verifies its pinned SHA-256, builds in a new private directory and copies only
+the interpreter into that directory's `bin`. GCC with C development headers,
+Make, Bison (and its M4 dependency), curl, tar/gzip and sha256sum are
+development/CI tools only. Bison regenerates Bash's parser; it is not needed
+by `jvm` or by the offline tests.
+Nothing replaces the system shell or adds a runtime installation step.
+The macOS harness needs `sha256sum` for constructing fixture metadata; CI exposes
+only Homebrew's checksum binary under that name, retaining native BSD tar, mv
+and other system utilities for portability checks.
+
+Equivalent local commands, with the interpreter to test:
+
+```bash
+bash tests/ci.sh current
+/path/to/bash-3.2 tests/ci.sh 3.2
+# Optional private build on Linux/Cygwin with the build tools already available:
+bash tests/build-bash32.sh /path/to/new-build-directory
+/path/to/new-build-directory/bin/bash tests/ci.sh 3.2
+```
+
+All ordinary jobs use fixture downloads. The manual workflow's `real_jdk`
+boolean additionally enables `tests/jdk-smoke.sh` for each matrix entry.
+No secrets are needed; repository permissions are read-only and checkout
+credentials are not persisted. Failed matrix entries do not cancel the others.
+
+CI configuration sources checked on 2026-11-02: the
+[runner documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job),
+[macOS image inventory](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-arm64-Readme.md),
+[MSYS2 setup action](https://github.com/msys2/setup-msys2) and
+[Cygwin install action](https://github.com/cygwin/cygwin-install-action).
+The workflow pins actions to immutable Git object IDs. Hosted execution remains
+unverified until this repository is pushed to GitHub and its workflow runs;
+this checkout currently has no configured remote. Historical verification notes
+below describe the checks performed at those dates.
+
+The dangling-reference fixtures create a native directory symlink while its
+temporary target exists, then remove that target. This preserves the same
+broken-link cases on older MSYS2 runtimes that cannot create a link directly
+to a missing target. Fixture setup failures now stop those checks explicitly.
+
+Local verification on 2026-11-02: `tests/ci.sh` passed all 56 discovery checks,
+34 installation groups and home/env checks under actual Bash 3.2.57 and
+current Bash 5.3.9 on Ubuntu 26.04/WSL2 with glibc. The private build helper
+also completed from scratch with GCC 15. `bash tests/ci.sh current` passed the full offline suite
+and native junction smoke under Git Bash 5.3.15 and standalone MSYS2 Bash 5.3.9.
+`actionlint` 1.7.11 and `git diff --check` passed. These runs use inert fixtures;
+the optional real-JDK smoke was not rerun for the CI changes. Native macOS and
+Cygwin, including Cygwin's Bash 3.2 build, remain unverified locally.
+
 Configuration defaults (2026-11-02): `bash tests/install.sh --config` covers
 independent project/global Java and distro inheritance, explicit selectors,
 full IDs and ranges, selectorless install/`-d`, selectorless home/env/exec with
