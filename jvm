@@ -817,10 +817,10 @@ resolve_installed() {
     row=$(local_rows) || return 1
     classify_selector "$selector"
     if [ "$SEL_KIND" = range ]; then
-        row=$(printf '%s\n' "$row" | select_rows "$selector" '' range "${2:-}") || return $?
+        row=$(printf '%s\n' "$row" | select_rows "$selector" '' "range ${2:-}") || return $?
         row=$(resolve_range_rows "$row") || return $?
     else
-        row=$(printf '%s\n' "$row" | select_rows "$selector" '' '' "${2:-}") || return $?
+        row=$(printf '%s\n' "$row" | select_rows "$selector" '' "${2:-}") || return $?
     fi
     [ -z "$row" ] || jdk_layout "$JDKS/${row%%$'\t'*}" || {
         error "JDK has no usable java/javac launchers: ${row%%$'\t'*}"; return 1;
@@ -1000,21 +1000,31 @@ remote_rows() {
 
 # Match exact IDs before interpreting short selectors. The index already supplies
 # latest releases; ranges rank majors and break ID ties by C string order.
-# Only installation supplies a default distro for bare majors/ranges.
+# Only installation supplies a default distro ($2) for bare majors/ranges.
+# $3 holds space-separated flags: all (list every match, including every
+# distro or all IDs of a range), range (candidates of the highest range major
+# instead of an ambiguity failure), probe (silent miss, status 4) and no-range.
 select_rows() {
-    local rows result lower= upper= major= distro= reject=
+    local rows result lower= upper= major= distro= reject= listing= probe=
+    case " ${3:-} " in
+        *" all "*) listing=all ;;
+        *" range "*) listing=range ;;
+    esac
+    case " ${3:-} " in *" probe "*) probe=1 ;; esac
     classify_selector "$1"
     case "$SEL_KIND" in
         range)
-            if [ "${5:-}" = no-range ]; then reject=1
-            else lower=$SEL_MIN; upper=$SEL_MAX; distro=${SEL_DISTRO:-${2:-}}; fi ;;
+            case " ${3:-} " in
+                *" no-range "*) reject=1 ;;
+                *) lower=$SEL_MIN; upper=$SEL_MAX; distro=${SEL_DISTRO:-${2:-}} ;;
+            esac ;;
         major) major=$SEL_MAJOR; distro=${2:-} ;;
         distro-major) major=$SEL_MAJOR; distro=$SEL_DISTRO ;;
-        distro) if [ -n "${3:-}" ]; then distro=$SEL_DISTRO; else reject=1; fi ;;
-        empty) [ -n "${3:-}" ] || reject=1 ;;
+        distro) if [ -n "$listing" ]; then distro=$SEL_DISTRO; else reject=1; fi ;;
+        empty) [ -n "$listing" ] || reject=1 ;;
         *) reject=1 ;;
     esac
-    rows=$(awk -F '\t' -v selector="$1" -v listing="${3:-}" -v probe="${4:-}" -v lower="$lower" -v upper="$upper" -v major="$major" -v distro="$distro" -v reject="$reject" "$AWK_LIB"'
+    rows=$(awk -F '\t' -v selector="$1" -v listing="$listing" -v probe="$probe" -v lower="$lower" -v upper="$upper" -v major="$major" -v distro="$distro" -v reject="$reject" "$AWK_LIB"'
         {rows[NR]=$0; ids[NR]=$1; versions[NR]=$12; distros[NR]=$2; if ($1==selector) exact=1}
         END {
             if (!exact && reject) {if (!probe) print "No JDK found matching: " selector > "/dev/stderr"; exit 4}
@@ -1056,7 +1066,7 @@ select_rows() {
         return 1
     fi
     if [ "$result" -eq 4 ]; then
-        [ "${4:-}" != probe ] || return 4
+        [ -z "$probe" ] || return 4
         return 1
     fi
     [ "$result" -eq 0 ] || return "$result"
@@ -1295,7 +1305,7 @@ uninstall_jdk() {
     local references= changed= global_before= candidates
     init_host && require_tools mktemp || return 1
     rows=$(local_rows) || return 1
-    rows=$(printf '%s\n' "$rows" | select_rows "$selector" '' '' '' no-range) || return $?
+    rows=$(printf '%s\n' "$rows" | select_rows "$selector" '' no-range) || return $?
     id=${rows%%$'\t'*}
     local_id "$id" || { error 'unsafe installation ID'; return 1; }
     row_field 12 "$rows"
