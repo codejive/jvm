@@ -5,7 +5,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BASH_BIN=${BASH:-bash}
 ORIGINAL_PATH=$PATH
 TEMP=$(mktemp -d "${TMPDIR:-/tmp}/jvm-tests.XXXXXXXX") || exit 1
-trap 'rm -rf -- "$TEMP"' EXIT
+trap 'PATH=$ORIGINAL_PATH rm -rf -- "$TEMP"' EXIT
 trap 'exit 1' HUP INT TERM
 mkdir -p "$TEMP/project with spaces"
 cd "$TEMP/project with spaces" || exit 1
@@ -75,7 +75,7 @@ EOF
 done
 
 passed=0
-fail() { printf 'FAIL: %s\n' "$*" >&2; cat "$TEMP/err" >&2; exit 1; }
+fail() { printf 'FAIL: %s\n' "$*" >&2; PATH=$ORIGINAL_PATH cat "$TEMP/err" >&2; exit 1; }
 check() { passed=$((passed+1)); printf 'ok %s - %s\n' "$passed" "$*"; }
 run() {
     local expected=$1 actual
@@ -129,12 +129,16 @@ saved_path=$PATH; PATH=/nonexistent
 run 0 --help
 contains 'available, a [-t] [selector]'; contains 'distro-major (temurin-21)'
 contains 'list, l [selector]'
-contains '21+, 21..26, temurin-21+'; contains 'remote range ties use C ID order'
+contains '21+, 21..26, temurin-21+'
+contains 'Ranges select the highest major, then its eligible default, then C ID order.'
+contains 'Install ranges reuse local matches first; remote majors/ranges use configured distro or Temurin.'
 contains 'finds and installs Java Development Kits'; contains 'even offline'
 lines=0; while IFS= read -r line; do lines=$((lines+1)); done < "$TEMP/out"
 [ "$lines" -le 70 ] || fail 'help is too verbose'
 contains 'Shell setup (once, in your shell profile):'
-contains 'Windows Bash:'; contains 'cygpath -u'
+contains 'export JAVA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/default"'
+contains 'export PATH="$JAVA_HOME/bin:$PATH"'
+contains 'Git Bash / Cygwin / MSYS2:'; contains 'cygpath -u'
 main_help=$(< "$TEMP/out")
 run 0 --help
 [ "$(< "$TEMP/out")" = "$main_help" ] || fail 'main help differs'

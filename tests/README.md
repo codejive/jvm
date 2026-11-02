@@ -1,5 +1,13 @@
 # Discovery, installation and uninstallation verification
 
+CI repair verification (2026-11-03): updated stale help assertions and restored
+diagnostics/cleanup when the harness deliberately removes utilities from PATH.
+Syntax checks for `jvm` and all Bash test scripts, the complete offline suite
+(56 discovery checks, 34 installation groups and home/env), and `git diff --check`
+passed under installed Git Bash. The Cygwin source patch passed a dry run against
+Bash 3.2.57. The serial build and modern Cygwin compatibility adjustments still
+need hosted CI verification; no alternative shell was built locally.
+
 Environment usage comments (2026-11-02): Bash and PowerShell now preserve the
 invoked command alias and argument order without adding configured or fallback
 selectors. The isolated home/env suite and native Windows PowerShell 5.1 and
@@ -149,6 +157,12 @@ the interpreter into that directory's `bin`. GCC with C development headers,
 Make, Bison (and its M4 dependency), curl, tar/gzip and sha256sum are
 development/CI tools only. Bison regenerates Bash's parser; it is not needed
 by `jvm` or by the offline tests.
+The build runs serially because the old readline/history makefiles share object
+files unsafely under parallel make, and uses `-fcommon` for tentative definitions
+predating GCC 10. Cygwin additionally needs `patch`: the private source copy uses
+the current [path conversion API](https://cygwin.com/cygwin-api/func-cygwin-conv-path.html)
+via `tests/bash32-cygwin.patch`, and includes `io.h` for the current `setmode`
+mapping. These adjustments affect only the test interpreter.
 Nothing replaces the system shell or adds a runtime installation step.
 The macOS harness needs `sha256sum` for constructing fixture metadata; CI exposes
 only Homebrew's checksum binary under that name, retaining native BSD tar, mv

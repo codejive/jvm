@@ -1,0 +1,15 @@
+--- a/general.c
++++ b/general.c
+@@ -35,3 +35,7 @@
+ #include <stdio.h>
+ #include "chartypes.h"
++
++#ifdef __CYGWIN__
++#include <sys/cygwin.h>
++#endif
+ #include <errno.h>
+@@ -565,2 +569,3 @@
+-      cygwin_conv_to_full_posix_path (string, pathbuf);
++      if (cygwin_conv_path (CCP_WIN_A_TO_POSIX, string, pathbuf, sizeof (pathbuf)) != 0)
++        return (savestring (string));
+       result = savestring (pathbuf);

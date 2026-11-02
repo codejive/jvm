@@ -135,7 +135,7 @@ jobs:
         with:
           install-dir: 'D:\cygwin'
           add-to-path: false
-          packages: curl gcc-core make bison tar gzip unzip diffutils coreutils gawk sed findutils openssl
+          packages: curl gcc-core make bison patch tar gzip unzip diffutils coreutils gawk sed findutils openssl
       - name: Build actual Bash 3.2
         if: matrix.bash == '3.2'
         run: >-

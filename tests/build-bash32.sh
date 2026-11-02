@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # CI/developer tooling only: build a private, real Bash 3.2 interpreter.
 set -eu
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
 [ "$#" -eq 1 ] || { echo 'Usage: bash tests/build-bash32.sh <new-build-directory>' >&2; exit 2; }
 mkdir -- "$1"
 BUILD=$(cd "$1" && pwd -P)
@@ -15,7 +16,15 @@ cd bash-3.2.57
 case "$(uname -s)" in CYGWIN*) program=bash.exe ;; *) program=bash ;; esac
 # GCC 14+ diagnoses old C constructs as errors. These flags retain the original
 # interpreter semantics while allowing its C sources to build with current GCC.
-export CFLAGS='-O2 -std=gnu89 -Wno-error=implicit-function-declaration -Wno-error=implicit-int'
+export CFLAGS='-O2 -std=gnu89 -fcommon -Wno-error=implicit-function-declaration -Wno-error=implicit-int'
+case "$(uname -s)" in
+    CYGWIN*)
+        # Modern Cygwin maps setmode to _setmode in io.h and has removed the
+        # old path conversion API. Adapt only the private test interpreter.
+        CFLAGS="$CFLAGS -include io.h"
+        patch -p1 < "$ROOT/tests/bash32-cygwin.patch"
+        ;;
+esac
 export ac_cv_func_working_mktime=yes
 # The 2006 config.guess predates x86_64 Cygwin; use GCC's actual target tuple.
 ./configure --build="$(gcc -dumpmachine)" --prefix="$BUILD/install" \
@@ -23,8 +32,10 @@ export ac_cv_func_working_mktime=yes
     cat "$BUILD/configure.log" >&2
     exit 1
 }
+# Build serially: the old makefiles race when readline/history share objects.
+# -fcommon above preserves the pre-GCC-10 handling of tentative definitions.
 # Build only the interpreter; no system installation or documentation toolchain.
-make -j2 CFLAGS_FOR_BUILD="$CFLAGS" YACC='bison -y' "$program" > "$BUILD/build.log" 2>&1 || {
+make -j1 CFLAGS_FOR_BUILD="$CFLAGS" YACC='bison -y' "$program" > "$BUILD/build.log" 2>&1 || {
     cat "$BUILD/build.log" >&2
     exit 1
 }
