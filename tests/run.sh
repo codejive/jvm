@@ -115,7 +115,7 @@ aligned() {
 reset_cache() { rm -rf -- "$XDG_CACHE_HOME/jvm" "$HOME/.cache"; rm -f "$TEST_COUNTER" "$TEST_LOG"; }
 stale() {
     local entry
-    for entry in "$XDG_CACHE_HOME"/jvm/ga-*; do
+    for entry in "$XDG_CACHE_HOME"/jvm/all-*; do
         { IFS= read -r url; IFS= read -r time; printf '%s\n0\n' "$url"; cat; } < "$entry" > "$TEMP/stale"
         mv "$TEMP/stale" "$entry"
     done
@@ -125,11 +125,12 @@ fixture() { TEST_FIXTURE=$ROOT/tests/fixtures/latest.tsv; export TEST_FIXTURE; }
 # Help and version run even with no external tools.
 saved_path=$PATH; PATH=/nonexistent
 run 0 --help
-contains 'available, a [selector]'; contains 'distro-major (temurin-21)'
+contains 'available, a [-t] [selector]'; contains 'distro-major (temurin-21)'
 contains 'list, l [selector]'
+contains '21+, 21..25, temurin-21+'; contains 'remote range ties use C ID order'
 contains 'finds and installs Java Development Kits'; contains 'even offline'
 lines=0; while IFS= read -r line; do lines=$((lines+1)); done < "$TEMP/out"
-[ "$lines" -le 49 ] || fail 'help is too verbose'
+[ "$lines" -le 50 ] || fail 'help is too verbose'
 contains 'Shell setup (once, in your shell profile):'
 contains 'Windows Bash:'; contains 'cygpath -u'
 main_help=$(< "$TEMP/out")
@@ -173,10 +174,11 @@ contains '21.0.12+9-temurin'; contains '8.0.482+8-temurin'
 contains '21.0.12+9-semeru'
 awk -F '\t+' 'NR>1 && $1 !~ ("-" $2 "$") {exit 1}' "$TEMP/out" || fail 'JVM suffix added to ID'
 [[ $(< "$TEMP/out") != *'jre-only'* ]] || fail 'JRE leaked'
-[[ $(< "$TEMP/out") != *'99.0.2'* ]] || fail 'incompatible/unsupported rows leaked'
+contains '99.0.2-temurin'
+awk -F '\t+' 'NR>1 && $1=="99.0.2-temurin" {n++} END {if(n!=1) exit 1}' "$TEMP/out" || fail 'EA filtering/archive deduplication'
 lines=0; while IFS= read -r line; do lines=$((lines+1)); done < "$TEMP/out"
-[ "$lines" -eq 6 ] || fail 'archive variants not deduplicated'
-check 'GA/JDK/platform/archive filters, full IDs and archive deduplication'
+[ "$lines" -eq 7 ] || fail 'archive variants not deduplicated'
+check 'GA/EA/JDK/platform/archive filters, full IDs and archive deduplication'
 aligned
 check 'listing headers and mixed-length values align with 8-column tabs'
 run 0 available 21; contains '21.0.12+9-temurin'; contains '21.0.12+9-semeru'
@@ -191,7 +193,7 @@ run 0 available semeru; quiet; contains '21.0.12+9-semeru'; contains 'openj9'
 run 1 available 999; diagnostic 'No JDK found matching:'
 check 'major, distro, legacy, hyphenated distro, removed exact IDs and missing match'
 [ "$(< "$TEST_COUNTER")" -eq 1 ] || fail 'selectors did not share the latest cache'
-[[ $(< "$TEST_LOG") = *'/metadata/ga/linux/x86_64/jdk-latest.tsv'* ]] || fail 'wrong discovery endpoint'
+[[ $(< "$TEST_LOG") = *'/metadata/all/linux/x86_64/jdk-latest.tsv'* ]] || fail 'wrong discovery endpoint'
 check 'all selectors use one latest index and cache; no history requests'
 before=$(< "$TEST_COUNTER"); TEST_PLAN=fail; run 0 available; quiet
 [ "$(< "$TEST_COUNTER")" = "$before" ] || fail 'fresh cache fetched'
@@ -210,9 +212,9 @@ for adapter in curl wget; do
     stale; TEST_PLAN=304; run 0 available; quiet
     [[ $(< "$TEST_LOG") = *'If-None-Match: W/"opaque-value"'* ]] || fail 'ETag not preserved'
     check "$adapter: initial 200 and conditional 304 reuse"
-    stale; snapshot=$(< "$XDG_CACHE_HOME/jvm/ga-linux-x86_64-jdk-latest-v1")
+    stale; snapshot=$(< "$XDG_CACHE_HOME/jvm/all-linux-x86_64-jdk-latest-v1")
     TEST_PLAN=fail; run 0 available; quiet
-    [ "$(< "$XDG_CACHE_HOME/jvm/ga-linux-x86_64-jdk-latest-v1")" = "$snapshot" ] || fail 'failed refresh changed cache/check time'
+    [ "$(< "$XDG_CACHE_HOME/jvm/all-linux-x86_64-jdk-latest-v1")" = "$snapshot" ] || fail 'failed refresh changed cache/check time'
     stale; TEST_PLAN=500; run 0 available; quiet
     check "$adapter: transfer/HTTP failure silently retains valid stale cache"
     stale; TEST_PLAN=200; TEST_FIXTURE=$ROOT/tests/fixtures/bad-header.tsv
@@ -229,7 +231,7 @@ for adapter in curl wget; do
     reset_cache; TEST_PLAN=retry; run 0 available; quiet
     [ "$(< "$TEST_COUNTER")" -eq 2 ] || fail '304 without body not retried'
     check "$adapter: 304 without usable body retries unconditionally"
-    printf '%s\n0\n\n\n' 'https://jbangdev.github.io/jdkdb-index/metadata/ga/linux/x86_64/jdk-latest.tsv' > "$XDG_CACHE_HOME/jvm/ga-linux-x86_64-jdk-latest-v1"
+    printf '%s\n0\n\n\n' 'https://jbangdev.github.io/jdkdb-index/metadata/all/linux/x86_64/jdk-latest.tsv' > "$XDG_CACHE_HOME/jvm/all-linux-x86_64-jdk-latest-v1"
     rm -f "$TEST_COUNTER"; TEST_PLAN=retry; run 0 available; quiet
     [ "$(< "$TEST_COUNTER")" -eq 2 ] || fail '304 with missing body not retried'
     check "$adapter: missing cached body triggers unconditional retry"
@@ -293,8 +295,9 @@ lines=0; while IFS= read -r line; do lines=$((lines+1)); done < "$TEMP/err"
 [ "$lines" -eq 0 ] || fail 'duplicate IDs emitted diagnostics'
 check 'different builds sharing IDs preserve all listing identities silently'
 reset_cache; TEST_FIXTURE=$ROOT/tests/fixtures/equivalent-features.tsv
-run 0 available; quiet
-check 'unused features and checksums have no effect on identity'
+run 0 available -t; quiet
+awk -F '\t+' 'NR==2 && $5!="beta,alpha" {exit 1} END {if(NR!=2) exit 1}' "$TEMP/out" || fail 'TYPE must preserve first-row feature order when deduplicating'
+check 'displayed features and unused checksums have no effect on identity'
 fixture
 reset_cache; TEST_FIXTURE=$ROOT/tests/fixtures/crlf.tsv; run 0 available; quiet
 check 'CRLF transport accepted'
@@ -355,7 +358,7 @@ for platform in 'Linux aarch64 glibc linux aarch64' 'Linux x86_64 musl linux-mus
     sed "s/linux/$os/g; s/x86_64/$arch/g" "$ROOT/tests/fixtures/latest.tsv" > "$TEMP/platform.tsv"
     TEST_FIXTURE=$TEMP/platform.tsv; reset_cache; run 0 available; quiet; aligned
     contains '21.0.12+9-temurin'
-    [[ $(< "$TEST_LOG") = *"/metadata/ga/$os/$arch/jdk-latest.tsv"* ]] || fail 'wrong platform endpoint'
+    [[ $(< "$TEST_LOG") = *"/metadata/all/$os/$arch/jdk-latest.tsv"* ]] || fail 'wrong platform endpoint'
     check "simulated $TEST_SYSTEM/$TEST_MACHINE/$TEST_LIBC"
 done
 TEST_SYSTEM=Linux; TEST_MACHINE=x86_64; TEST_LIBC=unknown; reset_cache; run 1 available; diagnostic 'libc'
@@ -368,7 +371,7 @@ check 'unknown host/architecture/libc fail explicitly'
 
 reset_cache; saved_cache=$XDG_CACHE_HOME; XDG_CACHE_HOME=relative
 run 0 available; quiet
-[ -f "$HOME/.cache/jvm/ga-linux-x86_64-jdk-latest-v1" ] || fail 'relative XDG not ignored'
+[ -f "$HOME/.cache/jvm/all-linux-x86_64-jdk-latest-v1" ] || fail 'relative XDG not ignored'
 XDG_CACHE_HOME=$saved_cache
 saved_home=$HOME; HOME=relative; XDG_CACHE_HOME=relative; run 1 available; diagnostic 'absolute HOME'
 XDG_CACHE_HOME=$saved_cache; run 0 available; quiet; HOME=$saved_home
@@ -378,11 +381,12 @@ TEST_SYSTEM=MINGW64_NT-10.0; export TEST_DRIVE_ROOT=$TEMP/converted-drive
 sed 's/linux/windows/g' "$ROOT/tests/fixtures/latest.tsv" > "$TEMP/windows.tsv"
 TEST_FIXTURE=$TEMP/windows.tsv; XDG_CACHE_HOME='C:/cache with spaces'
 run 0 available; quiet
-[ -f "$TEST_DRIVE_ROOT/cache with spaces/jvm/ga-windows-x86_64-jdk-latest-v1" ] || fail 'drive path conversion failed'
+[ -f "$TEST_DRIVE_ROOT/cache with spaces/jvm/all-windows-x86_64-jdk-latest-v1" ] || fail 'drive path conversion failed'
 XDG_CACHE_HOME=$saved_cache
 check 'simulated Windows absolute drive path conversion stays in test workspace'
 
 [ ! -e "$XDG_DATA_HOME" ] && [ ! -e "$XDG_CONFIG_HOME" ] && [ ! -e "$XDG_STATE_HOME" ] || fail 'unrelated storage touched'
 printf 'PASS: %s checks (offline; platform cases simulated)\n' "$passed"
+[ "${1:-}" != --discovery ] || exit 0
 PATH=$ORIGINAL_PATH "$BASH_BIN" "$ROOT/tests/install.sh" || exit $?
 PATH=$ORIGINAL_PATH "$BASH_BIN" "$ROOT/tests/home-env.sh"

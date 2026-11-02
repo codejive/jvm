@@ -10,6 +10,12 @@ bash -n tests/install.sh
 bash -n tests/home-env.sh
 bash -n tests/default-native-windows.sh
 bash tests/run.sh
+# Discovery/listing/cache checks without installation suites:
+bash tests/run.sh --discovery
+# Focused EA installation, offline selection and default lifecycle:
+bash tests/install.sh --ea
+# Focused available -t EA/TYPE and unchanged-listing checks:
+bash tests/install.sh --types
 # Installation-only checks:
 bash tests/install.sh
 # Focused directory visibility and exact-ID selection/removal checks:
@@ -18,6 +24,8 @@ bash tests/install.sh --inventory
 bash tests/install.sh --manifest
 # Focused list/install/uninstall selector checks:
 bash tests/install.sh --selectors
+# Focused range filtering, disambiguation and install-on-demand checks:
+bash tests/install.sh --ranges
 # Focused interruption/publication-race checks:
 bash tests/install.sh --publication
 # Focused flags and aliases checks:
@@ -109,6 +117,57 @@ help checks, `bash tests/home-env.sh` and Bash syntax validation passed under na
 size: 53,685 bytes.
 Native Linux/macOS/Cygwin/standalone MSYS2, Bash 3.2 and real-JDK
 execution remain unverified; ShellCheck was unavailable.
+
+Version ranges (2026-11-02): `bash tests/install.sh --ranges` covers open and
+inclusive major bounds, equal bounds, malformed/reversed bounds, hyphenated
+distros, legacy versions and differing vendor/Java versions. It checks listing
+order, highest-major selection, remote ties independent of row order, installation
+distro filtering, archive preference and duplicate-artifact rejection. Local
+checks cover eligible per-major defaults, C-order fallback for absent/dangling/
+wrong-major/unrelated defaults, distro-incompatible defaults, physical home/env
+and exec output, default major mismatch, exact range-shaped directory names,
+uninstall exclusion, operational link-read failures without installation, and
+offline-first `-i` followed by installation on a genuine local miss. The full
+suite includes these checks. The optional native Windows smoke also checks
+`home`/`env -i` for `21+` and `21..25` through actual junctions. Payloads remain
+inert fixtures, not real JDKs.
+
+Verification on 2026-11-02: Bash syntax validation, focused range checks,
+`bash tests/run.sh` (56 discovery checks, 26 installation groups and home/env),
+and `bash tests/default-native-windows.sh` passed under native Git Bash 5.3.15.
+`git diff --check` passed. Distributed script size: 61,730 bytes. ShellCheck
+was unavailable. Bash 3.2, native Linux/macOS/Cygwin/standalone MSYS2 and real-JDK
+execution remain unverified; simulated host cases do not establish native support.
+
+All-release discovery and opt-in TYPE (2026-11-02): `bash tests/install.sh --types` checks `available -t`
+with GA/EA and empty/nonempty features, comma order, blank GA TYPE cells, header
+and tab alignment, first-row deduplication, selectors and alias `a`. It verifies
+one shared all-release cache with and without `-t`, selector cache reuse, flag validation,
+GA/EA installation eligibility, and unchanged installed/ambiguity columns. The discovery
+suite additionally checks that ordinary output includes EA without TYPE and that feature
+order survives ID deduplication under `-t`.
+
+Verification on 2026-11-02: Bash syntax checks, `bash tests/run.sh --discovery`
+(all 56 checks), `bash tests/install.sh --types` and `git diff --check` passed
+under native Git Bash 5.3.15. Script size: 62,215 bytes. The full installation,
+home/env and native junction suites were not rerun for this discovery/cache change. Platform/Bash 3.2 gaps above remain; ShellCheck was unavailable.
+
+EA installation and selection (2026-11-02): `bash tests/install.sh --ea` checks
+EA manifest preservation/validation, ordinary multi-ID ambiguity, exact and
+major/distro/range selection offline, per-major/global defaults, replacement
+and removal, physical exec homes, and installation on demand through
+home/env/default/exec. A mixed GA/EA range selects the highest eligible major.
+Bash syntax checks, the two focused EA groups, `--types`, `--manifest` and
+`git diff --check` passed under native Git Bash 5.3.15. Script size: 62,243 bytes.
+These checks use inert archives, not real Java runtimes. The full offline suite
+was not rerun for this change; Bash 3.2 and other native-platform gaps remain.
+
+Full verification after EA support (2026-11-02): Bash syntax validation,
+`bash tests/run.sh` (56 discovery checks, 29 installation groups and home/env),
+and `bash tests/default-native-windows.sh` all passed under native Git Bash
+5.3.15. This supersedes the partial verification notes above. These runs use
+isolated fixture inventories, not real JDK downloads. Other native platforms,
+Bash 3.2 and real-JDK execution remain unverified.
 
 Optional development checks, only when installed:
 

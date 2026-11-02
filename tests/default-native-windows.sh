@@ -35,7 +35,7 @@ bash "$ROOT/jvm" d -i 25
 MSYS2_ARG_CONV_EXCL='*' "$XDG_DATA_HOME/jvm/jdks/default/bin/java.exe" /d /c exit 0
 # Native path conversion through the stable junction and explicit inventory home.
 base=$(cd "$XDG_DATA_HOME/jvm" && pwd -P)
-for selector in '' 25+1-test 25; do
+for selector in '' 25+1-test 25 21+ 21..25; do
     expected=$base/jdks/default
     [ -z "$selector" ] || expected=$base/jdks/25+1-test
     [ "$selector" != 25 ] || expected=$base/jdks/25
@@ -62,4 +62,4 @@ bash "$ROOT/jvm" uninstall 25
 bash "$ROOT/jvm" uninstall 21
 [ ! -L "$XDG_DATA_HOME/jvm/jdks/default" ] && [ ! -e "$XDG_DATA_HOME/jvm/jdks/default" ]
 [ ! -L "$XDG_DATA_HOME/jvm/jdks/21" ]
-echo 'ok - native junction creation, replacement, executable traversal, home/env conversion and uninstall fallback'
+echo 'ok - native junction creation, replacement, executable traversal, home/env range conversion and uninstall fallback'

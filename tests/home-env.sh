@@ -79,7 +79,7 @@ check_env() {
 for command in home env; do
     run 1 "$command"; diagnostic 'No JDK currently set as the default'
     run 1 "$command" 21; diagnostic 'No JDK found matching: 21'
-    for selector in '' 0 01 temurin '21+' '21..25' '$(touch bad)' --bad; do run 2 "$command" "$selector"; done
+    for selector in '' 0 01 temurin '21++' '25..21' '$(touch bad)' --bad; do run 2 "$command" "$selector"; done
     run 2 "$command" 21 extra
     run 2 "$command" --help extra
     run 0 "$command" --help

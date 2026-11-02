@@ -47,7 +47,7 @@ Help advertises implemented commands.
 ### Installation and offline listing (authorized 2026-10-30)
 
 Version 0.2.0 adds `install <selector>` and `list`. Installation
-uses the same GA latest index and cache as discovery, filtering compatible JDKs
+now uses the all-release latest index and cache shared with discovery, filtering compatible GA and EA JDKs
 and zip/tar.gz before selection. It requires SHA-256, checks advertised size,
 validates archive paths and links before extraction, checks the JDK layout and
 publishes a complete installation by rename on the destination filesystem.
@@ -63,8 +63,9 @@ accept a positive major or distro-major (including hyphenated distros). A bare
 install major uses Temurin: `install 22` is equivalent to `install temurin-22`.
 This distribution is currently hard-coded. `list`
 returns the local directory inventory unless a selector filters it. `install` filters the latest index and
-requires one matching ID; multiple IDs fail with their full IDs as choices.
-Versions are never sorted or ranked, and vendor labels do not need parsing.
+requires one matching ID for ordinary selectors; multiple IDs fail with their
+full IDs as choices. Range selectors now use the policy below. Complete versions
+are never ranked, and vendor labels do not need parsing.
 This 2026-10-30 user clarification supersedes the earlier highest-version rule.
 
 For the resolved ID, Windows prefers zip and Linux/macOS prefer tar.gz, falling
@@ -101,25 +102,25 @@ See [tests/README.md](tests/README.md) for exact verification commands and gaps.
 ## Proposed next milestones (recorded 2026-10-30)
 
 The core command set is implemented. The proposed next milestone is release
-readiness, starting with the previously requested configurable installation
-distribution, range disambiguation and version-range selectors, followed by
-validation and user documentation. Entries distinguish planned work from
+readiness, including the requested configurable installation distribution,
+validation and user documentation. Version ranges and range disambiguation
+were implemented on 2026-11-02. Entries distinguish planned work from
 completed features; implementation does not imply full platform verification.
 
 1. **Configurable installation distribution.** Let bare-major installation
    such as `install 21` use a configured distro, with Temurin as the default
    when none is configured. The future requirement is recorded under
    [Identity and selection](#identity-and-selection); the config filename and
-   format remain undecided. Explicit distro selectors retain their meaning.
-2. **Range disambiguation.** Per-major defaults were selected on 2026-11-01
-   and are implemented for ordinary selectors. Their use for ranges remains
-   planned with the range syntax below.
-3. **Version-range selectors.** Add open-ended major bounds (`21+`,
-   `temurin-21+`) and inclusive major ranges (`21..25`, `temurin-21..25`).
+   format for user-wide settings remain undecided. Explicit distro selectors
+   retain their meaning. The related project-local `.jvmrc` TODO is below.
+2. **Range disambiguation (implemented 2026-11-02).** Use an eligible
+   per-major default, with deterministic C-order ID fallback as specified below.
+3. **Version-range selectors (implemented 2026-11-02).** Support open-ended
+   major bounds (`21+`, `temurin-21+`) and inclusive major ranges (`21..25`, `temurin-21..25`).
    This feature was added to the near-term roadmap by the user on 2026-10-30.
    Command coverage, highest-major selection, per-major disambiguation,
    installation distro and offline-first install-on-demand policies are below.
-   This feature is not implemented.
+   Ordinary selectors retain their existing ambiguity behavior.
 4. **Smart `env` (implemented 2026-11-01).** Omit the PATH export line
    when the selected JDK's `bin` directory is already an entry in the current
    PATH. `env -f` forces the PATH export line to always be printed.
@@ -143,11 +144,47 @@ completed features; implementation does not imply full platform verification.
 8. **User README.** Add a short root README explaining how to copy `jvm` into
    a project, use the basic commands and configure the shell for the persistent
    default. Keep contributor procedures in AGENTS.md and tests/README.md.
+9. **Project-local `.jvmrc` (user requested 2026-11-01).** Read optional
+   `java=<selector>` and/or `distro=<name>` defaults from `.jvmrc` in the current
+   directory. Related to configurable installation distribution; see
+   [Project-local defaults](#project-local-defaults-planned). Not implemented.
 
-Version ranges are not implemented yet.
+Version ranges and range disambiguation are implemented as specified below.
 Broader session-switching integration remains deferred.
 Offline `home` and `env` output were subsequently authorized and implemented on
-2026-10-30; their contract follows the deferred range proposal.
+2026-10-30; their contract follows the range feature below.
+
+### Project-local defaults (planned)
+
+**Future requirement (user requested 2026-11-01):** support a `.jvmrc` file
+in the current working directory, containing either or both of these lines:
+
+```text
+java=21
+distro=graalvm-community
+```
+
+When selecting a JDK without an explicit selector, look for `java=<selector>`
+and use that selector when present. For example, `jvm x -- java -version`
+with the file above selects Java 21 rather than using the global default.
+An explicit command-line selector takes precedence over `java`. The value is
+a selector, not just a major: distro-major and full-ID selectors are allowed,
+including the implemented range syntax.
+
+For installation selectors that omit a distro, use `distro=<name>` as the
+default installation distribution. With the example above, `jvm install 21`
+means `jvm install graalvm-community-21`. Explicit distro selectors and full
+IDs retain their meaning. Either key may appear alone; an absent key preserves
+the ordinary fallback behavior for that setting. Read the file as data, never
+source it or evaluate its contents as shell code.
+
+Lookup is in the current directory; parent-directory searching is not part of
+this request. Before implementation, settle whitespace/comments, duplicate or
+unknown keys, empty/invalid values and unreadable-file behavior; precedence
+between project-local and future user-wide distro settings; and exact command
+coverage, especially commands whose omitted selector currently means a query
+or unfiltered listing. This TODO does not authorize implicit installation.
+No `.jvmrc` support is implemented yet.
 
 ### JDK execution
 
@@ -311,7 +348,7 @@ A missing `default -v` reference reports
 `No JDK currently set as the default for version <major>`, while an
 unusable one fails. Major selectors without a reference and explicit distro-major
 selectors retain ambiguity errors.
-Range fallback policy remains unresolved below.
+Range fallback policy is specified below and does not change ordinary selectors.
 
 ### Distribution preference order alternative
 
@@ -363,9 +400,10 @@ Range bounds apply to majors extracted from `java_version`. Selection among matc
 uses the highest-major rule below. Preserve exact full-ID precedence, including
 IDs whose version already contains `+`, and support hyphenated distros.
 
-**Adopted for the planned range feature on 2026-10-30:**
+**Adopted 2026-10-30; implemented 2026-11-02:**
 
-- Accept ranges in `available`, `list`, `install`, `default`, `home` and `env`.
+- Accept ranges in `available`, `list`, `install`, `default`, `home`, `env` and
+  `exec` (including aliases).
   Exclude `uninstall`; no bulk-uninstall behavior is authorized.
 - `available` and `list` return all matches in their existing listing order.
   Commands selecting one JDK first retain only matches at the highest matching
@@ -377,7 +415,7 @@ IDs whose version already contains `+`, and support hyphenated distros.
 - Bare installation ranges use the normal installation distro: currently
   Temurin, later the configured distro when configurable defaults are implemented.
   Local selection still considers all installed distros unless explicitly filtered.
-- Range-based `default/home/env -i` remains offline-first: use the highest
+- Range-based `default/home/env/exec -i` remains offline-first: use the highest
   matching local major, resolving ties through the chosen policy. Only a genuine
   local no-match permits remote installation. Multiple candidates must not cause
   failure locally or during range-based installation; `-i` should resolve and
@@ -395,17 +433,37 @@ selects the installation.
 remote candidates to the ordinary installation distro and chooses the highest
 matching major in the latest index.
 
-**Unresolved resolution details:** define a deterministic fallback when a
-major default is missing/unusable or does not match an explicit distro filter,
-and a remote tie policy when multiple eligible IDs exist before a major default
-can be created. These policies must honor the selector and the requirement that
-multiple relevant candidates do not cause range failure. Artifact-format
-preference and safe handling of multiple artifact rows for one ID also need to
-remain explicit; a local major default alone does not resolve remote artifact
-collisions. No arbitrary upstream-row preference is adopted here.
+**Resolution policy (approved and implemented 2026-11-02):**
 
-These range policies are adopted for future implementation. No complete-version comparator,
-historical index fetching or range implementation is claimed here.
+- Bounds are positive decimal majors without leading zeros. Equal bounds are
+  allowed; reversed bounds and malformed ranges exit 2. Compare decimal bounds
+  without relying on fixed-width integer arithmetic or floating-point precision.
+- Installed resolution scans the complete inventory, retaining usable JDKs with
+  valid metadata, applies the distro/bounds filter and keeps the highest major.
+  Use that major's default only when it selects an eligible candidate. Otherwise
+  choose the lexicographically smallest full ID in C locale order. This is an
+  identity tie-break, not a newest-patch or vendor-version comparison.
+- Missing, dangling, unrelated, wrong-major, unusable or distro-incompatible
+  major preferences do not prevent this fallback. Do not repair references as
+  part of read-only resolution. Operational failures reading inventory, manifests
+  or an existing link remain errors and never authorize `-i` installation.
+  Existing destination-reference safeguards still apply when changing defaults.
+- Remote resolution applies the explicit or normal installation distro, keeps
+  the highest eligible major, then chooses the smallest full ID in C order,
+  independent of upstream row order. Local defaults do not rank remote IDs.
+  Keep every artifact row for the chosen ID, apply the existing platform archive
+  preference, and require exactly one remaining row. Artifact collisions remain
+  errors, even for ranges; do not silently pick a row or try another ID.
+- Range `home`/`env` output uses the selected physical home; `exec` also uses the
+  physical home. `default -v N` still requires the resolved JDK's major to equal
+  N; the flag does not narrow the range. Installation retains ordinary automatic
+  default initialization and explicit `-d` behavior.
+- Exact-ID precedence remains unchanged for commands that support it, including
+  existing safe local directory names resembling ranges. `uninstall` does not
+  interpret ranges but may remove such a directory by its exact name.
+
+No complete-version comparator, historical index fetching, configuration file,
+new storage format or runtime dependency is introduced by this feature.
 
 ## Offline home and environment output (implemented 2026-10-30)
 
@@ -419,10 +477,11 @@ otherwise a positive major or distro-major, including hyphenated distributions
 and legacy Java versions. After syntax validation, a positive major first uses
 an existing valid per-major reference, without scanning the inventory. If that
 reference is absent, match the installed inventory. Other explicit selectors
-resolve against complete installed JDKs. Multiple matches use the existing
-ambiguity diagnostic/table and exit 1; no highest
-version is chosen. No match uses `No JDK found matching: <selector>` and exits 1.
-Version ranges remain deferred. Invalid selectors and excess/empty arguments
+resolve against complete installed JDKs. For ordinary selectors, multiple matches
+use the existing ambiguity diagnostic/table and exit 1; no highest version is
+chosen. No match uses `No JDK found matching: <selector>` and exits 1.
+Version ranges use the resolution policy above. Invalid selectors and
+excess/empty arguments
 exit 2. Each command's `--help` prints main help without external utilities or
 storage access.
 
@@ -646,7 +705,8 @@ The 2026-11-01 extension adds selected-JDK command execution.
 Broader integration that switches the parent shell remains deferred.
 
 Initial scope does not require system-wide installation, automatic
-updates, importing unrelated installations, project version files, or a GUI.
+updates, importing unrelated installations, or a GUI. Project version defaults
+in `.jvmrc` are a later requested TODO as described above, not implemented.
 Discovering arbitrary JDKs on PATH or in vendor-specific directories is separate
 from listing installations managed by `jvm`.
 
@@ -701,7 +761,7 @@ The following commands describe the intended complete interface.
 ```text
 jvm --help
 jvm --version
-jvm available [selector]
+jvm available [-t] [selector]
 jvm list [selector]
 jvm install [-d] <selector>
 jvm uninstall <selector>
@@ -714,7 +774,11 @@ jvm exec [-i] [selector] -- <command> [args...]
 - `available` lists compatible JDKs across JVM implementations from the API's
   latest index, covering the latest release of every major across distributions. No argument,
   a major, a distro, and a distro-major all use that same index and cache.
-  Historical versions are outside the current discovery interface.
+  Always include GA and EA releases from the all-release latest index. `-t`
+  only appends TYPE; it does not change filtering, the endpoint or the cache.
+  The flag may precede or follow the selector and works with alias `a`;
+  repeated `-t`, the removed `-a`, or use of `-t` with
+  any other command exits 2. Historical versions remain outside this interface.
 - `list [selector]` lists local JDK directories offline, including directories
   with absent/invalid manifests or invalid launcher layouts. With no selector
   it returns the complete directory inventory. If no such directories exist,
@@ -766,8 +830,17 @@ jvm exec [-i] [selector] -- <command> [args...]
   upstream `java_version` in all listings, including ambiguity tables; its header
   stays unchanged (user requested 2026-11-01). Omit the platform column;
   discovery already filters for the current host.
-  Local listings and local ambiguity tables add a `DEFAULT` column showing
-  `global`, a major, or both when references select the row. Default labels do not change IDs.
+  Local listings and ambiguity tables add a `DEFAULT` column showing `global`,
+  a major, or both when references select the row. Default labels do not change IDs.
+  **Opt-in discovery TYPE (user requested 2026-11-02):** only `available -t`
+  adds a final `TYPE` column. Show `ea` for release type `ea` and no release label
+  for `ga`. Strip the surrounding `[` and `]` from `features`, retaining the
+  comma-separated values and their order. If both `ea` and nonempty features
+  are present, join them with a comma, EA first: `ea,feat,feat2`. GA with features
+  displays `feat,feat2`; GA with `[]` has an empty TYPE cell. Duplicate IDs keep
+  the first eligible row, including its TYPE, in upstream order.
+  Ordinary `available`, local listings and ambiguity tables retain their original
+  columns. Installation and installed-manifest eligibility accept GA and EA alike.
 - Align listing headers and values with tabs at 8-column stops. Size each column
   from the widest displayed value or header, placing the next column at the
   following tab stop, capped at four tab stops (32 columns) per column. Longer
@@ -906,6 +979,8 @@ moves restore prior usable selections, including those without manifests.
 
 ### Discovery selectors (implemented)
 
+Range selectors additionally follow [the range policy](#open-versions-and-inclusive-version-ranges).
+
 - With no selector, list compatible latest JDKs across distributions, majors and
   JVM implementations.
 - A positive integer such as `21` filters by the major extracted from `java_version`.
@@ -913,7 +988,9 @@ moves restore prior usable selections, including those without manifests.
   Hyphenated distro names such as `graalvm-community` are supported.
 - `<distro>-<major>` such as `temurin-21` filters by both. Split a positive major
   suffix from the final hyphen; other hyphens remain part of the distro name.
-- All forms use `/metadata/ga/{os}/{arch}/jdk-latest.tsv`. The user withdrew the
+- Discovery and installation always fetch `/metadata/all/{os}/{arch}/jdk-latest.tsv`
+  and share its cache. Discovery includes GA and EA with or without `-t`;
+  installation accepts both GA and EA candidates. The user withdrew the
   proposed separate history endpoint for distro-major; do not fetch history or
   add JVM-specific requests for this selector.
 - Include all `jvm_impl` values in the broad index for every selector. Do not
@@ -943,10 +1020,11 @@ With an explicit selector:
 
 1. Validate selector syntax, detect the host and resolve the data storage path.
    Accept a full ID, positive major without leading zeros, or distro-major,
-   including hyphenated distros and legacy version IDs. Bare distro names and
-   version ranges are unsupported unless they name an existing local directory
-   exactly. An existing safe local folder name is also an exact ID, including
-   names with spaces or a leading dot. No inventory scan occurs.
+   including hyphenated distros and legacy version IDs, or a version range.
+   Ranges follow the dedicated resolution policy above instead of ordinary
+   ambiguity handling in step 5. Bare distro names are unsupported unless they
+   name an existing local directory exactly. An existing safe local folder name
+   is also an exact ID, including names with spaces or a leading dot. No inventory scan occurs.
 2. For a positive major such as `21`, check `jdks/21` directly. If present,
    validate that it is a managed link/junction to a compatible, usable
    installation of that major. A valid reference selects its target without
@@ -1012,6 +1090,17 @@ selector.
 
 ### Installation selectors (implemented)
 
+**EA support (authorized and implemented 2026-11-02):** GA and EA records from
+the shared all-release latest index are eligible for installation. Saved EA
+manifests participate in the same offline selection, default lifecycle,
+home/env output, command execution and uninstallation as GA installations.
+No additional release preference or version ranking is introduced: ordinary
+multi-ID ambiguity, range rules, host/archive filters and verification safeguards
+continue to apply. `-i` may install an EA release after a genuine local miss.
+
+The rules below describe ordinary selectors; range selectors additionally use
+[highest-major selection and deterministic ties](#open-versions-and-inclusive-version-ranges).
+
 - First reuse an exact existing local directory with usable launchers, even
   without a valid manifest. Otherwise try an exact full-ID match in the index.
 - A positive integer such as `21` selects that major from the hard-coded
@@ -1046,6 +1135,10 @@ matches rather than resolving a single installation.
 distribution configurable in a config file. The current implementation always
 uses `temurin`; it does not read configuration yet. The file format and exact
 filename remain undecided, within the XDG configuration location described below.
+The related 2026-11-01 project-local `.jvmrc` requirement uses a specified
+filename and `java=`/`distro=` keys in the current directory; see
+[Project-local defaults](#project-local-defaults-planned). It does not settle
+the user-wide config format or precedence between the two configuration sources.
 
 ## Host compatibility
 
@@ -1054,8 +1147,8 @@ filename remain undecided, within the XDG configuration location described below
   to `aarch64`. Cygwin/MSYS2/Git Bash target Windows JDKs; WSL targets Linux.
 - Distinguish glibc and musl; never knowingly install a glibc-only JDK on musl.
   Fail clearly when compatibility cannot be determined.
-- Select JDK images, never JRE-only images. Discovery selects GA across all JVMs.
-  EA selection requires a later explicit interface decision.
+- Select JDK images, never JRE-only images. Discovery always includes GA and EA
+  across all JVMs. `available -t` only shows TYPE. Installation also accepts GA and EA.
 - Choose compatible `.tar.gz` or `.zip` artifacts. Unsupported installers may
   be omitted from the discovery listing; document these filters here.
 - Do not silently choose an emulated architecture. Unsupported host combinations
@@ -1106,7 +1199,7 @@ file with exactly three lines:
 
 1. The exact format marker `jvm-manifest-v1`.
 2. An exact copy of the upstream TSV data row used to install the JDK, from
-   the same index used by `available`. This is the original artifact row,
+   the same all-release index used by `available`. This is the original artifact row,
    not the formatted table printed by `available`. Preserve all fields,
    empty cells, escaping, case and unknown trailing columns without rebuilding
    the row from selected fields. Retain a source CRLF row ending when present;
@@ -1362,12 +1455,26 @@ Avoid requiring additional indexes for every distro or selector. The documented 
 /metadata/{release_type}/{os}/{arch}/{image_type}.tsv
 ```
 
-For initial GA-only behavior, use
-`/metadata/ga/{os}/{arch}/jdk-latest.tsv`. The user's example uses `all`, which
-can include EA rows: the API prefers GA over EA for a given major/distribution/
-JVM implementation, but does not exclude EA altogether. Latest means the latest
+The initial implementation used `/metadata/ga/{os}/{arch}/jdk-latest.tsv`.
+As corrected by the user on 2026-11-02, always use
+`/metadata/all/{os}/{arch}/jdk-latest.tsv`, which includes GA and EA rows.
+The API prefers GA over EA for a given major/distribution/JVM implementation, but does not exclude EA altogether. Latest means the latest
 release per major version for each distro and JVM implementation. The full
 history counterpart omits `-latest`; a future all-versions option can use it.
+
+**Verified 2026-11-02 for all-release discovery:** inspected the live
+[OpenAPI definition](https://jbangdev.github.io/jdkdb-index/openapi.yaml) and
+[GA](https://jbangdev.github.io/jdkdb-index/metadata/ga/linux/x86_64/jdk-latest.tsv)
+and [all-release](https://jbangdev.github.io/jdkdb-index/metadata/all/linux/x86_64/jdk-latest.tsv)
+Linux x86_64 latest responses. GA contained 487 GA rows and no EA rows; `all`
+contained those 487 GA rows plus 13 EA rows, including Liberica Java 26 with
+`[lite]` and `[]` features. Use `all` unconditionally and one shared
+`all-<os>-<arch>-jdk-latest-v1` cache entry per platform, retaining the existing
+freshness, validation and failure-fallback rules. Old GA cache entries are not
+read or migrated. The API still prefers GA within a group; discovery includes
+EA rows returned by the latest index, not every historical EA build. `-t` only
+controls TYPE display. These counts describe the observed responses.
+
 OS tokens follow the API, including `macosx` and `linux-musl`. Validate actual
 host-specific coverage before claiming support.
 
@@ -1391,7 +1498,7 @@ exact published order:
 | 12 | `filename` | Source artifact filename. |
 | 13 | `size` | Expected artifact size in bytes. |
 | 14 | `sha256` | Expected download digest. |
-| 15 | `features` | Distinguish artifact variants sharing an ID. |
+| 15 | `features` | TYPE display and musl host compatibility; not part of identity. |
 
 The API provider confirms that every TSV field is populated. The OpenAPI schema
 also permits empty missing text fields; this historical contract discrepancy is
@@ -1412,12 +1519,13 @@ listing fields, which need no escape decoder, and leaves unused text untouched.
 Literal tabs remain field boundaries (including empty fields). CRLF record
 endings are stripped. Data is never evaluated or sourced as shell code.
 
-Use `release_type`, OS, architecture and image type for GA/host/JDK filtering.
+Use OS, architecture and image type for host/JDK filtering. Discovery admits
+both GA and EA, as do installation and saved-manifest validation.
 Discovery uses `jvm_impl` for display only, without filtering it or including
 it in IDs.
 Use `file_type` for `tar.gz`/`zip` filtering. The bracketed
-features field is inspected only for a `musl` feature on a non-musl host; it is
-not parsed or compared as build metadata. `version` supplies the vendor-version
+features field supplies the bracket-stripped `TYPE` display and is also inspected
+for a `musl` feature on a non-musl host; it is not compared as build metadata. `version` supplies the vendor-version
 portion of IDs; `java_version` supplies the displayed version, Java-major
 matching and the conditional major prefix on IDs. Major extraction accepts
 both modern versions such
@@ -1440,7 +1548,8 @@ no general JSON parser or language runtime is introduced.
 `jvm` manages its own persistent index cache beneath
 `${XDG_CACHE_HOME:-$HOME/.cache}/jvm/`; curl/wget downloads alone are not a cache.
 Keep cache entries and validators associated with the exact index URL so that
-different platforms and latest/all indexes cannot be confused.
+different platforms, GA/all-release indexes and latest/history indexes cannot
+be confused.
 The inspected latest endpoint returned both ETag (a weak validator, `W/"..."`)
 and Last-Modified headers, as well as `Cache-Control: max-age=600`. Preserve ETag
 quoting and its weak prefix verbatim in conditional requests; do not treat the

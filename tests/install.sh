@@ -828,6 +828,234 @@ java_major_checks() {
     check 'Java majors drive discovery, installation, offline selection, references and replacement; IDs retain vendor versions'
 }
 
+ea_checks() {
+    local base before selector command
+    reset; index; row 28+1-ea zulu; row 28+2-ea zulu
+    awk 'BEGIN {FS=OFS="\t"} NR>1 {$1="ea"} {print}' "$TEST_FIXTURE" > "$TEMP/ea-index"
+    mv "$TEMP/ea-index" "$TEST_FIXTURE"
+    run 1 install zulu-28; diagnostic 'Multiple JDKs match'
+    run 0 install 28+1-ea-zulu
+    base=$XDG_DATA_HOME/jvm/jdks
+    awk -F '\t' 'NR==2 && $1!="ea" {exit 1}' "$base/28+1-ea-zulu/.jvm-manifest" || fail 'EA release type not preserved'
+    run 0 list zulu-28; contains '28+1-ea-zulu'
+    [[ $(< "$TEMP/out") != *'manifest invalid'* ]] || fail 'EA manifest rejected'
+    run 0 default -v 28; contains '28+1-ea-zulu'
+    before=$(< "$TEST_LOG")
+    rm -rf -- "$XDG_CACHE_HOME/jvm"
+    for selector in 28 zulu-28 28+1-ea-zulu 28+ zulu-28..28; do
+        run 0 home "$selector"; contains '/jdks/28'
+        run 0 env -i "$selector"; contains 'JAVA_HOME='; contains '/jdks/28'
+        run 0 x "$selector" -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
+        contains '/28+1-ea-zulu'
+    done
+    run 0 default zulu-28
+    run 0 default -v 28 zulu-28
+    [ "$(< "$TEST_LOG")" = "$before" ] || fail 'installed EA selection used network'
+    run 0 install 28+2-ea-zulu
+    run 0 uninstall 28+1-ea-zulu
+    [ "$base/28" -ef "$base/28+2-ea-zulu" ] && [ "$base/default" -ef "$base/28+2-ea-zulu" ] || fail 'EA default replacement'
+    run 0 uninstall zulu-28
+    [ ! -L "$base/28" ] && [ ! -L "$base/default" ] || fail 'EA default removal'
+    check 'EA manifests, offline exact/major/distro/range selection, exec and default lifecycle'
+
+    for command in home env default exec; do
+        reset; index; row 28+1-ea zulu
+        awk 'BEGIN {FS=OFS="\t"} NR>1 {$1="ea"} {print}' "$TEST_FIXTURE" > "$TEMP/ea-index"
+        mv "$TEMP/ea-index" "$TEST_FIXTURE"
+        if [ "$command" = exec ]; then
+            run 0 exec -i zulu-28 -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
+            contains '/28+1-ea-zulu'
+        else
+            run 0 "$command" -i zulu-28
+        fi
+        [ -d "$base/28+1-ea-zulu" ] || fail 'EA install-on-demand missing'
+        run 0 list zulu-28; contains '28+1-ea-zulu'
+        [[ $(< "$TEMP/out") != *'manifest invalid'* ]] || fail 'installed EA unusable offline'
+    done
+    reset; index; row 27+1 temurin; row 28+1-ea temurin
+    awk 'BEGIN {FS=OFS="\t"} NR==3 {$1="ea"} {print}' "$TEST_FIXTURE" > "$TEMP/ea-index"
+    mv "$TEMP/ea-index" "$TEST_FIXTURE"
+    run 0 install 27+; diagnostic 'Successfully installed 28+1-ea-temurin'
+    run 0 home 27+; contains '/28+1-ea-temurin'
+    check 'EA install-on-demand for home/env/default/exec and highest-major GA/EA ranges'
+    reset
+}
+
+type_checks() {
+    local before command selector
+    reset; index
+    row 21+1 vendor; row 21+2 vendor; row 21+3 vendor; row 21+4 vendor
+    row 21+3 vendor zip "$ROOT/tests/fixtures/archives/jdk.zip"
+    awk 'BEGIN {FS=OFS="\t"}
+        NR==2 {$15="[feat,feat2]"}
+        NR==4 || NR==5 || NR==6 {$1="ea"}
+        NR==4 {$15="[feat,feat2]"}
+        NR==6 {$15="[ignored-duplicate]"}
+        {print}' "$TEST_FIXTURE" > "$TEMP/typed-index"
+    mv "$TEMP/typed-index" "$TEST_FIXTURE"
+    run 0 available
+    awk -F '\t+' 'NR==1 && (NF!=4 || $4!="JVM") {exit 1}
+        END {if(NR!=5) exit 1}' "$TEMP/out" || fail 'ordinary discovery must include GA and EA without TYPE'
+    before=$(< "$TEST_LOG")
+    cp "$TEMP/out" "$TEMP/without-type"
+    run 0 available -t
+    [ "$(< "$TEST_LOG")" = "$before" ] || fail '-t triggered another index fetch'
+    awk -F '\t+' 'NR==1 && (NF!=5 || $5!="TYPE") {exit 1}
+        NR==2 && ($1!="21+1-vendor" || $5!="feat,feat2") {exit 1}
+        NR==3 && ($1!="21+2-vendor" || $5!="") {exit 1}
+        NR==4 && ($1!="21+3-vendor" || $5!="ea,feat,feat2") {exit 1}
+        NR==5 && ($1!="21+4-vendor" || $5!="ea") {exit 1}
+        END {if(NR!=5) exit 1}' "$TEMP/out" || fail 'opt-in TYPE/EA/deduplication'
+    # Check TYPE alignment, including its empty GA cell and long first columns.
+    awk 'function expanded(s, i,c,out) {
+        out=""; for(i=1;i<=length(s);i++) {c=substr(s,i,1)
+            if(c=="\t") {do {out=out " "} while(length(out)%8)} else out=out c}
+        return out}
+        NR==1 {column=index(expanded($0),"TYPE"); next}
+        NR==2 || NR==4 || NR==5 {line=expanded($0); value=(NR==2 ? "feat,feat2" : (NR==4 ? "ea,feat,feat2" : "ea")); if(substr(line,column)!=value) exit 1}
+        NR==3 {if(length(expanded($0))!=column-1) exit 1}' "$TEMP/out" || fail 'TYPE alignment'
+    awk -F '\t+' 'NR==FNR {expected[FNR]=$1 FS $2 FS $3 FS $4; next}
+        expected[FNR]!=($1 FS $2 FS $3 FS $4) {exit 1}' "$TEMP/without-type" "$TEMP/out" || fail '-t changed selected rows'
+    [[ $(< "$TEST_LOG") = *'/metadata/all/linux/x86_64/jdk-latest.tsv'* ]] || fail 'wrong all-release index'
+    before=$(< "$TEST_LOG")
+    for selector in 21 vendor vendor-21 21+ 21..21 vendor-21+; do
+        run 0 a "$selector" -t; contains 'ea,feat,feat2'
+    done
+    [ "$(< "$TEST_LOG")" = "$before" ] || fail 'selectors did not share the all-release cache'
+    run 0 available
+    [ "$(< "$TEST_LOG")" = "$before" ] || fail '-t changed the shared cache'
+    run 2 available -t -t; diagnostic 'duplicate flag'
+    run 2 available -t ''
+    run 2 available -t 25..21
+    run 1 available -t 22; diagnostic 'No JDK found matching'
+    run 2 available -a; diagnostic 'unsupported flag'
+    for command in list install uninstall default home env exec; do
+        if [ "$command" = exec ]; then run 2 "$command" -t -- java; else run 2 "$command" -t; fi
+        diagnostic 'unsupported flag'
+    done
+    run 1 install vendor-21
+    [[ $(< "$TEMP/err") != *TYPE* ]] || fail 'TYPE in remote ambiguity'
+    diagnostic '21+3-vendor'; diagnostic '21+4-vendor'
+    run 0 install 21+1-vendor; run 0 install 21+2-vendor
+    before=$(< "$TEST_LOG")
+    rm -rf -- "$XDG_CACHE_HOME/jvm"
+    run 0 list
+    awk -F '\t+' 'NR==1 && (NF!=5 || $5!="DEFAULT") {exit 1}' "$TEMP/out" || fail 'TYPE in installed listing'
+    run 1 home vendor-21
+    [[ $(< "$TEMP/err") != *TYPE* ]] || fail 'TYPE in local ambiguity'
+    [ "$(< "$TEST_LOG")" = "$before" ] || fail 'local listings used networking'
+    check 'available -t EA/TYPE formatting, selectors, shared cache and unchanged other listings'
+    reset
+}
+
+range_checks() {
+    local base before selector command id
+    reset; index
+    # Upstream order, vendor version and Java major deliberately disagree.
+    row 99.0.1 temurin tar.gz "$TEST_ARCHIVE" 21
+    row 25+9 temurin
+    row 26+1 other-vendor
+    row 25+10 temurin
+    row 22.3.1+java17 graalvm-community tar.gz "$TEST_ARCHIVE" 17
+    row 1.8.0_99-b09 old-vendor
+    row 25+1 other-vendor
+    run 0 available 21..25
+    awk -F '\t+' 'NR>1 {id[++n]=$1} END {if(n!=4 || id[1]!="21-99.0.1-temurin" || id[2]!="25+9-temurin" || id[3]!="25+10-temurin" || id[4]!="25+1-other-vendor") exit 1}' "$TEMP/out" || fail 'range discovery order/bounds'
+    run 0 a graalvm-community-17..17; contains '17-22.3.1+java17-graalvm-community'
+    run 0 available 8..8; contains '8-1.8.0_99-b09-old-vendor'
+    run 0 available other-vendor-25+; contains '26+1-other-vendor'
+    run 1 available 27+; diagnostic 'No JDK found matching'
+    before=$(< "$TEST_LOG")
+    for command in available list install home env default exec uninstall; do
+        for selector in 0+ 01+ 21++ 21.. 21..025 25..21 temurin-25..21 '$(exit 99)+'; do
+            if [ "$command" = exec ]; then run 2 "$command" "$selector" -- java; else run 2 "$command" "$selector"; fi
+        done
+    done
+    run 2 uninstall 21+
+    run 2 uninstall temurin-21..25
+    [ "$(< "$TEST_LOG")" = "$before" ] || fail 'invalid ranges accessed network'
+    check 'range syntax, inclusive discovery order, Java-major metadata and uninstall exclusion'
+
+    run 0 install 21..25; diagnostic 'Successfully installed 25+10-temurin'
+    base=$XDG_DATA_HOME/jvm/jdks
+    [ -d "$base/25+10-temurin" ] || fail 'remote range tie selection'
+    # Reverse the remote tie order: no row-order preference is permitted.
+    index; row 25+10 temurin; row 25+9 temurin; row 26+1 other-vendor
+    run 0 install 21+; diagnostic 'Already installed 25+10-temurin'
+    run 0 install 25+9-temurin
+    run 0 install other-vendor-25+; diagnostic 'Successfully installed 26+1-other-vendor'
+    index; row 21+1 other-vendor
+    run 1 install 21..24; diagnostic 'No JDK found matching'
+    index; row 27+1 temurin; row 27+1 temurin
+    before=$(count_downloads)
+    run 1 install 27+; diagnostic 'multiple artifact rows remain'
+    [ "$(count_downloads)" = "$before" ] || fail 'range artifact collision downloaded'
+    index; row 28+1 temurin zip "$ROOT/tests/fixtures/archives/jdk.zip"; row 28+1 temurin
+    run 0 install 28..28
+    check 'remote ranges use highest major, default distro, C ID ties and unchanged artifact checks'
+
+    # Limit local range to 25, despite higher installed majors.
+    run 0 default -v 25 25+9-temurin
+    before=$(< "$TEST_LOG")
+    for command in home h env e; do
+        run 0 "$command" 21..25; contains '/25+9-temurin'
+        run 0 "$command" -i 21..25; contains '/25+9-temurin'
+    done
+    run 0 x -i 21..25 -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
+    contains '/25+9-temurin'
+    run 0 d 21..25
+    [ "$base/default" -ef "$base/25+9-temurin" ] || fail 'range global default'
+    run 1 default -v 21 21..25; diagnostic 'expected 21'
+    [ ! -L "$base/21" ] || fail 'mismatched range changed default'
+    run 0 list 21..25; contains '25+9-temurin'; contains '25+10-temurin'
+    [[ $(< "$TEMP/out") != *'26+1-other-vendor'* ]] || fail 'list exceeded upper bound'
+    run 0 l temurin-25+; contains '28+1-temurin'
+    [ "$(< "$TEST_LOG")" = "$before" ] || fail 'local ranges used network'
+    rm "$base/25"
+    run 0 home 21..25; contains '/25+10-temurin'
+    run 1 home temurin-25; diagnostic 'Multiple JDKs match'
+    for id in missing 26+1-other-vendor; do
+        ln -s "$base/$id" "$base/25"
+        run 0 home 21..25; contains '/25+10-temurin'
+        rm "$base/25"
+    done
+    mkdir "$base/25"
+    run 0 home 21..25; contains '/25+10-temurin'
+    rmdir "$base/25"
+    # An eligible default of another distro must not override the filter.
+    index; row 25+1 other-vendor; run 0 install 25+1-other-vendor
+    run 0 default -v 25 25+1-other-vendor
+    before=$(< "$TEST_LOG")
+    run 0 home 21..25; contains '/25+1-other-vendor'
+    run 0 home temurin-21..25; contains '/25+10-temurin'
+    # A failed readlink is operational, not permission to fall back/install.
+    cp "$TOOLS/readlink" "$TEMP/saved-readlink"
+    printf '#!%s\nexit 1\n' "$BASH_BIN" > "$TOOLS/readlink"
+    run 1 home -i 21..25; diagnostic 'cannot read range major default'
+    mv "$TEMP/saved-readlink" "$TOOLS/readlink"
+    [ "$(< "$TEST_LOG")" = "$before" ] || fail 'range preference failure accessed network'
+    # Existing range-shaped directories retain exact local-ID precedence.
+    cp -R "$base/25+9-temurin" "$base/21+"
+    run 0 home 21+; contains '/21+'
+    run 0 list 21+; contains 'manifest invalid'
+    run 0 uninstall 21+
+    check 'offline range defaults, fallback, distro eligibility, exact IDs and operational failures'
+
+    reset; index; row 21+1 other-vendor; row 25+1 temurin
+    run 0 install other-vendor-21
+    before=$(< "$TEST_LOG")
+    run 0 home -i 21+; contains '/21+1-other-vendor'
+    [ "$(< "$TEST_LOG")" = "$before" ] || fail 'offline-first range checked for newer remote JDK'
+    run 0 home -i temurin-21+; contains '/25+1-temurin'
+    run 1 env -i 26+; diagnostic 'No JDK found matching'
+    check 'range install-on-demand stays offline-first and continues with the installed ID'
+    reset
+}
+
+if [ "${1:-}" = --ea ]; then ea_checks; exit 0; fi
+if [ "${1:-}" = --types ]; then type_checks; exit 0; fi
+if [ "${1:-}" = --ranges ]; then range_checks; exit 0; fi
+
 if [ "${1:-}" = --manifest ]; then manifest_checks; exit 0; fi
 if [ "${1:-}" = --inventory ]; then inventory_checks; exit 0; fi
 if [ "${1:-}" = --flags ]; then flag_alias_checks; exit 0; fi
@@ -846,6 +1074,9 @@ done
 [ ! -e "$XDG_DATA_HOME" ] || fail 'empty listing created data storage'
 run 2 install; run 2 list ''; run 2 list ../21; run 2 list extra extra
 check 'empty offline inventory succeeds without creating storage; command usage'
+ea_checks
+type_checks
+range_checks
 java_major_checks
 manifest_checks
 inventory_checks
