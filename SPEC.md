@@ -231,13 +231,18 @@ distro-major, ranges, or a major without reference). Bash prints POSIX paths
 `env` prints a usage comment, then:
 
 ```bash
-# Use: eval "$(jvm env temurin-21)"
+# Use: eval "$('./jvm' env temurin-21)"
 export JAVA_HOME='/absolute/selected/home'
 export GRAALVM_HOME='/absolute/selected/home'      # GraalVM manifests only
 export PATH='/absolute/selected/home/bin':"$PATH"
 ```
 
-The comment names the `-f` flag when present, followed by the selector. The PATH
+The comment preserves the script invocation path (`$0` in Bash and the invocation
+name or literal command path in PowerShell), quoted for the target shell so the
+command can be copied and pasted even when the path contains spaces or
+apostrophes. Relative paths remain relative. It names the `-f` flag when present,
+followed by the selector. PowerShell calls through variables or other expressions
+fall back to the resolved script path. Script paths containing CR/LF are rejected. The PATH
 line is omitted when the selected `bin` directory is already a whole PATH entry
 (literal comparison; no symlink resolution or normalization); `-f` always emits
 it. `GRAALVM_HOME` appears when the manifest's `jvm_impl` is `graalvm` and is
@@ -246,7 +251,7 @@ paths containing CR/LF are rejected. On Windows Bash, `JAVA_HOME` is a native
 forward-slash path and the PATH entry a POSIX path, both via `cygpath`. Output
 is prepared fully before printing and never evaluated by `jvm`. `jvm.ps1 env`
 emits equivalent PowerShell `$env:` assignments, for example
-`Invoke-Expression (& .\jvm.ps1 env temurin-21)`.
+`iex (& '.\jvm.ps1' env 'temurin-21')`.
 
 `exec` runs `<command>` with `JAVA_HOME` set and the selected JDK's `bin` first
 on `PATH` (always prepended). It uses the physical home, never a mutable link,

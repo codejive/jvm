@@ -61,6 +61,10 @@ and uninstall.
 Network transfers and archive installation are not exercised by this smoke
 suite.
 
+The home/env and PowerShell suites also check the `Use:` comment's invocation
+path and run its suggested command from a relative path containing spaces and an
+apostrophe. These checks use only isolated synthetic JDKs.
+
 The stream regression checks invoke the script from a PowerShell prompt using
 `>`, `2>` and assignment capture. They cover primary results, empty default
 queries, install/default/uninstall confirmations, usage errors, ambiguity

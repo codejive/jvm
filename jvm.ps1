@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $script:DefaultDistro = 'temurin'
 $script:DefaultVersion = '25'
 
+$script:ScriptInvocation = $MyInvocation
 $script:Version = '0.2.0'
 $script:BaseUrl = 'https://getjvm.dev/index'
 $script:ExitCode = 1
@@ -1341,6 +1342,32 @@ function ConvertTo-PowerShellLiteral {
     return "'" + $Value.Replace("'", "''") + "'"
 }
 
+function Get-EnvironmentInvocationPath {
+    $invocation = $script:ScriptInvocation
+    if ($invocation.InvocationName -ne '&' -and $invocation.InvocationName -ne '.') {
+        return $invocation.InvocationName
+    }
+    # InvocationName is the operator for calls such as & '.\jvm.ps1'. Read
+    # literal command paths without evaluating caller expressions.
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput(
+        $invocation.Line, [ref]$tokens, [ref]$parseErrors)
+    $command = $ast.Find({ param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and
+            $node.Extent.StartColumnNumber -eq $invocation.OffsetInLine
+    }, $true)
+    if ($command) {
+        $word = $command.CommandElements[0]
+        if ($word -is [Management.Automation.Language.StringConstantExpressionAst] -or
+            ($word -is [Management.Automation.Language.ExpandableStringExpressionAst] -and
+                $word.NestedExpressions.Count -eq 0)) {
+            return $word.Value
+        }
+    }
+    return $PSCommandPath
+}
+
 function Invoke-HomeOrEnvironment {
     param([string]$Command, [string]$Selector, [string]$OriginalSelector,
         [switch]$ForcePath)
@@ -1351,9 +1378,11 @@ function Invoke-HomeOrEnvironment {
     }
     $javaHome = $resolved.Home
     $bin = Join-Path $javaHome 'bin'
-    $usage = ".\jvm.ps1 env"
+    $invocationPath = Get-EnvironmentInvocationPath
+    if ($invocationPath -match "[`r`n]") { Stop-Jvm 'script path must be a single-line path' }
+    $usage = '& ' + (ConvertTo-PowerShellLiteral $invocationPath) + ' env'
     if ($ForcePath) { $usage += ' -f' }
-    if ($OriginalSelector) { $usage += " $OriginalSelector" }
+    if ($OriginalSelector) { $usage += ' ' + (ConvertTo-PowerShellLiteral $OriginalSelector) }
     $lines = @("# Use: iex ($usage)",
         ('$env:JAVA_HOME = ' + (ConvertTo-PowerShellLiteral $javaHome)))
     if ($resolved.Row.JVM -eq 'graalvm') {

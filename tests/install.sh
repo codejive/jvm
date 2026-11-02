@@ -458,7 +458,7 @@ flag_alias_checks() {
         run 0 "$cmd" 22
         case "$cmd" in
             home|h) [ "$(< "$TEMP/out")" = "$XDG_DATA_HOME/jvm/jdks/22+1-other-vendor" ] || fail 'local home' ;;
-            env|e) contains '# Use: eval "$(jvm env 22)"'; contains 'export JAVA_HOME=' ;;
+            env|e) contains "# Use: eval \"\$('${ROOT}/jvm' env 22)\""; contains 'export JAVA_HOME=' ;;
         esac
         run 0 "$cmd" 21
     done

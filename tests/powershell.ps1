@@ -131,6 +131,22 @@ try {
     try { Assert-Equal (Invoke-JvmTest @('home')) $install 'Project Java setting was ignored.' }
     finally { Pop-Location }
     $environment = Invoke-JvmTest @('env', '-f', $id)
+    $expectedUsage = "# Use: iex (& '" + $scriptPath.Replace("'", "''") + "' env -f '$id')"
+    Assert-Equal (($environment -split "`r?`n")[0]) $expectedUsage 'env usage omitted the quoted script path.'
+    $invocationDirectory = Join-Path $testRoot "script's folder"
+    [void][IO.Directory]::CreateDirectory($invocationDirectory)
+    Copy-Item -LiteralPath $scriptPath -Destination (Join-Path $invocationDirectory 'jvm.ps1')
+    Push-Location $testRoot
+    try {
+        $relativeEnvironment = & ".\script's folder\jvm.ps1" env -f $id
+        $usage = ($relativeEnvironment -split "`r?`n")[0]
+        Assert-Equal $usage "# Use: iex (& '.\script''s folder\jvm.ps1' env -f '$id')" 'Relative invocation was not preserved and quoted.'
+        # Evaluate in a child process to leave this test process's environment intact.
+        $checkCommand = $usage.Substring(7) + '; if ($env:JAVA_HOME -cne ' +
+            "'" + $install.Replace("'", "''") + "') { exit 1 }"
+        & (Join-Path $PSHOME 'powershell.exe') -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $checkCommand
+        Assert-Equal ([string]$LASTEXITCODE) '0' 'Copied PowerShell usage command failed.'
+    } finally { Pop-Location }
     if ($environment -notmatch [regex]::Escape('$env:JAVA_HOME =')) { throw 'env omitted JAVA_HOME.' }
     if ($environment -notmatch [regex]::Escape('$env:PATH =')) { throw 'env omitted PATH.' }
 

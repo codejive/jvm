@@ -53,7 +53,7 @@ make_jdk() {
     printf 'jvm-manifest-v1\nga\t%s\tx86_64\tjdk\t%s\tvendor\t%s\t%s\t%s\ttar.gz\thttps://invalid.test/jdk\tjdk.tar.gz\t0\t%064d\t[]\n\n' "$os" "$impl" "$distro" "$version" "$version" 0 > "$home/.jvm-manifest"
 }
 check_env() {
-    local java=$1 bin=$2 selector=${3:-} omit=${4:-0} graal=${5:-0} usage='jvm env' lines=3 path_line=3
+    local java=$1 bin=$2 selector=${3:-} omit=${4:-0} graal=${5:-0} usage="'$ROOT/jvm' env" lines=3 path_line=3
     [ -z "$selector" ] || usage="$usage $selector"
     printf '# Use: eval "$(%s)"\n' "$usage" > "$TEMP/comment"
     head -1 "$TEMP/out" > "$TEMP/first"
@@ -115,6 +115,17 @@ for selector in 21+1-temurin 21 temurin-21 graalvm-community-17 8; do
 done
 run 0 home; exact "$base/jdks/default"
 run 0 env; check_env "$base/jdks/default" "$base/jdks/default/bin"
+# Preserve relative invocation paths and execute the copied usage command.
+mkdir "script's folder"
+cp "$ROOT/jvm" "script's folder/jvm"
+chmod +x "script's folder/jvm"
+PATH="$TEMP/tools:$PATH" "$BASH_BIN" "./script's folder/jvm" env -f 21 > "$TEMP/invoked"
+IFS= read -r comment < "$TEMP/invoked"
+[[ $comment = '# Use: eval "$('"'./script'\\''s folder/jvm' env -f 21)\"" ]] || fail 'relative invocation path was not preserved and quoted'
+PATH="$TEMP/tools:$PATH" "$BASH_BIN" -c '
+    eval "$1"
+    [ "$JAVA_HOME" = "$2" ]
+' bash "${comment#\# Use: }" "$base/jdks/21" || fail 'copied usage command failed'
 # Match whole literal PATH entries, at any position, preserving their order.
 bin=$base/jdks/default/bin
 for TEST_PATH in "$bin:$TEMP/tools" "$TEMP/tools:$bin:/after" "$TEMP/tools:$bin" ":$TEMP/tools::$bin:"; do
