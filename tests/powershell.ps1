@@ -19,12 +19,22 @@ function Assert-Equal {
 }
 
 function Invoke-JvmTest {
-    param([string[]]$Arguments, [int]$ExpectedExitCode = 0)
+    param([string[]]$Arguments, [int]$ExpectedExitCode = 0, [switch]$Interactive)
     $powershellExe = Join-Path $PSHOME 'powershell.exe'
     $stdout = Join-Path $testRoot ([guid]::NewGuid().ToString('N') + '.out')
     $stderr = Join-Path $testRoot ([guid]::NewGuid().ToString('N') + '.err')
-    $allArguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-        '-File', $scriptPath) + $Arguments
+    if ($Interactive) {
+        # Mimics typing the command at a prompt, where an unquoted --- reaches the script.
+        $words = @($Arguments | ForEach-Object {
+            if ($_ -ceq '---') { '---' } else { "'" + ([string]$_).Replace("'", "''") + "'" }
+        })
+        $command = "& '$scriptPath' " + ($words -join ' ')
+        $allArguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+            '-Command', $command)
+    } else {
+        $allArguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+            '-File', $scriptPath) + $Arguments
+    }
     $quotedArguments = @($allArguments | ForEach-Object {
         '"' + ([string]$_).Replace('"', '\"') + '"'
     })
@@ -117,6 +127,36 @@ try {
         '-File', $argumentProbe, '', 'value with spaces') | Out-Null
     Assert-Equal ([IO.File]::ReadAllText($argsFile)) '<>|<value with spaces>' `
         'exec did not preserve empty and spaced arguments.'
+    Invoke-JvmTest @('exec', $id, '---', 'probe.exe', '-NoProfile', '-NonInteractive',
+        '-File', $argumentProbe, 'x', 'y z') -Interactive | Out-Null
+    Assert-Equal ([IO.File]::ReadAllText($argsFile)) '<x>|<y z>' `
+        'exec did not accept an unquoted --- separator from a PowerShell prompt.'
+    Invoke-JvmTest @('exec', $id, '---', 'probe.exe', '-NoProfile', '-NonInteractive',
+        '-File', $argumentProbe, '---', 'z') | Out-Null
+    Assert-Equal ([IO.File]::ReadAllText($argsFile)) '<--->|<z>' `
+        'exec did not treat only the first --- as the separator.'
+    Remove-Item -LiteralPath $argsFile -Force
+    $env:PSExecutionPolicyPreference = 'Bypass'
+    Invoke-JvmTest @('exec', $id, '--', $argumentProbe, 'a', 'b c') | Out-Null
+    Assert-Equal ([IO.File]::ReadAllText($argsFile)) '<a>|<b c>' `
+        'exec did not run a .ps1 script with its arguments.'
+    $batchProbe = Join-Path $testRoot 'batch probe.cmd'
+    [IO.File]::WriteAllText($batchProbe,
+        "@echo off`r`n>`"%JVM_TEST_ARGS%`" echo %JAVA_HOME%^|%~1^|%~2`r`nexit /b 7`r`n")
+    Invoke-JvmTest @('exec', $id, '--', $batchProbe, 'a', 'b c') -ExpectedExitCode 7 | Out-Null
+    Assert-Equal ([IO.File]::ReadAllText($argsFile).Trim()) "$install|a|b c" `
+        'exec did not run a .cmd script with its arguments and exit code.'
+    Remove-Item -LiteralPath $argsFile -Force
+    Invoke-JvmTest @('exec', $id, '--', ($batchProbe -replace '\.cmd$', ''), 'a', 'b c') `
+        -ExpectedExitCode 7 | Out-Null
+    Assert-Equal ([IO.File]::ReadAllText($argsFile).Trim()) "$install|a|b c" `
+        'exec did not find a path-qualified command without its extension.'
+    $both = Join-Path $testRoot 'both probe'
+    [IO.File]::WriteAllText("$both.cmd", "@echo off`r`n>`"%JVM_TEST_ARGS%`" echo cmd`r`n")
+    [IO.File]::WriteAllText("$both.ps1", '[IO.File]::WriteAllText($env:JVM_TEST_ARGS, "ps1")')
+    Invoke-JvmTest @('exec', $id, '--', $both) | Out-Null
+    Assert-Equal ([IO.File]::ReadAllText($argsFile).Trim()) 'ps1' `
+        'exec did not prefer .ps1 over .cmd for an extensionless command.'
 
     $secondId = '21.0.2-temurin'
     $secondInstall = Join-Path (Join-Path $data 'jvm\jdks') $secondId

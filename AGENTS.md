@@ -17,7 +17,7 @@ uninstallation. JDK command execution was authorized on 2026-11-01. The user
 subsequently removed the dedicated `shell`/`s` command while retaining `exec`/`x`.
 Broader parent-shell session switching remains deferred.
 The native Windows PowerShell 5.1 entry point `jvm.ps1` was requested on
-2026-11-02; its documented archive and batch-command boundaries remain in force.
+2026-11-02; its documented archive boundaries remain in force.
 Uninstallation was authorized on 2026-10-30, with offline
 ID/major/distro-major selection and move-before-delete removal through
 `jvm/tmp/remove-<ID>.XXXXXXXX`. Do not infer further authorization from the

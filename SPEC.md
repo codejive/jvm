@@ -255,7 +255,11 @@ so later default changes do not switch the selected JDK.
 
 `exec [-i] [selector] -- <command> [args...]` runs the requested command with
 JAVA_HOME set and the selected JDK's `bin` directory prepended to PATH. The `--`
-separator ends JVM option parsing. Preserve argument boundaries and invoke the
+separator ends JVM option parsing. The three-dash form `---` is accepted as an
+equivalent separator (user request 2026-11-02) because PowerShell removes an
+unquoted `--` before `jvm.ps1` sees it; both implementations accept both forms,
+Bash usage and help show `--`, and PowerShell usage and help show `---`. Only
+the first separator counts, so later `--` or `---` arguments belong to the child. Preserve argument boundaries and invoke the
 command through Bash's `exec "$@"`, without evaluating a command string or
 generated `env` output. The selector is optional (user correction 2026-11-01).
 When omitted, apply the configuration precedence above, then validate the global
@@ -779,6 +783,10 @@ from listing installations managed by `jvm`.
 - The Bash implementation MUST run on Linux, macOS, and Windows through Cygwin,
   MSYS2, and Git Bash. Native PowerShell support is provided separately by
   `jvm.ps1` and does not change the Bash platform contract.
+- `jvm` and `jvm.ps1` MUST behave the same wherever the platform allows:
+  commands, options, selectors, output, exit codes and diagnostics. Any
+  difference MUST be a documented platform boundary, and a behavior change to
+  one implementation MUST be applied to the other in the same change.
 - **Adopted:** support Bash 3.2 and later, including macOS's bundled Bash. Avoid
   associative arrays and other features requiring newer Bash.
 - Runtime logic in `jvm` MUST remain Bash, apart from ordinary system utilities.
@@ -827,9 +835,19 @@ command emits PowerShell assignments, for example:
 Invoke-Expression (& .\jvm.ps1 env temurin-21)
 ```
 
-PowerShell-specific boundaries: `exec` launches native `.exe`/`.com` programs;
-it rejects `.bat` and `.cmd` files rather than passing arguments through a
-command shell. ZIP extraction is implemented with .NET and rejects symbolic
+PowerShell-specific boundaries: when `jvm.ps1` is invoked from a PowerShell
+session, the parser consumes an unquoted `--` before the script sees it, so
+use the equivalent `---` separator there (`--` still works with `-File`
+and `cmd.exe`). At a prompt, PowerShell also drops
+a later unquoted `--` argument intended for the child; quote it. `exec` launches native `.exe`/`.com` programs
+directly. `.bat` and `.cmd` files are launched like any other command, so
+Windows runs them through `cmd.exe`, which re-parses their arguments exactly as
+it would when the file is run without `jvm`. `.ps1` scripts are run with
+`powershell.exe -NoProfile -NonInteractive -File`, subject to the user's
+execution policy, and an extensionless command prefers a `.ps1` file over the
+`PATHEXT` extensions, as PowerShell does, both for bare names on `PATH`
+and for path-qualified names. ZIP
+extraction is implemented with .NET and rejects symbolic
 links. A `tar.gz` fallback requires the Windows `tar.exe` utility and rejects
 links and special entries. These archive/link boundaries are intentionally
 conservative and differ from Bash's support for verified internal archive

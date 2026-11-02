@@ -1393,16 +1393,21 @@ function ConvertTo-WindowsArgument {
 
 function Find-Executable {
     param([string]$Command, [string]$PreferredPath = '')
+    $extensions = [Environment]::GetEnvironmentVariable('PATHEXT')
+    if (-not $extensions) { $extensions = '.COM;.EXE;.BAT;.CMD' }
+    $suffixes = @('.ps1') + @($extensions.Split(';') | Where-Object { $_ })
     if ($Command -match '[\\/]') {
         $path = [IO.Path]::GetFullPath($Command)
         if ([IO.File]::Exists($path)) { return $path }
+        if (-not [IO.Path]::GetExtension($Command)) {
+            foreach ($suffix in $suffixes) {
+                if ([IO.File]::Exists($path + $suffix)) { return $path + $suffix }
+            }
+        }
         return $null
     }
-    $extensions = [Environment]::GetEnvironmentVariable('PATHEXT')
-    if (-not $extensions) { $extensions = '.COM;.EXE;.BAT;.CMD' }
     $candidates = @('')
-    if ([IO.Path]::GetExtension($Command)) { $candidates = @('') }
-    else { $candidates = $extensions.Split(';') }
+    if (-not [IO.Path]::GetExtension($Command)) { $candidates = $suffixes }
     $searchPath = @()
     if ($PreferredPath) { $searchPath += $PreferredPath }
     $searchPath += [Environment]::GetEnvironmentVariable('PATH') -split ';'
@@ -1423,15 +1428,23 @@ function Invoke-JdkCommand {
     $commandPath = Find-Executable $CommandArguments[0] $selectedBin
     if (-not $commandPath) { Stop-Jvm "command not found: $($CommandArguments[0])" 127 }
     $extension = [IO.Path]::GetExtension($commandPath).ToLowerInvariant()
-    if ($extension -in @('.bat', '.cmd')) {
-        Stop-Jvm 'exec currently requires a native executable (.exe or .com) on PowerShell'
-    }
     $start = New-Object Diagnostics.ProcessStartInfo
     $start.FileName = $commandPath
     $start.WorkingDirectory = (Get-Location).Path
     $start.UseShellExecute = $false
-    $start.Arguments = (($CommandArguments | Select-Object -Skip 1 |
-        ForEach-Object { ConvertTo-WindowsArgument ([string]$_) }) -join ' ')
+    $quoted = @($CommandArguments | Select-Object -Skip 1 |
+        ForEach-Object { ConvertTo-WindowsArgument ([string]$_) })
+    if ($extension -eq '.ps1') {
+        # Honors the user's execution policy; no override is applied.
+        $start.FileName = Join-Path $PSHOME 'powershell.exe'
+        if (-not [IO.File]::Exists($start.FileName)) {
+            # Started from another host such as PowerShell 7: use Windows PowerShell.
+            $start.FileName = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+        }
+        $quoted = @('-NoProfile', '-NonInteractive', '-File',
+            (ConvertTo-WindowsArgument $commandPath)) + $quoted
+    }
+    $start.Arguments = $quoted -join ' '
     $start.EnvironmentVariables['JAVA_HOME'] = $resolved.Home
     $start.EnvironmentVariables['PATH'] = $selectedBin + ';' +
         [Environment]::GetEnvironmentVariable('PATH')
@@ -1551,7 +1564,7 @@ Commands:
   default, d [-i] [-v <major>] [selector]  Show or select a persistent default.
   home, h [-i] [selector]           Print an installed JDK home or default path.
   env, e [-i] [-f] [selector]       Print PowerShell environment assignments.
-  exec, x [-i] [selector] -- <command> [args...]  Run with a selected JDK.
+  exec, x [-i] [selector] --- <command> [args...]  Run with a selected JDK.
   --help                            Show this help.
   --version                         Show the jvm version.
 
@@ -1582,7 +1595,7 @@ PowerShell examples:
   .\jvm.ps1 default -v 21 temurin-21
   .\jvm.ps1 home -i 21
   Invoke-Expression (& .\jvm.ps1 env temurin-21)
-  .\jvm.ps1 x -i 21 -- java.exe -version
+  .\jvm.ps1 x -i 21 --- java.exe -version
 
 Set JAVA_HOME once in your PowerShell profile:
   $env:JAVA_HOME = "$HOME\.local\share\jvm\jdks\default"
@@ -1610,7 +1623,7 @@ function Invoke-Jvm {
     $commandArgs = @(); $separator = $false
     for ($i = 0; $i -lt $remaining.Count; $i++) {
         $argument = [string]$remaining[$i]
-        if ($command -eq 'exec' -and $argument -eq '--') {
+        if ($command -eq 'exec' -and ($argument -eq '--' -or $argument -eq '---')) {
             $separator = $true
             if ($i + 1 -lt $remaining.Count) { $commandArgs = @($remaining | Select-Object -Skip ($i + 1)) }
             break
@@ -1640,7 +1653,7 @@ function Invoke-Jvm {
     }
     if ($command -eq 'exec' -and (-not $separator -or -not $commandArgs.Count -or
         -not $commandArgs[0])) {
-        Stop-Jvm 'usage: jvm exec [-i] [selector] -- <command> [args...]' 2
+        Stop-Jvm 'usage: jvm exec [-i] [selector] --- <command> [args...]' 2
     }
     if (-not $selector) {
         if ($command -eq 'default' -and $option) { Stop-Jvm 'Missing selector' 2 }

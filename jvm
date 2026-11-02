@@ -1469,7 +1469,7 @@ selector= option= major_option= force_env= separator= show_type=
 while [ "$#" -gt 0 ]; do
     argument=$1
     shift
-    if [ "$command" = exec ] && [ "$argument" = -- ]; then separator=1; break; fi
+    if [ "$command" = exec ] && { [ "$argument" = -- ] || [ "$argument" = --- ]; }; then separator=1; break; fi
     if [ "$command" = default ] && [ "$argument" = -v ]; then
         [ -z "$major_option" ] && [ "$#" -gt 0 ] && is_major "$1" || {
             error '-v requires one positive Java major'; exit 2;

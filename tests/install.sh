@@ -391,6 +391,7 @@ EOF
     run 0 x -- "$TEMP/child with spaces" global-pin
     run 0 default 21+1-temurin
     run 0 exec 21 -- "$TEMP/child with spaces" pin
+    run 0 exec 21 --- "$TEMP/child with spaces" pin
     run 0 default; contains '21+1-temurin'
     rm "$XDG_DATA_HOME/jvm/jdks/21"
     run 0 exec temurin-21 -- "$TEMP/child with spaces" status-check

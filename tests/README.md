@@ -441,7 +441,7 @@ Invalid markers, truncated/extra lines and incomplete source rows are shown
 as `(manifest invalid)` when the launchers remain usable. The ordinary suite runs
 these checks too. The fixture manifests in home/env and native Windows checks
 use the same format. The append-only product contracts and field definitions
-are recorded in [SPEC.md](../SPEC.md#installation-manifest-adopted-2026-11-01).
+are recorded in [SPEC.md](../SPEC.md#manifest).
 
 Verification on 2026-11-01: Bash syntax checks, 56 offline discovery checks,
 the focused manifest and publication suites, home/env checks and the native
