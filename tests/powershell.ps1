@@ -153,7 +153,24 @@ try {
     Assert-Equal (Invoke-JvmTest @('home', $id)) $install 'Exact-ID home resolution mismatch.'
     [IO.File]::WriteAllText((Join-Path $testRoot '.jvmrc'), "java=$id`n")
     Push-Location $testRoot
-    try { Assert-Equal (Invoke-JvmTest @('home')) $install 'Project Java setting was ignored.' }
+    try {
+        Assert-Equal (Invoke-JvmTest @('home')) $install 'Project Java setting was ignored.'
+        [IO.File]::WriteAllText((Join-Path $testRoot '.jvmrc'), "java=21+`n")
+        foreach ($arguments in @(@('env'), @('e', '-f'), @('e', $id, '-f'))) {
+            $configuredEnvironment = Invoke-JvmTest $arguments
+            $expectedArguments = switch ($arguments.Count) {
+                1 { 'env' }
+                2 { 'e -f' }
+                3 { "e '$id' -f" }
+            }
+            $expectedComment = "# Use: iex (& '" + $scriptPath.Replace("'", "''") + "' $expectedArguments)"
+            Assert-Equal (($configuredEnvironment -split "`r?`n")[0]) $expectedComment `
+                'env usage did not preserve the original arguments.'
+            if ($configuredEnvironment -notmatch [regex]::Escape($install)) {
+                throw 'Configured env did not select the installed JDK.'
+            }
+        }
+    }
     finally {
         Pop-Location
         Remove-Item -LiteralPath (Join-Path $testRoot '.jvmrc')

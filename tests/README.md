@@ -1,5 +1,13 @@
 # Discovery, installation and uninstallation verification
 
+Environment usage comments (2026-11-02): Bash and PowerShell now preserve the
+invoked command alias and argument order without adding configured or fallback
+selectors. The isolated home/env suite and native Windows PowerShell 5.1 and
+PowerShell 7 smoke suites passed, including configured ranges, explicit selectors,
+aliases, flag ordering and copied usage commands. The focused installation
+flags/aliases suite, Bash syntax checks and `git diff --check` also passed.
+Other native platforms and Bash 3.2 were not rerun.
+
 Range install reuse (2026-11-02): `bash tests/install.sh --ranges` covers
 offline reuse for explicit and configured ranges, aliases, per-major preferences,
 C-order fallback, distro filtering, `-d`, local resolution failures and remote

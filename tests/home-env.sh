@@ -53,7 +53,7 @@ make_jdk() {
     printf 'jvm-manifest-v1\nga\t%s\tx86_64\tjdk\t%s\tvendor\t%s\t%s\t%s\ttar.gz\thttps://invalid.test/jdk\tjdk.tar.gz\t0\t%064d\t[]\n\n' "$os" "$impl" "$distro" "$version" "$version" 0 > "$home/.jvm-manifest"
 }
 check_env() {
-    local java=$1 bin=$2 selector=${3:-} omit=${4:-0} graal=${5:-0} usage="'$ROOT/jvm' env" lines=3 path_line=3
+    local java=$1 bin=$2 selector=${3:-} omit=${4:-0} graal=${5:-0} usage="'$ROOT/jvm' ${6:-env}" lines=3 path_line=3
     [ -z "$selector" ] || usage="$usage $selector"
     printf '# Use: eval "$(%s)"\n' "$usage" > "$TEMP/comment"
     head -1 "$TEMP/out" > "$TEMP/first"
@@ -115,6 +115,13 @@ for selector in 21+1-temurin 21 temurin-21 graalvm-community-17 8; do
 done
 run 0 home; exact "$base/jdks/default"
 run 0 env; check_env "$base/jdks/default" "$base/jdks/default/bin"
+# Configuration selects the JDK without adding arguments to the usage comment.
+make_jdk 26+1 temurin
+printf 'java=26+\n' > .jvmrc
+run 0 env; check_env "$base/jdks/26+1-temurin" "$base/jdks/26+1-temurin/bin"
+run 0 e -f; check_env "$base/jdks/26+1-temurin" "$base/jdks/26+1-temurin/bin" '-f' 0 0 e
+run 0 env 21; check_env "$base/jdks/21" "$base/jdks/21/bin" 21
+rm .jvmrc
 # Preserve relative invocation paths and execute the copied usage command.
 mkdir "script's folder"
 cp "$ROOT/jvm" "script's folder/jvm"
@@ -130,7 +137,7 @@ PATH="$TEMP/tools:$PATH" "$BASH_BIN" -c '
 bin=$base/jdks/default/bin
 for TEST_PATH in "$bin:$TEMP/tools" "$TEMP/tools:$bin:/after" "$TEMP/tools:$bin" ":$TEMP/tools::$bin:"; do
     run 0 env; check_env "$base/jdks/default" "$bin" '' 1
-    run 0 e -f; check_env "$base/jdks/default" "$bin" '-f'
+    run 0 e -f; check_env "$base/jdks/default" "$bin" '-f' 0 0 e
 done
 for TEST_PATH in "$TEMP/tools:$bin-extra" "$TEMP/tools:/prefix$bin" "$TEMP/tools:$bin/"; do
     run 0 env; check_env "$base/jdks/default" "$bin"
@@ -141,7 +148,7 @@ TEST_PATH="$TEMP/tools:$bin" run 0 env 21
 check_env "$base/jdks/21" "$bin" '21' 1
 for args in '-f 21' '21 -f'; do
     TEST_PATH="$TEMP/tools:$bin" run 0 e $args
-    check_env "$base/jdks/21" "$bin" '-f 21'
+    check_env "$base/jdks/21" "$bin" "$args" 0 0 e
 done
 for command in available list install uninstall default home a l i u d h; do
     run 2 "$command" -f; diagnostic 'unsupported flag'
@@ -219,7 +226,7 @@ for selector in '' 23 23+1-unrelated-vendor unrelated-vendor-23; do
     check_env "$expected" "$expected/bin" "$selector" 1 1
 done
 TEST_PATH="$TEMP/tools:$base/jdks/23/bin" run 0 e -f 23
-check_env "$base/jdks/23" "$base/jdks/23/bin" '-f 23' 0 1
+check_env "$base/jdks/23" "$base/jdks/23/bin" '-f 23' 0 1 e
 # Missing/invalid metadata remains usable by exact ID and global default.
 mv "$base/jdks/23+1-unrelated-vendor/.jvm-manifest" "$TEMP/graal-manifest"
 for state in missing invalid; do

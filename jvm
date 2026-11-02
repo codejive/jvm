@@ -933,7 +933,7 @@ jdk_environment() {
 }
 
 home_environment() {
-    local command=$1 selector=$2 quoted_java quoted_bin usage script_path
+    local command=$1 selector=$2 quoted_java quoted_bin usage script_path argument
     resolve_home "$selector" "${3:-$selector}" || return $?
     if [ "$command" = home ]; then printf '%s\n' "$RESOLVED_HOME"; return 0; fi
     jdk_environment || return 1
@@ -941,11 +941,11 @@ home_environment() {
     shell_quote "$ENV_PATH_HOME/bin"; quoted_bin=$REPLY
     script_path=$0
     case "$script_path" in *[$'\r\n']*) error 'script path must be a single-line path'; return 1 ;; esac
-    shell_quote "$script_path"; usage="$REPLY env"
-    [ -z "$force_env" ] || usage="$usage -f"
-    selector=${3:-$selector}
-    case "$selector" in *[!a-zA-Z0-9.+_-]*) shell_quote "$selector"; selector=$REPLY ;; esac
-    [ -z "$selector" ] || usage="$usage $selector"
+    shell_quote "$script_path"; usage=$REPLY
+    for argument in "${original_arguments[@]}"; do
+        case "$argument" in *[!a-zA-Z0-9.+_-]*) shell_quote "$argument"; argument=$REPLY ;; esac
+        usage="$usage $argument"
+    done
     printf '# Use: eval "$(%s)"\nexport JAVA_HOME=%s\n' "$usage" "$quoted_java"
     if [ "$RESOLVED_IMPL" = graalvm ]; then
         printf 'export GRAALVM_HOME=%s\n' "$quoted_java"
@@ -1466,6 +1466,7 @@ ensure_installed() {
     esac
 }
 
+original_arguments=("$@")
 command=${1:-}
 case "$command" in
     a) command=available ;; l) command=list ;; i) command=install ;;

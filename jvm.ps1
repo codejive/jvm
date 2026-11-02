@@ -1388,7 +1388,7 @@ function Get-EnvironmentInvocationPath {
 
 function Invoke-HomeOrEnvironment {
     param([string]$Command, [string]$Selector, [string]$OriginalSelector,
-        [switch]$ForcePath)
+        [switch]$ForcePath, [string[]]$OriginalArguments)
     $resolved = Resolve-Home $Selector $OriginalSelector
     if ($Command -eq 'home') {
         Write-Output ($resolved.Home)
@@ -1398,9 +1398,11 @@ function Invoke-HomeOrEnvironment {
     $bin = Join-Path $javaHome 'bin'
     $invocationPath = Get-EnvironmentInvocationPath
     if ($invocationPath -match "[`r`n]") { Stop-Jvm 'script path must be a single-line path' }
-    $usage = '& ' + (ConvertTo-PowerShellLiteral $invocationPath) + ' env'
-    if ($ForcePath) { $usage += ' -f' }
-    if ($OriginalSelector) { $usage += ' ' + (ConvertTo-PowerShellLiteral $OriginalSelector) }
+    $usage = '& ' + (ConvertTo-PowerShellLiteral $invocationPath)
+    foreach ($argument in $OriginalArguments) {
+        if ($argument -match '^[a-zA-Z0-9_-]+$') { $usage += ' ' + $argument }
+        else { $usage += ' ' + (ConvertTo-PowerShellLiteral $argument) }
+    }
     $lines = @("# Use: iex ($usage)",
         ('$env:JAVA_HOME = ' + (ConvertTo-PowerShellLiteral $javaHome)))
     if ($resolved.Row.JVM -eq 'graalvm') {
@@ -1767,7 +1769,7 @@ function Invoke-Jvm {
         uninstall { Invoke-Uninstall $selector }
         default { Invoke-Default $selector $(if ($majorOption) { $majorOption } else { 'default' }) }
         home { Invoke-HomeOrEnvironment 'home' $selector $selectorForOutput }
-        env { Invoke-HomeOrEnvironment 'env' $selector $selectorForOutput -ForcePath:$forcePath }
+        env { Invoke-HomeOrEnvironment 'env' $selector $selectorForOutput -ForcePath:$forcePath -OriginalArguments $Arguments }
         exec { return Invoke-JdkCommand $selector $commandArgs }
     }
 }

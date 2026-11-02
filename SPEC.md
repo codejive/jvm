@@ -251,8 +251,11 @@ export PATH='/absolute/selected/home/bin':"$PATH"
 The comment preserves the script invocation path (`$0` in Bash and the invocation
 name or literal command path in PowerShell), quoted for the target shell so the
 command can be copied and pasted even when the path contains spaces or
-apostrophes. Relative paths remain relative. It names the `-f` flag when present,
-followed by the selector. PowerShell calls through variables or other expressions
+apostrophes. Relative paths remain relative. It preserves the command alias and
+argument order as invoked, including `-f` and any explicit selector. Selectors
+supplied by configuration or fallback resolution are never added to the comment.
+Shell quoting is generated for the argument values, rather than copied verbatim.
+PowerShell calls through variables or other expressions
 fall back to the resolved script path. Script paths containing CR/LF are rejected. The PATH
 line is omitted when the selected `bin` directory is already a whole PATH entry
 (literal comparison; no symlink resolution or normalization); `-f` always emits
