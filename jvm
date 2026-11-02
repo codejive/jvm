@@ -229,16 +229,15 @@ load_cache() {
     VALID=0; CHECKED=0; ETAG=; MODIFIED=
     [ -f "$ENTRY" ] || return 0
     # Open one generation once: another process may replace ENTRY at any time.
-    cp "$ENTRY" "$WORK/snapshot" || return 1
     {
         IFS= read -r saved_url && IFS= read -r CHECKED &&
-        IFS= read -r ETAG && IFS= read -r MODIFIED
-    } < "$WORK/snapshot" || return 0
-    [ "$saved_url" = "$URL" ] || return 0
-    case "$CHECKED" in ''|*[!0-9]*|????????????*) return 0 ;; esac
-    CHECKED=$((10#$CHECKED))
-    case "$ETAG$MODIFIED" in *[$'\r\n']*) return 0 ;; esac
-    sed '1,4d' "$WORK/snapshot" > "$WORK/cached" || return 1
+        IFS= read -r ETAG && IFS= read -r MODIFIED || return 0
+        [ "$saved_url" = "$URL" ] || return 0
+        case "$CHECKED" in ''|*[!0-9]*|????????????*) return 0 ;; esac
+        CHECKED=$((10#$CHECKED))
+        case "$ETAG$MODIFIED" in *[$'\r\n']*) return 0 ;; esac
+        cat > "$WORK/cached" || return 1
+    } < "$ENTRY" || return 1
     if [ -s "$WORK/cached" ]; then VALID=1; INDEX=$WORK/cached; fi
 }
 
@@ -321,7 +320,7 @@ parse_selector() {
 available() {
     local selector=$1 result
     parse_selector "$selector" || return $?
-    require_tools uname mktemp sed awk date cp || return 1
+    require_tools uname mktemp awk date cp || return 1
     detect_host && cache_path && metadata || return 1
     # The published TSV is trusted. Read only listing fields and collapse IDs;
     # do not validate unused metadata or compare builds/archive variants.
@@ -1318,7 +1317,7 @@ uninstall_jdk() {
 install_jdk() {
     local selector=$1 make_default=${2:-} expected_major=${3:-} rows result preferred multiple existing publish_home publish_marker install_distro=$DEFAULT_DISTRO
     INSTALLED_ID=
-    init_host && require_tools mktemp sed date cp wc || return 1
+    init_host && require_tools mktemp date cp wc || return 1
     umask 077
     # A known exact ID remains usable offline after upstream drops its record.
     if local_id "$selector" && rows=$(usable_local_row "$JDKS/$selector"); then
