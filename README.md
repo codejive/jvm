@@ -50,6 +50,32 @@ eval $(./jvm env)
 
 
 
+## Neat Trick (Runnable .java files)
+
+Take a look at the [hello.java](./hello.java) file, it has this strange line at
+the top of the file which, on Linux and Mac, tells your shell how to run the code.
+
+```java
+///usr/bin/env ./jvm x 25+ -- java "$0" "$@" ; exit $?
+void main() {
+    IO.println("Hello, World!");
+}
+```
+
+And then you simply run it like:
+
+```sh
+./hello.java
+```
+
+(PS: don't forget to make the file executable first with `chmod +x hello.java`)
+
+
+
+Now, you could already do this without `jvm`, but the nice thing is that now it
+will even work for people who don't have Java installed. And it will even make
+sure it's the correct version!
+
 ## Using it installed
 
 Copy the scripts to a directory on your `PATH`, for example `~/.local/bin`:
