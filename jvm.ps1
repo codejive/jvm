@@ -6,6 +6,7 @@ $script:DefaultVersion = '25'
 $script:Version = '0.2.0'
 $script:BaseUrl = 'https://getjvm.dev/index'
 $script:ExitCode = 1
+$script:CommandExitCode = 0
 $script:DataPath = $null
 $script:JdksPath = $null
 $script:CachePath = $null
@@ -33,7 +34,14 @@ function Test-ExistingInstallationDirectory {
 
 function Write-JvmError {
     param([string]$Message)
-    [Console]::Error.WriteLine("jvm: $Message")
+    Write-JvmDiagnostic "jvm: $Message"
+}
+
+# Use PowerShell streams so callers can redirect, merge or capture script output.
+# Continue is explicit: confirmations on stream 2 must not abort with our Stop policy.
+function Write-JvmDiagnostic {
+    param([string]$Message)
+    Write-Error -Message $Message -ErrorAction Continue
 }
 
 function Get-AbsolutePath {
@@ -558,7 +566,7 @@ function Get-TabTable {
     }
     foreach ($row in $Rows) {
         if ($row.PSObject.Properties['Status'] -and $row.Status) {
-            [Console]::Out.WriteLine("$($row.ID)`t($($row.Status))")
+            Write-Output ("$($row.ID)`t($($row.Status))")
             continue
         }
         $cells = @()
@@ -569,7 +577,7 @@ function Get-TabTable {
             if ($i -lt $Columns.Count - 1) { $cells += $value + ("`t" * $tabs) }
             else { $cells += $value }
         }
-        [Console]::Out.WriteLine(($cells -join ''))
+        Write-Output (($cells -join ''))
     }
 }
 
@@ -664,12 +672,8 @@ function Get-Matches {
             }
     }
     if (-not $Listing -and $matches.Count -gt 1) {
-        [Console]::Error.WriteLine('Multiple JDKs match, try again using one of the following IDs:')
-        $display = @($matches | ForEach-Object {
-            [pscustomobject]@{ ID = $_.Id; DISTRIBUTION = $_.Distro
-                VERSION = $_.JavaVersion; JVM = $_.JVM; DEFAULT = '' }
-        })
-        Get-TabTable $display @('ID', 'DISTRIBUTION', 'VERSION', 'JVM')
+        Write-JvmDiagnostic ('Multiple JDKs match, try again using one of the following IDs:')
+        Format-Inventory $matches | ForEach-Object { Write-JvmDiagnostic $_ }
         Stop-Jvm 'ambiguous JDK selector'
     }
     return $matches
@@ -964,7 +968,7 @@ function Invoke-List {
     Initialize-Host
     $rows = @(Get-LocalInventory)
     if (-not $rows.Count) {
-        [Console]::Out.WriteLine("No JDKs are installed. Use 'install' to install one")
+        Write-Output ("No JDKs are installed. Use 'install' to install one")
         return
     }
     $matches = @(Get-Matches $rows $Selector -Listing)
@@ -1180,12 +1184,12 @@ function Initialize-InstalledDefaults {
 function Write-DefaultReport {
     param([string]$Id, [string]$Name = 'default')
     if ($Id) {
-        if ($Name -eq 'default') { [Console]::Error.WriteLine("Default JDK set to: $Id") }
-        else { [Console]::Error.WriteLine("Java $Name default JDK set to: $Id") }
+        if ($Name -eq 'default') { Write-JvmDiagnostic ("Default JDK set to: $Id") }
+        else { Write-JvmDiagnostic ("Java $Name default JDK set to: $Id") }
     } elseif ($Name -eq 'default') {
-        [Console]::Error.WriteLine('No JDK currently set as the default')
+        Write-JvmDiagnostic ('No JDK currently set as the default')
     } else {
-        [Console]::Error.WriteLine("No JDK currently set as the default for version $Name")
+        Write-JvmDiagnostic ("No JDK currently set as the default for version $Name")
     }
 }
 
@@ -1202,7 +1206,7 @@ function Install-Jdk {
                 Stop-Jvm "selected JDK has Java major $($row.Major), expected $ExpectedMajor"
             }
             Initialize-InstalledDefaults $Selector $row.Major $MakeDefault
-            [Console]::Error.WriteLine("Already installed $Selector")
+            Write-JvmDiagnostic ("Already installed $Selector")
             return $Selector
         }
         $parsed = Get-Selector $Selector
@@ -1228,7 +1232,7 @@ function Install-Jdk {
         $existing = Join-Path $script:JdksPath $id
         if (Test-CompleteInstallation $id) {
             Initialize-InstalledDefaults $id $row.Major $MakeDefault
-            [Console]::Error.WriteLine("Already installed $id")
+            Write-JvmDiagnostic ("Already installed $id")
             return $id
         }
         if (Test-PathEntry $existing) {
@@ -1238,7 +1242,7 @@ function Install-Jdk {
             Stop-Jvm 'artifact URL must use HTTPS'
         }
         if ($row.Sha -notmatch '^[a-f0-9]{64}$') { Stop-Jvm 'expected SHA-256 is missing or invalid' }
-        [Console]::Error.WriteLine("Installing $id...")
+        Write-JvmDiagnostic ("Installing $id...")
         $download = Join-Path $script:WorkPath 'download'
         $response = Invoke-HttpsTransfer $row.Url $download '' '' 1800
         if ($response.Status -ne 200) { Stop-Jvm "artifact transfer failed (HTTP $($response.Status))" }
@@ -1255,7 +1259,7 @@ function Install-Jdk {
         }
         if (-not (Test-CompleteInstallation $id)) { Stop-Jvm "cannot publish installation: $id" }
         Initialize-InstalledDefaults $id $row.Major $MakeDefault
-        [Console]::Error.WriteLine("Successfully installed $id")
+        Write-JvmDiagnostic ("Successfully installed $id")
         return $id
     } finally {
         if ($script:WorkPath -and (Test-Path -LiteralPath $script:WorkPath)) {
@@ -1266,7 +1270,7 @@ function Install-Jdk {
 }
 
 function Resolve-Selection {
-    param([string]$Selector, [string]$ExpectedMajor = '', [switch]$InstallIfMissing,
+    param([string]$Selector, [string]$ExpectedMajor = '',
         [switch]$UseConfig)
     Initialize-Host
     $row = Resolve-Installed $Selector -Probe
@@ -1276,11 +1280,8 @@ function Resolve-Selection {
         }
         return $row
     }
-    if ($InstallIfMissing) {
-        $id = Install-Jdk $Selector '' $ExpectedMajor -UseConfig:$UseConfig
-        return Get-UsableLocalRow $id
-    }
-    Stop-Jvm "No JDK found matching: $Selector"
+    $id = Install-Jdk $Selector '' $ExpectedMajor -UseConfig:$UseConfig
+    return Get-UsableLocalRow $id
 }
 
 function Invoke-Default {
@@ -1288,12 +1289,16 @@ function Invoke-Default {
     Initialize-Host
     $current = Get-DefaultTargetId $Major
     if (-not $Selector) {
-        if (-not $current) { Write-DefaultReport '' $Major; return }
+        if (-not $current) {
+            if ($Major -eq 'default') { Write-Output 'No JDK currently set as the default' }
+            else { Write-Output "No JDK currently set as the default for version $Major" }
+            return
+        }
         $row = Get-UsableLocalRow $current
         if (-not $row -or ($Major -ne 'default' -and $row.Major -cne $Major)) {
             Stop-Jvm "default JDK is unavailable: $current"
         }
-        [Console]::Out.WriteLine($current)
+        Write-Output ($current)
         return
     }
     $row = Resolve-Installed $Selector
@@ -1338,24 +1343,21 @@ function ConvertTo-PowerShellLiteral {
 
 function Invoke-HomeOrEnvironment {
     param([string]$Command, [string]$Selector, [string]$OriginalSelector,
-        [string]$InstallFlag, [switch]$ForcePath)
-    if ($InstallFlag -eq '-i' -and $Selector) {
-        $row = Resolve-Selection $Selector '' -InstallIfMissing -UseConfig
-        $selected = $row.Id
-    } else {
-        $selected = $Selector
-    }
-    $resolved = Resolve-Home $selected $OriginalSelector
+        [switch]$ForcePath)
+    $resolved = Resolve-Home $Selector $OriginalSelector
     if ($Command -eq 'home') {
-        [Console]::Out.WriteLine($resolved.Home)
+        Write-Output ($resolved.Home)
         return
     }
     $javaHome = $resolved.Home
     $bin = Join-Path $javaHome 'bin'
-    [Console]::Out.WriteLine("# Use: Invoke-Expression (& .\jvm.ps1 env $Selector)")
-    [Console]::Out.WriteLine('$env:JAVA_HOME = ' + (ConvertTo-PowerShellLiteral $javaHome))
+    $usage = ".\jvm.ps1 env"
+    if ($ForcePath) { $usage += ' -f' }
+    if ($OriginalSelector) { $usage += " $OriginalSelector" }
+    $lines = @("# Use: iex ($usage)",
+        ('$env:JAVA_HOME = ' + (ConvertTo-PowerShellLiteral $javaHome)))
     if ($resolved.Row.JVM -eq 'graalvm') {
-        [Console]::Out.WriteLine('$env:GRAALVM_HOME = ' + (ConvertTo-PowerShellLiteral $javaHome))
+        $lines += '$env:GRAALVM_HOME = ' + (ConvertTo-PowerShellLiteral $javaHome)
     }
     $alreadyPresent = $false
     if (-not $ForcePath) {
@@ -1364,8 +1366,10 @@ function Invoke-HomeOrEnvironment {
         }
     }
     if (-not $alreadyPresent) {
-        [Console]::Out.WriteLine('$env:PATH = ' + (ConvertTo-PowerShellLiteral ($bin + ';')) + ' + $env:PATH')
+        $lines += '$env:PATH = ' + (ConvertTo-PowerShellLiteral ($bin + ';')) + ' + $env:PATH'
     }
+    # One complete string also supports Invoke-Expression (& .\jvm.ps1 env ...).
+    Write-Output ($lines -join "`n")
 }
 
 function ConvertTo-WindowsArgument {
@@ -1432,6 +1436,8 @@ function Invoke-JdkCommand {
     $start.FileName = $commandPath
     $start.WorkingDirectory = (Get-Location).Path
     $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
     $quoted = @($CommandArguments | Select-Object -Skip 1 |
         ForEach-Object { ConvertTo-WindowsArgument ([string]$_) })
     if ($extension -eq '.ps1') {
@@ -1452,8 +1458,28 @@ function Invoke-JdkCommand {
     $process.StartInfo = $start
     try {
         if (-not $process.Start()) { Stop-Jvm 'cannot start command' 126 }
+        # Drain both pipes concurrently to avoid deadlock when either buffer fills.
+        $stdout = $process.StandardOutput.ReadLineAsync()
+        $stderr = $process.StandardError.ReadLineAsync()
+        while ($null -ne $stdout -or $null -ne $stderr) {
+            if ($null -ne $stdout -and $stdout.IsCompleted) {
+                $line = $stdout.GetAwaiter().GetResult()
+                if ($null -eq $line) { $stdout = $null }
+                else { Write-Output $line; $stdout = $process.StandardOutput.ReadLineAsync() }
+            }
+            if ($null -ne $stderr -and $stderr.IsCompleted) {
+                $line = $stderr.GetAwaiter().GetResult()
+                if ($null -eq $line) { $stderr = $null }
+                else { Write-JvmDiagnostic $line; $stderr = $process.StandardError.ReadLineAsync() }
+            }
+            if (($null -ne $stdout -or $null -ne $stderr) -and
+                ($null -eq $stdout -or -not $stdout.IsCompleted) -and
+                ($null -eq $stderr -or -not $stderr.IsCompleted)) {
+                Start-Sleep -Milliseconds 10
+            }
+        }
         $process.WaitForExit()
-        return $process.ExitCode
+        $script:CommandExitCode = $process.ExitCode
     } catch [ComponentModel.Win32Exception] {
         Stop-Jvm "cannot execute command: $($CommandArguments[0])" 126
     } finally { $process.Dispose() }
@@ -1541,7 +1567,7 @@ function Invoke-Uninstall {
         }
         Remove-TreeNoFollow (Join-Path $removal $id)
         [IO.Directory]::Delete($removal)
-        [Console]::Error.WriteLine("Successfully uninstalled $id")
+        Write-JvmDiagnostic ("Successfully uninstalled $id")
         foreach ($entry in $changed) { Write-DefaultReport $entry.Id $entry.Name }
     } finally {
         if (Test-Path -LiteralPath $removal) {
@@ -1561,12 +1587,15 @@ Commands:
   install, i [-d] [selector]        Download, verify and install a JDK.
   uninstall, u <selector>           Remove an installed JDK.
   list, l [selector]                Show JDK folders and manifest status, offline.
-  default, d [-i] [-v <major>] [selector]  Show or select a persistent default.
-  home, h [-i] [selector]           Print an installed JDK home or default path.
-  env, e [-i] [-f] [selector]       Print PowerShell environment assignments.
-  exec, x [-i] [selector] --- <command> [args...]  Run with a selected JDK.
+  default, d [-v <major>] [selector]  Show or select a persistent default.
+  home, h [selector]           Print an installed JDK home or default path.
+  env, e [-f] [selector]       Print PowerShell environment assignments.
+  exec, x [selector] --- <command> [args...]  Run with a selected JDK.
   --help                            Show this help.
   --version                         Show the jvm version.
+
+default/home/env/exec install automatically when no installed JDK matches.
+Without a selector, default only queries its reference.
 
 Selectors:
   available/list: major (21), distro (temurin), or distro-major (temurin-21).
@@ -1579,7 +1608,6 @@ Selectors:
 Options:
   -t  available: show release type/features in a final TYPE column.
   -d  install: make the installed JDK the persistent default.
-  -i  default/home/env/exec: install if missing; default requires a selector.
   -f  env: always print the PATH assignment.
   -v  default: query or set the specified Java major's default.
 
@@ -1587,20 +1615,21 @@ Configuration (optional, literal key=value lines):
   .\.jvmrc, then $XDG_CONFIG_HOME\jvm\config (or ~/.config/jvm/config).
   Keys: java=21+ and distro=graalvm-community. No parent-directory lookup.
   CLI selector > project java > user java. Install falls back to major 25.
+  home/env/exec then use the installed default, or major 25 if it is absent.
 
 PowerShell examples:
-  .\jvm.ps1 install
-  .\jvm.ps1 i -d temurin-21
-  .\jvm.ps1 uninstall temurin-21
-  .\jvm.ps1 default -v 21 temurin-21
-  .\jvm.ps1 home -i 21
-  Invoke-Expression (& .\jvm.ps1 env temurin-21)
-  .\jvm.ps1 x -i 21 --- java.exe -version
+  jvm install
+  jvm i -d temurin-21
+  jvm uninstall temurin-21
+  jvm default -v 21 temurin-21
+  jvm home 21
+  iex (jvm env temurin-21)
+  jvm x 21 --- java.exe -version
 
 Set JAVA_HOME once in your PowerShell profile:
   $env:JAVA_HOME = "$HOME\.local\share\jvm\jdks\default"
   $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
-'@ | ForEach-Object { [Console]::Out.WriteLine($_) }
+'@ | ForEach-Object { Write-Output ($_) }
 }
 
 function Invoke-Jvm {
@@ -1611,7 +1640,7 @@ function Invoke-Jvm {
     if ($aliases.ContainsKey($command)) { $command = $aliases[$command] }
     if ($command -in @('--help', '--version')) {
         if ($Arguments.Count -ne 1) { Stop-Jvm "$command takes no arguments" 2 }
-        if ($command -eq '--help') { Show-Help } else { [Console]::Out.WriteLine("jvm $script:Version") }
+        if ($command -eq '--help') { Show-Help } else { Write-Output ("jvm $script:Version") }
         return
     }
     if ($command -notin @('available', 'install', 'uninstall', 'list', 'default', 'home', 'env', 'exec')) {
@@ -1642,8 +1671,7 @@ function Invoke-Jvm {
             if ($command -eq 'available') { $showType = $true } else { $forcePath = $true }
             continue
         }
-        if ($argument -eq '-d' -and $command -eq 'install' -or
-            $argument -eq '-i' -and $command -in @('default', 'home', 'env', 'exec')) {
+        if ($argument -eq '-d' -and $command -eq 'install') {
             if ($option) { Stop-Jvm 'duplicate flag' 2 }
             $option = $argument; continue
         }
@@ -1653,10 +1681,9 @@ function Invoke-Jvm {
     }
     if ($command -eq 'exec' -and (-not $separator -or -not $commandArgs.Count -or
         -not $commandArgs[0])) {
-        Stop-Jvm 'usage: jvm exec [-i] [selector] --- <command> [args...]' 2
+        Stop-Jvm 'usage: jvm exec [selector] --- <command> [args...]' 2
     }
     if (-not $selector) {
-        if ($command -eq 'default' -and $option) { Stop-Jvm 'Missing selector' 2 }
         if ($command -eq 'uninstall') {
             Stop-Jvm 'usage: jvm.ps1 uninstall <selector>' 2
         }
@@ -1673,15 +1700,15 @@ function Invoke-Jvm {
     if ($command -in @('install', 'home', 'env', 'exec') -and -not $selector) {
         $selector = Get-ConfigSetting java
         if (-not $selector -and $command -eq 'install') { $selector = $script:DefaultVersion }
-        if (-not $selector -and $option -eq '-i') {
+        if (-not $selector) {
             Initialize-DataPath
             if (-not (Test-PathEntry (Join-Path $script:JdksPath 'default'))) {
                 $selector = $script:DefaultVersion
             }
         }
     }
-    if ($option -eq '-i' -and $selector) {
-        $resolved = Resolve-Selection $selector $majorOption -InstallIfMissing `
+    if ($selector -and $command -in @('default', 'home', 'env', 'exec')) {
+        $resolved = Resolve-Selection $selector $majorOption `
             -UseConfig:($command -ne 'default')
         $selectorForOutput = $selector
         $selector = $resolved.Id
@@ -1692,16 +1719,15 @@ function Invoke-Jvm {
         install { [void](Install-Jdk $selector $option '' -UseConfig) }
         uninstall { Invoke-Uninstall $selector }
         default { Invoke-Default $selector $(if ($majorOption) { $majorOption } else { 'default' }) }
-        home { Invoke-HomeOrEnvironment 'home' $selector $selectorForOutput $option }
-        env { Invoke-HomeOrEnvironment 'env' $selector $selectorForOutput $option -ForcePath:$forcePath }
+        home { Invoke-HomeOrEnvironment 'home' $selector $selectorForOutput }
+        env { Invoke-HomeOrEnvironment 'env' $selector $selectorForOutput -ForcePath:$forcePath }
         exec { return Invoke-JdkCommand $selector $commandArgs }
     }
 }
 
 try {
-    $result = Invoke-Jvm @($args)
-    if ($null -ne $result -and $result -is [int]) { exit $result }
-    exit 0
+    Invoke-Jvm @($args)
+    exit $script:CommandExitCode
 } catch {
     Write-JvmError $_.Exception.Message
     exit $script:ExitCode

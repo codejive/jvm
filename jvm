@@ -65,12 +65,15 @@ Commands:
   install, i [-d] [selector]   Download, verify and install a JDK in user storage.
   uninstall, u <selector>      Remove an installed JDK from user storage.
   list, l [selector]           Show JDK folders and manifest status, even offline.
-  default, d [-i] [-v <major>] [selector]  Show or select a persistent JDK default.
-  home, h [-i] [selector]      Print an installed JDK home or the stable default path.
-  env, e [-i] [-f] [selector]  Print Bash exports, including GRAALVM_HOME for GraalVM.
-  exec, x [-i] [selector] -- <command> [args...]  Run with a selected JDK or default.
+  default, d [-v <major>] [selector]  Show or select a persistent JDK default.
+  home, h [selector]      Print an installed JDK home or the stable default path.
+  env, e [-f] [selector]  Print Bash exports, including GRAALVM_HOME for GraalVM.
+  exec, x [selector] -- <command> [args...]  Run with a selected JDK or default.
   --help                      Show this help.
   --version                   Show the jvm version.
+
+default/home/env/exec install automatically when no installed JDK matches.
+Without a selector, default only queries its reference.
 
 Selectors:
   available/list: major (21), distro (temurin), or distro-major (temurin-21).
@@ -86,7 +89,6 @@ Selectors:
 Options:
   -t  available: show release type/features in a final TYPE column.
   -d  install: make the installed JDK the persistent default.
-  -i  default/home/env/exec: install if missing; default requires a selector.
   -f  env: always print the PATH export, even when bin is already on PATH.
   -v  default: query or set the specified Java major's default.
 
@@ -95,7 +97,7 @@ Configuration (optional, literal key=value lines):
   Keys: java=21+ and distro=graalvm-community. No parent-directory lookup.
 EOF
     printf '  CLI selector > project java > user java. Install falls back to major %s.\n' "$DEFAULT_VERSION"
-    printf '  home/env/exec then use the installed default; -i uses %s only if it is absent.\n' "$DEFAULT_VERSION"
+    printf '  home/env/exec then use the installed default, falling back to major %s if it is absent.\n' "$DEFAULT_VERSION"
     while IFS= read -r line; do printf '%s\n' "$line"; done <<'EOF'
   Installation distro: explicit selector > project distro > user distro > temurin.
   Configuration does not affect default, available, list, uninstall or help.
@@ -105,9 +107,9 @@ Examples:
   jvm i -d temurin-21
   jvm uninstall temurin-21
   jvm default -v 21 temurin-21
-  jvm home -i 21
+  jvm home 21
   eval "$(jvm env temurin-21)"
-  jvm x -i 21..26 -- java -version
+  jvm x 21..26 -- java -version
 
 Shell setup (once, in your shell profile):
   Unix:
@@ -496,7 +498,7 @@ config_setting() {
     if [ "$key" = java ]; then SETTING=$GLOBAL_JAVA; else SETTING=$GLOBAL_DISTRO; fi
 }
 
-# The opt-in policy belongs to install/home/env/exec, never default -i.
+# Configuration applies to installation for install/home/env/exec, never default.
 installation_distro() {
     INSTALL_DISTRO=$DEFAULT_DISTRO
     classify_selector "$1"
@@ -939,7 +941,6 @@ home_environment() {
     shell_quote "$ENV_PATH_HOME/bin"; quoted_bin=$REPLY
     usage='jvm env'
     # Valid installed selectors contain only shell-safe ID/major/distro characters.
-    [ "${option:-}" != -i ] || usage="$usage -i"
     [ -z "$force_env" ] || usage="$usage -f"
     [ -z "${3:-$selector}" ] || usage="$usage ${3:-$selector}"
     printf '# Use: eval "$(%s)"\nexport JAVA_HOME=%s\n' "$usage" "$quoted_java"
@@ -1485,7 +1486,7 @@ while [ "$#" -gt 0 ]; do
         env:-f)
             [ -z "$force_env" ] || { error 'duplicate flag'; exit 2; }
             force_env=1 ;;
-        install:-d|default:-i|home:-i|env:-i|exec:-i)
+        install:-d)
             [ -z "$option" ] || { error 'duplicate flag'; exit 2; }
             option=$argument ;;
         *:-*) error "unsupported flag: $argument"; exit 2 ;;
@@ -1495,10 +1496,9 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 if [ "$command" = exec ] && { [ -z "$separator" ] || [ "$#" -eq 0 ] || [ -z "$1" ]; }; then
-    error 'usage: jvm exec [-i] [selector] -- <command> [args...]'; exit 2
+    error 'usage: jvm exec [selector] -- <command> [args...]'; exit 2
 fi
 if [ -z "$selector" ]; then
-    if [ "$command" = default ] && [ -n "$option" ]; then error 'Missing selector'; exit 2; fi
     case "$command" in
         uninstall)
             error "usage: jvm $command <selector>"
@@ -1518,7 +1518,7 @@ case "$command" in
         fi
         if [ -z "$selector" ]; then
             if [ "$command" = install ]; then selector=$DEFAULT_VERSION
-            elif [ "$option" = -i ]; then
+            else
                 data_path || exit 1
                 # An existing reference, including a broken one, must take the
                 # normal default path. Only an absent reference permits DEFAULT_VERSION.
@@ -1527,12 +1527,16 @@ case "$command" in
         fi ;;
 esac
 [ "$command" != exec ] || execution_umask=$(umask)
-if [ "$option" = -i ] && [ -n "$selector" ]; then
-    config_policy=
-    [ "$command" = default ] || config_policy=config
-    ensure_installed "$selector" "$major_option" "$config_policy" || exit $?
-    resolved_selector=$INSTALLED_ID
-else resolved_selector=$selector; fi
+resolved_selector=$selector
+case "$command" in
+    default|home|env|exec)
+        if [ -n "$selector" ]; then
+            config_policy=
+            [ "$command" = default ] || config_policy=config
+            ensure_installed "$selector" "$major_option" "$config_policy" || exit $?
+            resolved_selector=$INSTALLED_ID
+        fi ;;
+esac
 case "$command" in
     available) available "$selector" ;;
     list) list_installed "$selector" ;;

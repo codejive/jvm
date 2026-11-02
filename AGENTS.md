@@ -78,15 +78,13 @@ them. Do not claim a command ran or a platform passed unless verified.
 
 When implementation exists:
 
-- Local platform or Bash-version validation requires express user confirmation
-  for the proposed local checks before running them. This includes
-  `tests/ci.sh`, `tests/powershell.ps1`, native junction and real-JDK smoke tests,
-  WSL/container platform runs, and building or installing alternative shells
-  or platform tooling for validation. A request to create or change CI does not
-  authorize these local runs. Prefer the configured hosted CI jobs; report
-  unverified platforms rather than starting local platform tests without
-  confirmation. This restriction does
-  not require confirmation for the configured jobs running in hosted CI.
+- Local platform or Bash-version validation that do WSL/container platform runs,
+  building or installing alternative shells or that need platform tooling for
+  validation require express user confirmation. A request to create or change CI
+  does not authorize these local runs. Prefer the configured hosted CI jobs; report
+  unverified platforms rather than starting local platform tests without confirmation.
+  This restriction does not require confirmation for the configured jobs running in
+  hosted CI.
 - Run Bash syntax validation (`bash -n ./jvm`) and relevant behavioral tests.
   Use ShellCheck when available as a development tool, not a runtime dependency.
 - Use a lightweight Bash test harness and small checked-in metadata fixtures.

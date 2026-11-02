@@ -151,10 +151,6 @@ for cmd in available list install uninstall default home env exec a l i u d h e 
     [ "$(< "$TEMP/out")" = "$main_help" ] || fail "help differs: $cmd"
 done
 for cmd in help shell s av lis ins un def en ho; do run 2 "$cmd"; done
-for cmd in default d; do
-    run 2 "$cmd" -i
-    [ "$(< "$TEMP/err")" = 'jvm: Missing selector' ] || fail 'missing selector diagnostic'
-done
 run 0 --version
 run 0 install --help
 [ ! -s "$TEMP/err" ] || fail 'install --help wrote a diagnostic'

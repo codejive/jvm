@@ -19,11 +19,25 @@ function Assert-Equal {
 }
 
 function Invoke-JvmTest {
-    param([string[]]$Arguments, [int]$ExpectedExitCode = 0, [switch]$Interactive)
+    param([string[]]$Arguments, [int]$ExpectedExitCode = 0, [switch]$Interactive,
+        [switch]$Redirect, [switch]$Capture, [switch]$Streams)
     $powershellExe = Join-Path $PSHOME 'powershell.exe'
     $stdout = Join-Path $testRoot ([guid]::NewGuid().ToString('N') + '.out')
     $stderr = Join-Path $testRoot ([guid]::NewGuid().ToString('N') + '.err')
-    if ($Interactive) {
+    $redirectOut = "$stdout.redirect"
+    $redirectErr = "$stderr.redirect"
+    if ($Redirect -or $Capture) {
+        $words = @($Arguments | ForEach-Object { "'" + ([string]$_).Replace("'", "''") + "'" })
+        $invocation = "& '$scriptPath' " + ($words -join ' ')
+        if ($Capture) {
+            $command = '$captured = ' + $invocation + " 2> '$redirectErr'; " +
+                '$code = $LASTEXITCODE; $captured > ' + "'$redirectOut'; exit " + '$code'
+        } else {
+            $command = $invocation + " > '$redirectOut' 2> '$redirectErr'; exit " + '$LASTEXITCODE'
+        }
+        $allArguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+            '-Command', $command)
+    } elseif ($Interactive) {
         # Mimics typing the command at a prompt, where an unquoted --- reaches the script.
         $words = @($Arguments | ForEach-Object {
             if ($_ -ceq '---') { '---' } else { "'" + ([string]$_).Replace("'", "''") + "'" }
@@ -42,11 +56,21 @@ function Invoke-JvmTest {
         -ArgumentList ($quotedArguments -join ' ') -Wait -PassThru -NoNewWindow `
         -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     $code = $process.ExitCode
-    $output = [IO.File]::ReadAllText($stdout) + [IO.File]::ReadAllText($stderr)
+    $outText = [IO.File]::ReadAllText($stdout)
+    $errText = [IO.File]::ReadAllText($stderr)
+    if ($Redirect -or $Capture) {
+        Assert-Equal $outText '' 'Output bypassed PowerShell stdout redirection.'
+        Assert-Equal $errText '' 'Output bypassed PowerShell stderr redirection.'
+        $outText = [IO.File]::ReadAllText($redirectOut)
+        $errText = [IO.File]::ReadAllText($redirectErr)
+        Remove-Item -LiteralPath $redirectOut, $redirectErr -Force
+    }
+    $output = $outText + $errText
     Remove-Item -LiteralPath $stdout, $stderr -Force
     if ($code -ne $ExpectedExitCode) {
         throw "jvm.ps1 $($Arguments -join ' ') exited $code; expected $ExpectedExitCode.`n$output"
     }
+    if ($Streams) { return [pscustomobject]@{ Out = $outText.TrimEnd(); Err = $errText.TrimEnd() } }
     return $output.TrimEnd()
 }
 
@@ -65,6 +89,14 @@ try {
     [Environment]::SetEnvironmentVariable('XDG_CONFIG_HOME', $config)
     $argsFile = Join-Path $testRoot 'exec arguments.txt'
     [Environment]::SetEnvironmentVariable('JVM_TEST_ARGS', $argsFile)
+    foreach ($arguments in @(@('--version'), @('--help'), @('list'), @('default'), @('default', '-v', '21'))) {
+        $streams = Invoke-JvmTest $arguments -Redirect -Streams
+        if (-not $streams.Out) { throw 'Primary result was not captured by >.' }
+        Assert-Equal $streams.Err '' 'Primary result leaked to stderr.'
+    }
+    $streams = Invoke-JvmTest @('bogus') -ExpectedExitCode 2 -Redirect -Streams
+    Assert-Equal $streams.Out '' 'Usage error leaked to stdout.'
+    if ($streams.Err -notmatch 'jvm:') { throw 'Usage error was not captured by 2>.' }
     Invoke-JvmTest @('available', 'not_a_selector') -ExpectedExitCode 2 | Out-Null
     Invoke-JvmTest @('exec') -ExpectedExitCode 2 | Out-Null
 
@@ -102,11 +134,28 @@ try {
     if ($environment -notmatch [regex]::Escape('$env:JAVA_HOME =')) { throw 'env omitted JAVA_HOME.' }
     if ($environment -notmatch [regex]::Escape('$env:PATH =')) { throw 'env omitted PATH.' }
 
+    foreach ($arguments in @(@('home', $id), @('env', '-f', $id), @('list'))) {
+        $streams = Invoke-JvmTest $arguments -Redirect -Streams
+        if (-not $streams.Out) { throw 'Primary result was not captured by >.' }
+        Assert-Equal $streams.Err '' 'Primary result leaked to stderr.'
+    }
+    $streams = Invoke-JvmTest @('home', $id) -Capture -Streams
+    Assert-Equal $streams.Out $install 'Assignment capture lost the home path.'
+    Assert-Equal $streams.Err '' 'Assignment capture emitted stderr.'
+    $streams = Invoke-JvmTest @('env', '-f', $id) -Capture -Streams
+    Assert-Equal $streams.Out $environment 'Assignment capture lost environment statements.'
+    Assert-Equal $streams.Err '' 'Environment assignment capture emitted stderr.'
+    $streams = Invoke-JvmTest @('install', $id) -Redirect -Streams
+    Assert-Equal $streams.Out '' 'Install confirmation leaked to stdout.'
+    if ($streams.Err -notmatch 'Already installed') { throw 'Install confirmation was not captured by 2>.' }
     Invoke-JvmTest @('install', $id) | Out-Null
     $defaultResult = Invoke-JvmTest @('default', $id)
     if ($defaultResult -notmatch [regex]::Escape("Default JDK set to: $id")) {
         throw 'Default selection did not report the selected ID.'
     }
+    $streams = Invoke-JvmTest @('default', $id) -Redirect -Streams
+    Assert-Equal $streams.Out '' 'Default confirmation leaked to stdout.'
+    if ($streams.Err -notmatch 'Default JDK set to:') { throw 'Default confirmation was not captured by 2>.' }
     Assert-Equal (Invoke-JvmTest @('default')) $id 'Default query mismatch.'
     Invoke-JvmTest @('default', '-v', '21', $id) | Out-Null
     Assert-Equal (Invoke-JvmTest @('default', '-v', '21')) $id 'Per-major default query mismatch.'
@@ -120,6 +169,11 @@ try {
         '-NonInteractive', '-Command', '[Console]::WriteLine($env:JAVA_HOME); exit 23') `
         -ExpectedExitCode 23
     Assert-Equal $execution $install 'exec did not use the selected JDK PATH and JAVA_HOME.'
+    $streams = Invoke-JvmTest @('exec', $id, '--', 'probe.exe', '-NoProfile',
+        '-NonInteractive', '-Command', '[Console]::Out.WriteLine("child output"); [Console]::Error.WriteLine("child diagnostic"); exit 23') `
+        -ExpectedExitCode 23 -Redirect -Streams
+    Assert-Equal $streams.Out 'child output' 'exec stdout was not captured by >.'
+    if ($streams.Err -notmatch 'child diagnostic') { throw 'exec stderr was not captured by 2>.' }
     $argumentProbe = Join-Path $testRoot 'argument probe.ps1'
     [IO.File]::WriteAllText($argumentProbe,
         '[IO.File]::WriteAllText($env:JVM_TEST_ARGS, "<$($args[0])>|<$($args[1])>")')
@@ -169,13 +223,20 @@ try {
     $secondManifest = "jvm-manifest-v1`n$($secondFields -join "`t")`n`n"
     [IO.File]::WriteAllText((Join-Path $secondInstall '.jvm-manifest'), $secondManifest,
         [Text.UTF8Encoding]::new($false))
+    $streams = Invoke-JvmTest @('home', 'temurin-21') -ExpectedExitCode 1 -Redirect -Streams
+    Assert-Equal $streams.Out '' 'Ambiguity table leaked to stdout.'
+    foreach ($text in @('Multiple JDKs match', 'DEFAULT', $id, $secondId)) {
+        if ($streams.Err -notmatch [regex]::Escape($text)) { throw "Ambiguity stderr omitted $text." }
+    }
     Invoke-JvmTest @('install', $secondId) | Out-Null
     Invoke-JvmTest @('default', $secondId) | Out-Null
     Invoke-JvmTest @('default', '-v', '21', $secondId) | Out-Null
     Assert-Equal (Invoke-JvmTest @('default')) $secondId 'Global default replacement failed.'
     Assert-Equal (Invoke-JvmTest @('default', '-v', '21')) $secondId `
         'Per-major default replacement failed.'
-    Invoke-JvmTest @('uninstall', $secondId) | Out-Null
+    $streams = Invoke-JvmTest @('uninstall', $secondId) -Redirect -Streams
+    Assert-Equal $streams.Out '' 'Uninstall confirmation leaked to stdout.'
+    if ($streams.Err -notmatch 'Successfully uninstalled') { throw 'Uninstall confirmation was not captured by 2>.' }
     Assert-Equal (Invoke-JvmTest @('default')) $id 'Global default was not restored after uninstall.'
     Assert-Equal (Invoke-JvmTest @('default', '-v', '21')) $id `
         'Per-major default was not restored after uninstall.'

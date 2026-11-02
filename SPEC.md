@@ -17,10 +17,10 @@ jvm available [-t] [selector]
 jvm list [selector]
 jvm install [-d] [selector]
 jvm uninstall <selector>
-jvm default [-i] [-v <major>] [selector]
-jvm home [-i] [selector]
-jvm env [-i] [-f] [selector]
-jvm exec [-i] [selector] -- <command> [args...]
+jvm default [-v <major>] [selector]
+jvm home [selector]
+jvm env [-f] [selector]
+jvm exec [selector] -- <command> [args...]
 ```
 
 Single-letter aliases behave exactly like their commands: `a` available, `l`
@@ -31,10 +31,9 @@ detection, storage, networking or external utilities. Help gives a purpose
 statement, command descriptions, selectors, options, shell setup and examples.
 
 Flags may precede or follow the selector. `-t` is accepted only by `available`,
-`-d` only by `install`, `-i` only by `default`/`home`/`env`/`exec`, `-f` only by
-`env`, and `-v <major>` only by `default`. Repeated or unsupported flags, empty
-selectors, excess arguments and invalid selector syntax exit 2 before any side
-effect.
+`-d` only by `install`, `-f` only by `env`, and `-v <major>` only by
+`default`. Repeated or unsupported flags, empty selectors, excess arguments and
+invalid selector syntax exit 2 before any side effect.
 
 ### Exit codes and streams
 
@@ -48,7 +47,11 @@ effect.
   `Successfully installed <ID>`, `Already installed <ID>`, `Successfully
   uninstalled <ID>`, `Default JDK set to: <ID>`), diagnostics and ambiguity
   tables. A failed manager operation leaves stdout empty. For `exec`, the
-  child's streams pass through unchanged.
+  child's streams pass through unchanged in Bash. PowerShell maps stdout to
+  success stream 1 and stderr to error stream 2, including child output, so
+  `>`, `2>`, `2>&1`, pipelines and assignment capture work at a PowerShell
+  prompt. Error records use PowerShell's normal diagnostic formatting;
+  informational stderr records do not change the command's exit status.
 - No match reports `No JDK found matching: <selector>`.
 - Multiple matches for `install`, `uninstall`, `default`, `home`, `env` or
   `exec` print `Multiple JDKs match, try again using one of the following
@@ -85,9 +88,8 @@ at four stops; longer values stay untruncated with one separating tab.
 - `default` without selector prints the current default ID, or `No JDK currently
   set as the default` (exit 0); `-v N` queries major N, reporting `No JDK
   currently set as the default for version N`. An unusable reference is an
-  error. With a selector it selects an installed JDK as default and prints
-  `Default JDK set to: <ID>` to stderr. `default -i` requires an explicit
-  selector (`jvm: Missing selector`, exit 2). Configuration never applies to
+  error. With a selector it selects a JDK as default, installing it when absent,
+  and prints `Default JDK set to: <ID>` to stderr. Configuration never applies to
   `default`.
 - `home` prints one unquoted absolute path. `env` prints shell statements.
   `exec` runs a command. See below.
@@ -157,23 +159,22 @@ With an explicit selector:
 4. Otherwise scan the inventory. Exact IDs match first; otherwise only
    directories with a valid manifest and usable launchers participate. A major
    matches every distro; a distro-major matches that distro and major.
-5. One match selects it, several are ambiguous (exit 1), none reports no match
-   (or permits `-i`). Neither the global default nor a distro preference breaks
-   ties.
+5. One match selects it, several are ambiguous (exit 1), and no matches trigger
+   installation. Neither the global default nor a distro preference breaks ties.
 
-`-i` is offline-first: resolve locally, and only a genuine no-match installs,
+Selection is offline-first: resolve locally, and only a genuine no-match installs,
 using the installation rules (bare major means the configured distro, default
 Temurin), then continues with the exact installed ID. Ambiguity, invalid
 references and operational failures never install. No remote check is made when
 a usable local match exists.
 
-Without a selector, no scan occurs: `default` and `default -v N` read their
-reference; `home`/`env` use the stable `jdks/default` path and `exec` uses its
-target's physical home. An absent reference reports `jvm: No JDK currently set
-as the default` (exit 1); a dangling or unusable one reports `jvm: default JDK
-is missing or unusable`. These commands never repair storage. With `-i` and
-neither configuration nor a default, major 25 is installed; an unusable default
-remains an error.
+Without an explicit or configured selector, `default` and `default -v N` read
+their reference; `home`/`env` use the stable `jdks/default` path and `exec` uses
+its target's physical home. With neither configuration nor a default,
+`home`/`env`/`exec` resolve major 25 using the same local-first rules, installing
+it if needed.
+A dangling or unusable default reports `jvm: default JDK is missing or unusable`
+and is never repaired automatically. Selectorless `default` queries never install.
 
 ### Ranges
 
@@ -187,7 +188,7 @@ C order, independent of row order; artifact collisions still fail. `default -v N
 still requires the resolved JDK's major to be N. `available` and `list` return
 all matches in their usual order. Range `home`/`env`/`exec` use the physical
 home. A local match at a lower major wins over remote availability of a higher
-one (`home -i 21+` with only Java 21 installed uses it offline).
+one (`home 21+` with only Java 21 installed uses it offline).
 
 ### Project and user configuration
 
@@ -215,9 +216,8 @@ once the project file supplies the needed key.
   configured `java` is retained.
 - `install` without selector: `java`, then major 25.
 - `home`/`env`/`exec` without selector: configured `java`, then the global
-  default. Never major 25 without `-i`. A configured selector that fails does
-  not fall through. With `-i`, major 25 is used only when there is no
-  configuration and no default.
+  default, then major 25 when both are absent. A configured selector that fails
+  does not fall through.
 - `available`, `list`, `default` and `uninstall` ignore configuration.
 
 ## `home`, `env` and `exec`
@@ -237,7 +237,7 @@ export GRAALVM_HOME='/absolute/selected/home'      # GraalVM manifests only
 export PATH='/absolute/selected/home/bin':"$PATH"
 ```
 
-The comment names the selector and any `-i`/`-f` flags in that order. The PATH
+The comment names the `-f` flag when present, followed by the selector. The PATH
 line is omitted when the selected `bin` directory is already a whole PATH entry
 (literal comparison; no symlink resolution or normalization); `-f` always emits
 it. `GRAALVM_HOME` appears when the manifest's `jvm_impl` is `graalvm` and is
@@ -250,9 +250,9 @@ emits equivalent PowerShell `$env:` assignments, for example
 
 `exec` runs `<command>` with `JAVA_HOME` set and the selected JDK's `bin` first
 on `PATH` (always prepended). It uses the physical home, never a mutable link,
-and does not change defaults or the parent shell (apart from `-i`'s normal
-installation). Syntax errors (no `--`, empty command) exit 2 before host
-detection or storage access with `jvm: usage: jvm exec [-i] [selector] --
+and does not change the parent shell. Automatic installation initializes missing
+defaults using the normal installation rules. Syntax errors (no `--`, empty
+command) exit 2 before host detection or storage access with `jvm: usage: jvm exec [selector] --
 <command> [args...]`. The separator is `--` or `---`, both accepted by both
 implementations; Bash usage and help show `--`, PowerShell shows `---`. Only
 the first separator counts; everything after is passed to the child unchanged.
@@ -519,8 +519,8 @@ Last-Modified and last-check metadata.
   missing ones give an actionable error. Required capabilities per command:
   `curl` or `wget`; `tar` with gzip for `.tar.gz`; `unzip` for `.zip`; a SHA-256
   tool; `cygpath` on Windows. `--help` and local commands need no network or
-  archive tools. Nothing is installed automatically; no installers or
-  vendor-provided commands are run; no telemetry; user-owned locations only.
+  archive tools when a usable local match exists. No runtime dependencies are
+  installed automatically; no installers or vendor-provided commands are run; no telemetry; user-owned locations only.
 - **PowerShell `jvm.ps1`**: a separate Windows-only entry point for Windows
   PowerShell 5.1 using built-in .NET only (no Bash, PowerShell Core features or
   packages). It follows the same selectors, configuration, storage layout, cache
@@ -547,6 +547,9 @@ Last-Modified and last-check metadata.
   5.1 from the system directory when the host has no `powershell.exe`), subject
   to the execution policy. An extensionless command, bare or path-qualified,
   prefers `.ps1` over the `PATHEXT` extensions, as PowerShell does.
+- `exec` forwards child output as text lines through PowerShell streams. Output
+  without a newline is delivered when the line completes or the child exits;
+  this is not a byte-preserving or terminal-attached output path.
 - ZIP extraction uses .NET and rejects symbolic links. `tar.gz` needs the
   Windows `tar.exe` and rejects links and special entries. Both are stricter
   than Bash, which preserves verified internal links.

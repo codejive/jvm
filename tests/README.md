@@ -61,6 +61,18 @@ and uninstall.
 Network transfers and archive installation are not exercised by this smoke
 suite.
 
+The stream regression checks invoke the script from a PowerShell prompt using
+`>`, `2>` and assignment capture. They cover primary results, empty default
+queries, install/default/uninstall confirmations, usage errors, ambiguity
+tables, and child stdout/stderr with a nonzero exit code. Assertions also reject
+output that bypasses PowerShell redirection through the process console.
+
+Verification on 2026-11-02: the expanded isolated suite passed under Windows
+PowerShell 5.1.26100.9711. `bash -n ./jvm` and `git diff --check` passed.
+`jvm.ps1` measures 73,362 bytes with LF line endings. Network/archive paths
+and other platforms were not validated by this change. Child output is forwarded
+as text lines, and stderr uses normal PowerShell error-record formatting.
+
 The offline suite creates temporary working directories, HOME and XDG roots,
 including paths with spaces. It never reads the contributor's `.jvmrc` or user
 configuration. Its isolated PATH supplies ordinary utility wrappers and fake host,
@@ -147,18 +159,18 @@ Cygwin, including Cygwin's Bash 3.2 build, remain unverified locally.
 
 Configuration defaults (2026-11-02): `bash tests/install.sh --config` covers
 independent project/global Java and distro inheritance, explicit selectors,
-full IDs and ranges, selectorless install/`-d`, selectorless home/env/exec with
-and without `-i`, aliases, installed defaults versus major 25, broken references,
+full IDs and ranges, selectorless install/`-d`, selectorless home/env/exec,
+aliases, installed defaults versus major 25, broken references,
 configured misses, local ambiguity and operational failures without installation.
 It also checks literal parsing, duplicate/unknown/empty/invalid settings,
 nonregular/unreadable configuration paths, missing files, lower-priority lazy
 reads, XDG fallback and native drive-path conversion when available, paths with
 spaces, and current-directory-only lookup. Unaffected queries/help and both
-conflicting and malformed configuration around `default -i` are covered.
+conflicting and malformed configuration around `default` are covered.
 The existing `--defaults` lifecycle group now runs with malformed project and
 global configuration throughout. The native Windows smoke additionally checks
-configured bare-major junction output, selectorless `-i` using the global default,
-and configured exec using the physical home.
+configured bare-major junction output, selectorless selection using the global
+default, and configured exec using the physical home.
 
 Verification on 2026-11-02: Bash syntax validation passed for `jvm` and every
 `tests/*.sh` script. The focused `--config` (five groups), `--flags`,
@@ -202,10 +214,10 @@ standalone MSYS2 native runs remain unverified; ShellCheck was unavailable.
 Home/env selector correction (2026-11-01): explicit major, distro-major and ID
 selectors return a selected installation's physical home. Positive majors first
 use an existing valid per-major reference without scanning other installations
-and retain its stable link path in output, including with `-i`;
-absent references fall back to inventory selection and physical homes. The home/env suite covers
+and retain its stable link path in output; absent references fall back to
+inventory selection and physical homes. The home/env suite covers
 missing, unrelated, dangling and wrong-major references, legacy majors and
-ambiguity without a major default. The `--flags` checks cover offline `-i`
+ambiguity without a major default. The `--flags` checks cover offline
 selection with and without a major link, ambiguity without networking, and
 returning the exact installed ID after installation races.
 
@@ -213,8 +225,8 @@ Smart env coverage (2026-11-01): `tests/home-env.sh` checks omission of the
 PATH export for exact entries at the beginning, middle and end of PATH,
 including empty surrounding entries and paths with spaces and shell
 metacharacters. It verifies evaluated JAVA_HOME and unchanged PATH order,
-rejects substring/trailing-slash matches, and covers `-f`, alias `e`, combined
-`-i`/`-f` in different argument orders, repeated/unsupported flags and simulated
+rejects substring/trailing-slash matches, and covers alias `e`, selectors and
+`-f` in different argument orders, repeated/unsupported flags and simulated
 Windows POSIX PATH comparison. The focused suite, Bash syntax checks and full
 `bash tests/run.sh` passed under native Git Bash (56 discovery checks, 18
 installation checks and the home/env suite). Script size: 51,953 bytes. Native platform and Bash 3.2
@@ -223,8 +235,8 @@ verification gaps above are unchanged; ShellCheck was unavailable.
 GraalVM env coverage (2026-11-01): `tests/home-env.sh` checks GRAALVM_HOME
 for `jvm_impl=graalvm`, independently of distro naming, through exact IDs,
 distro-major selectors and global/per-major references. It evaluates exports
-with shell metacharacters in paths, omitted PATH output, alias `e`, combined
-`-i`/`-f`, and simulated Windows native-path conversion. Other JVM types and
+with shell metacharacters in paths, omitted PATH output, alias `e`,
+`-f`, and simulated Windows native-path conversion. Other JVM types and
 missing/invalid manifests preserve an inherited GRAALVM_HOME value. Syntax
 checks, the focused suite and `bash tests/run.sh` passed under native Git Bash
 5.3.15 (56 discovery checks, 22 installation checks and the home/env suite).
@@ -233,7 +245,7 @@ ShellCheck was unavailable. Distributed script size: 58,036 bytes.
 
 Command execution (2026-11-01):
 `bash tests/install.sh --execution` checks aliases, usage validation without
-utilities, installed selection and ambiguity without networking, `-i`
+utilities, installed selection and ambiguity without networking, automatic
 installation, installation failure, staging cleanup before execution, inherited
 umask, physical homes after default-link changes, literal arguments (including
 empty strings and newlines), child streams/status, missing/unexecutable commands,
@@ -249,7 +261,7 @@ Optional exec selector (2026-11-01): execution checks also cover the full usage
 diagnostic, no-selector execution through the global default for both `exec`
 and `x`, child status propagation, missing/dangling/unrelated defaults, retaining
 the physical home when the global reference changes, simulated Windows default
-conversion, and rejection of selectorless `-i`. The focused execution checks,
+conversion, and selectorless installation fallback. The focused execution checks,
 help checks, `bash tests/home-env.sh` and Bash syntax validation passed under native Git Bash. Script
 size: 53,685 bytes.
 Native Linux/macOS/Cygwin/standalone MSYS2, Bash 3.2 and real-JDK
@@ -264,9 +276,9 @@ checks cover eligible per-major defaults, C-order fallback for absent/dangling/
 wrong-major/unrelated defaults, distro-incompatible defaults, physical home/env
 and exec output, default major mismatch, exact range-shaped directory names,
 uninstall exclusion, operational link-read failures without installation, and
-offline-first `-i` followed by installation on a genuine local miss. The full
+offline-first selection followed by installation on a genuine local miss. The full
 suite includes these checks. The optional native Windows smoke also checks
-`home`/`env -i` for `21+` and `21..25` through actual junctions. Payloads remain
+`home`/`env` for `21+` and `21..25` through actual junctions. Payloads remain
 inert fixtures, not real JDKs.
 
 Verification on 2026-11-02: Bash syntax validation, focused range checks,
@@ -454,7 +466,7 @@ outstanding; ShellCheck was unavailable.
 Local directory inventory checks (2026-11-01): `bash tests/install.sh --inventory`
 covers missing/invalid manifests, diagnostic rows without guessed metadata,
 `invalid JDK` precedence for missing launchers, exact-ID home/env/exec/default
-selection and offline `-i`, exclusion from short selectors, names with spaces,
+selection and offline reuse, exclusion from short selectors, names with spaces,
 hidden directories, reserved aliases and non-directory entries. It checks
 exact-ID removal without launchers, default replacement without target metadata,
 major-reference cleanup and restoring a working manifestless default after a
@@ -743,8 +755,8 @@ IDs, and primary stdout versus informational stderr. A competing local match
 introduced during download verifies that continuation uses the exact installed
 ID. Windows output cases are simulated, with spaces in isolated data paths.
 
-The optional native Windows smoke also exercises `i -d`, `d -i`, `h -i` and
-`e <ID> -i`, with real junctions and native/Bash path conversion. Its copied
+The optional native Windows smoke also exercises `i -d`, `d <ID>`, `h <ID>` and
+`e <ID>`, with real junctions and native/Bash path conversion. Its copied
 `cmd.exe` launchers remain inert substitutes for JDKs; it proves no real Java
 runtime behavior.
 

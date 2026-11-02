@@ -31,7 +31,7 @@ done
 [ -L "$XDG_DATA_HOME/jvm/jdks/default" ]
 [ -L "$XDG_DATA_HOME/jvm/jdks/21" ]
 "$BASH_BIN" "$ROOT/jvm" install 25+1-test
-"$BASH_BIN" "$ROOT/jvm" d -i 25
+"$BASH_BIN" "$ROOT/jvm" d 25
 [ "$XDG_DATA_HOME/jvm/jdks/default" -ef "$XDG_DATA_HOME/jvm/jdks/25+1-test" ]
 [ "$XDG_DATA_HOME/jvm/jdks/21" -ef "$XDG_DATA_HOME/jvm/jdks/21+1-test" ]
 [ "$XDG_DATA_HOME/jvm/jdks/25" -ef "$XDG_DATA_HOME/jvm/jdks/25+1-test" ]
@@ -46,8 +46,8 @@ for selector in '' 25+1-test 25 21+ 21..25; do
         "$BASH_BIN" "$ROOT/jvm" home > "$TEMP/home.out" 2> "$TEMP/home.err"
         "$BASH_BIN" "$ROOT/jvm" env > "$TEMP/env.out" 2> "$TEMP/env.err"
     else
-        "$BASH_BIN" "$ROOT/jvm" h -i "$selector" > "$TEMP/home.out" 2> "$TEMP/home.err"
-        "$BASH_BIN" "$ROOT/jvm" e "$selector" -i > "$TEMP/env.out" 2> "$TEMP/env.err"
+        "$BASH_BIN" "$ROOT/jvm" h "$selector" > "$TEMP/home.out" 2> "$TEMP/home.err"
+        "$BASH_BIN" "$ROOT/jvm" e "$selector" > "$TEMP/env.out" 2> "$TEMP/env.err"
     fi
     [ ! -s "$TEMP/home.err" ] && [ ! -s "$TEMP/env.err" ]
     [ "$(< "$TEMP/home.out")" = "$expected" ]
@@ -60,12 +60,12 @@ for selector in '' 25+1-test 25 21+ 21..25; do
     ' bash "$TEMP/env.out" "$(cygpath -m "$expected")" "$(cygpath -u "$expected")"
 done
 # Configured bare majors retain stable junction output, while exec uses the
-# physical installation. Selectorless -i also preserves the existing default.
+# physical installation. Selectorless selection also preserves the existing default.
 printf 'java=21\ndistro=unused\n' > .jvmrc
-[ "$("$BASH_BIN" "$ROOT/jvm" h -i)" = "$base/jdks/21" ]
-[ "$("$BASH_BIN" "$ROOT/jvm" x -i -- "$BASH_BIN" -c 'printf "%s" "$JAVA_HOME"')" = "$(cygpath -m "$base/jdks/21+1-test")" ]
+[ "$("$BASH_BIN" "$ROOT/jvm" h)" = "$base/jdks/21" ]
+[ "$("$BASH_BIN" "$ROOT/jvm" x -- "$BASH_BIN" -c 'printf "%s" "$JAVA_HOME"')" = "$(cygpath -m "$base/jdks/21+1-test")" ]
 rm .jvmrc
-[ "$("$BASH_BIN" "$ROOT/jvm" h -i)" = "$base/jdks/default" ]
+[ "$("$BASH_BIN" "$ROOT/jvm" h)" = "$base/jdks/default" ]
 "$BASH_BIN" "$ROOT/jvm" uninstall 25
 [ "$XDG_DATA_HOME/jvm/jdks/default" -ef "$XDG_DATA_HOME/jvm/jdks/21+1-test" ]
 [ ! -L "$XDG_DATA_HOME/jvm/jdks/25" ]

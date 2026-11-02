@@ -82,9 +82,11 @@ check_env() {
         if [ "$4" = 0 ]; then [ "$PATH" = "$3:$original" ]; else [ "$PATH" = "$original" ]; fi
     ' bash "$TEMP/out" "$java" "$bin" "$omit" "$graal" || fail 'evaluated environment differs'
 }
+# A genuine miss attempts installation, which fails before storage/network access
+# because this offline output harness intentionally has no installation tools.
 for command in home env; do
-    run 1 "$command"; diagnostic 'No JDK currently set as the default'
-    run 1 "$command" 21; diagnostic 'No JDK found matching: 21'
+    run 1 "$command"; diagnostic 'required utility missing: mktemp'
+    run 1 "$command" 21; diagnostic 'required utility missing: mktemp'
     for selector in '' 0 01 temurin '21++' '25..21' '$(touch bad)' --bad; do run 2 "$command" "$selector"; done
     run 2 "$command" 21 extra
     run 2 "$command" --help extra
@@ -99,7 +101,7 @@ base=$(cd "$XDG_DATA_HOME/jvm" && pwd -P)
 run 0 default; exact 'No JDK currently set as the default'
 run 0 default -v 21; exact 'No JDK currently set as the default for version 21'
 for command in home env; do
-    run 1 "$command"; diagnostic 'No JDK currently set as the default'
+    run 1 "$command"; diagnostic 'required utility missing: mktemp'
     run 0 "$command" 21
     if [ "$command" = home ]; then exact "$base/jdks/21+1-temurin"; else check_env "$base/jdks/21+1-temurin" "$base/jdks/21+1-temurin/bin" 21; fi
 done
@@ -124,11 +126,11 @@ for TEST_PATH in "$TEMP/tools:$bin-extra" "$TEMP/tools:/prefix$bin" "$TEMP/tools
 done
 unset TEST_PATH
 bin=$base/jdks/21/bin
-TEST_PATH="$TEMP/tools:$bin" run 0 env -i 21
-check_env "$base/jdks/21" "$bin" '-i 21' 1
-for args in '-f -i 21' '-i 21 -f' '21 -f -i'; do
+TEST_PATH="$TEMP/tools:$bin" run 0 env 21
+check_env "$base/jdks/21" "$bin" '21' 1
+for args in '-f 21' '21 -f'; do
     TEST_PATH="$TEMP/tools:$bin" run 0 e $args
-    check_env "$base/jdks/21" "$bin" '-i -f 21'
+    check_env "$base/jdks/21" "$bin" '-f 21'
 done
 for command in available list install uninstall default home a l i u d h; do
     run 2 "$command" -f; diagnostic 'unsupported flag'
@@ -143,10 +145,10 @@ make_jdk 21+9 other
 for command in home env; do
     run 0 "$command" 21
     if [ "$command" = home ]; then exact "$base/jdks/21"; else check_env "$base/jdks/21" "$base/jdks/21/bin" 21; fi
-    run 1 "$command" temurin-99; diagnostic 'No JDK found matching: temurin-99'
+    run 1 "$command" temurin-99; diagnostic 'required utility missing: mktemp'
     run 0 "$command" 21+1-temurin
     rm "$base/jdks/default"
-    run 1 "$command"; diagnostic 'No JDK currently set as the default'
+    run 1 "$command"; diagnostic 'required utility missing: mktemp'
     # Explicit selection does not need a usable default.
     dangling_link "$base/jdks/99+1-missing" "$base/jdks/default"
     run 1 "$command"; diagnostic 'default JDK is missing or unusable'
@@ -176,7 +178,6 @@ rm "$base/jdks/21"
 dangling_link "$base/jdks/99+1-missing" "$base/jdks/21"
 for command in home env; do
     run 1 "$command" 21; diagnostic 'default JDK for version 21 is unavailable'
-    run 1 "$command" -i 21; diagnostic 'default JDK for version 21 is unavailable'
 done
 rm "$base/jdks/21"
 ln -s "$base/jdks/17+2-graalvm-community" "$base/jdks/21"
@@ -193,10 +194,6 @@ chmod +x "$TEMP/tools/awk"
 for command in home env; do
     run 0 "$command" 21
     if [ "$command" = home ]; then exact "$base/jdks/21"; else check_env "$base/jdks/21" "$base/jdks/21/bin" 21; fi
-    run 0 "$command" -i 21
-    if [ "$command" = home ]; then exact "$base/jdks/21"; else
-        check_env "$base/jdks/21" "$base/jdks/21/bin" '-i 21'
-    fi
 done
 mv "$TEMP/awk" "$TEMP/tools/awk"
 # JVM type determines GraalVM output independently of the distro/ID name.
@@ -210,8 +207,8 @@ for selector in '' 23 23+1-unrelated-vendor unrelated-vendor-23; do
     TEST_PATH="$TEMP/tools:$expected/bin" run 0 env ${selector:+"$selector"}
     check_env "$expected" "$expected/bin" "$selector" 1 1
 done
-TEST_PATH="$TEMP/tools:$base/jdks/23/bin" run 0 e -i -f 23
-check_env "$base/jdks/23" "$base/jdks/23/bin" '-i -f 23' 0 1
+TEST_PATH="$TEMP/tools:$base/jdks/23/bin" run 0 e -f 23
+check_env "$base/jdks/23" "$base/jdks/23/bin" '-f 23' 0 1
 # Missing/invalid metadata remains usable by exact ID and global default.
 mv "$base/jdks/23+1-unrelated-vendor/.jvm-manifest" "$TEMP/graal-manifest"
 for state in missing invalid; do
