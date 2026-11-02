@@ -128,12 +128,13 @@ completed features; implementation does not imply full platform verification.
    runs a command with a selected JDK. See [JDK execution](#jdk-execution).
    The paired `shell`/`s` command was excluded as unfeasible: interactive startup
    files can override JAVA_HOME and PATH, defeating the selected environment.
-6. **Real JDK smoke testing.** Add an optional end-to-end check covering download,
-   installation, default selection, actual `java`/`javac` execution and
-   uninstallation in isolated storage. Current fixture tests and native Windows
-   junction traversal do not establish that a downloaded Java runtime works.
-   Keep live downloads separate from the deterministic offline suite, following
-   the verification procedures in [AGENTS.md](AGENTS.md).
+6. **Real JDK smoke testing (implemented 2026-11-02).** The optional
+   `tests/jdk-smoke.sh` covers download, verified installation, first-install
+   default selection, offline listing/reinstall, actual `java`/`javac` execution
+   and uninstallation in isolated storage. It passed with Temurin 21 on native
+   Windows Git Bash. Other native hosts and Bash 3.2 remain unverified.
+   Live downloads remain separate from the deterministic offline suite;
+   commands and results are recorded in [tests/README.md](tests/README.md).
 7. **Portability checks and CI.** Run the offline suite on Linux, macOS and
    Windows, including actual Bash 3.2, and add CI for repeatable coverage.
    Native Cygwin and standalone MSYS2 verification also remain outstanding.
@@ -286,7 +287,8 @@ conversion and validation. Restore the caller's umask after optional installatio
 and clean this operation's private installation/cache staging before exec,
 because successful process replacement does not run Bash EXIT traps.
 Shell-function, shim, and mutable session-link approaches were considered and
-discarded. Native real-JDK execution and broader platform verification remain
+discarded. Real-JDK execution passed on native Windows Git Bash with Temurin 21
+on 2026-11-02 through `tests/jdk-smoke.sh`; broader platform verification remains
 outstanding.
 
 **User correction (2026-11-01):** retain `exec`/`x` and remove `shell`/`s`,

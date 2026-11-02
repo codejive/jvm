@@ -6,6 +6,7 @@ Run from the repository root in Bash (3.2 or later):
 bash -n ./jvm
 bash -n tests/run.sh
 bash -n tests/live-smoke.sh
+bash -n tests/jdk-smoke.sh
 bash -n tests/install.sh
 bash -n tests/home-env.sh
 bash -n tests/default-native-windows.sh
@@ -240,6 +241,42 @@ a no-match error is not an empty successful listing. This check uses the real
 host and installed downloader, then lists again from its temporary cache. It
 does not install or execute Java. It is excluded from the ordinary suite.
 
+### Optional real JDK smoke test
+
+```bash
+bash tests/jdk-smoke.sh
+# Or choose a supported installation selector on this host:
+bash tests/jdk-smoke.sh temurin-25
+```
+
+This separately invoked test downloads and executes a real JDK; it is never
+called by `tests/run.sh`. The default selector is `temurin-21`. It needs network
+access for metadata/artifact downloads, enough temporary disk space for the
+archive and extracted JDK, and the ordinary host utilities required by `jvm`.
+An unavailable or ambiguous selector fails rather than choosing another JDK.
+No preinstalled Java or compiler is needed.
+
+The test creates private HOME/XDG roots and a project directory with spaces,
+ignores the contributor's configuration, clears inherited Java-specific settings,
+and cleans its temporary storage on completion or interruption. It checks the
+installed manifest and first-install default, then removes the metadata cache
+and blocks curl/wget for all remaining operations, failing if either is called.
+It verifies listing and exact-ID reinstall, runs `java -version` and
+`javac -version` through `jvm exec`, compiles and executes a tiny Java program,
+and checks that the runtime belongs to the selected JAVA_HOME and receives an
+argument containing spaces. Finally it uninstalls the JDK and checks empty
+inventory, removed defaults/staging, and absence of metadata cache recreation.
+It never changes the contributor's JDK inventory, defaults or shell profiles.
+
+Verification on 2026-11-02: `bash tests/jdk-smoke.sh` passed on native Windows
+Git Bash 5.3.15 with downloaded Temurin `21.0.13+9-temurin`, including real
+compilation/runtime execution through the selected environment and uninstall.
+Bash syntax validation passed for `jvm` and the new script. This establishes
+real-JDK execution for that host/JDK combination; Bash 3.2, native Linux, macOS,
+Cygwin and standalone MSYS2 remain unverified. Earlier fixture-only verification
+notes above are historical. ShellCheck was unavailable. The distributed `jvm`
+script is unchanged.
+
 On Windows PowerShell, use a real Bash executable, for example:
 
 ```powershell
@@ -247,6 +284,7 @@ On Windows PowerShell, use a real Bash executable, for example:
 & 'C:\Program Files\Git\bin\bash.exe' tests/run.sh
 & 'C:\Program Files\Git\bin\bash.exe' tests/install.sh
 & 'C:\Program Files\Git\bin\bash.exe' tests/live-smoke.sh
+& 'C:\Program Files\Git\bin\bash.exe' tests/jdk-smoke.sh
 ```
 
 Syntax checks and the offline suite run under Git Bash 5.3.15. Native Git Bash/
