@@ -1013,9 +1013,20 @@ range_checks() {
     run 0 list 21..25; contains '25+9-temurin'; contains '25+10-temurin'
     [[ $(< "$TEMP/out") != *'26+1-other-vendor'* ]] || fail 'list exceeded upper bound'
     run 0 l temurin-25+; contains '28+1-temurin'
+    for command in install i; do
+        run 0 "$command" 21..25; diagnostic 'Already installed 25+9-temurin'
+        run 0 "$command" other-vendor-25+; diagnostic 'Already installed 26+1-other-vendor'
+    done
+    printf 'java=21..25\ndistro=unavailable-vendor\n' > .jvmrc
+    run 0 i; diagnostic 'Already installed 25+9-temurin'
+    run 0 install -d; diagnostic 'Already installed 25+9-temurin'
+    [ "$base/default" -ef "$base/25+9-temurin" ] || fail 'configured range install -d selection'
+    rm .jvmrc
     [ "$(< "$TEST_LOG")" = "$before" ] || fail 'local ranges used network'
     rm "$base/25"
     run 0 home 21..25; contains '/25+10-temurin'
+    run 0 install 21..25; diagnostic 'Already installed 25+10-temurin'
+    rm "$base/25"
     run 1 home temurin-25; diagnostic 'Multiple JDKs match'
     for id in missing 26+1-other-vendor; do
         if [ "$id" = missing ]; then dangling_link "$base/$id" "$base/25"
@@ -1036,6 +1047,7 @@ range_checks() {
     cp "$TOOLS/readlink" "$TEMP/saved-readlink"
     printf '#!%s\nexit 1\n' "$BASH_BIN" > "$TOOLS/readlink"
     run 1 home 21..25; diagnostic 'cannot read range major default'
+    run 1 install 21..25; diagnostic 'cannot read range major default'
     mv "$TEMP/saved-readlink" "$TOOLS/readlink"
     [ "$(< "$TEST_LOG")" = "$before" ] || fail 'range preference failure accessed network'
     # Existing range-shaped directories retain exact local-ID precedence.
@@ -1049,7 +1061,9 @@ range_checks() {
     run 0 install other-vendor-21
     before=$(< "$TEST_LOG")
     run 0 home 21+; contains '/21+1-other-vendor'
+    run 0 install 21+; diagnostic 'Already installed 21+1-other-vendor'
     [ "$(< "$TEST_LOG")" = "$before" ] || fail 'offline-first range checked for newer remote JDK'
+    run 0 install temurin-21+; diagnostic 'Successfully installed 25+1-temurin'
     run 0 home temurin-21+; contains '/25+1-temurin'
     run 1 env 26+; diagnostic 'No JDK found matching'
     check 'range install-on-demand stays offline-first and continues with the installed ID'
@@ -1085,7 +1099,7 @@ configuration_checks() {
     run 0 install vendor-22; diagnostic 'Already installed 22+1-vendor'
     printf 'java=21..25\ndistro=vendor\n' > .jvmrc
     index; row 24+1 vendor; row 25+1 temurin
-    run 0 install; diagnostic 'Successfully installed 24+1-vendor'
+    run 0 install; diagnostic 'Already installed 25+1-temurin'
     printf 'java=temurin-25+\ndistro=vendor\n' > .jvmrc
     run 0 install; diagnostic 'Already installed 25+1-temurin'
     check 'configuration Java/distro precedence, explicit IDs/distros/ranges and selectorless install'

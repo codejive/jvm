@@ -21,7 +21,9 @@ $script:GlobalConfig = $null
 function Stop-Jvm {
     param([string]$Message, [int]$Code = 1)
     $script:ExitCode = $Code
-    throw $Message
+    $exception = [Exception]::new($Message)
+    $exception.Data['JvmExpected'] = $true
+    throw $exception
 }
 
 function Test-ExistingInstallationDirectory {
@@ -39,10 +41,15 @@ function Write-JvmError {
 }
 
 # Use PowerShell streams so callers can redirect, merge or capture script output.
-# Continue is explicit: confirmations on stream 2 must not abort with our Stop policy.
+# Native stderr records display only their message. An anonymous command avoids
+# appending a function name to the formatting ID. Continue keeps stream 2 output
+# from aborting under our Stop policy.
 function Write-JvmDiagnostic {
     param([string]$Message)
-    Write-Error -Message $Message -ErrorAction Continue
+    $record = [System.Management.Automation.ErrorRecord]::new(
+        [Exception]::new($Message), 'NativeCommandErrorMessage',
+        [System.Management.Automation.ErrorCategory]::FromStdErr, $null)
+    & { [CmdletBinding()] param($Item); $PSCmdlet.WriteError($Item) } $record -ErrorAction Continue
 }
 
 function Get-AbsolutePath {
@@ -1211,6 +1218,17 @@ function Install-Jdk {
             return $Selector
         }
         $parsed = Get-Selector $Selector
+        if ($parsed.Kind -eq 'range') {
+            $row = Resolve-Installed $Selector -Probe
+            if ($row) {
+                if ($ExpectedMajor -and $row.Major -cne $ExpectedMajor) {
+                    Stop-Jvm "selected JDK has Java major $($row.Major), expected $ExpectedMajor"
+                }
+                Initialize-InstalledDefaults $row.Id $row.Major $MakeDefault
+                Write-JvmDiagnostic ("Already installed $($row.Id)")
+                return $row.Id
+            }
+        }
         if ($parsed.Kind -notin @('id', 'major', 'distro-major', 'range')) {
             Stop-Jvm 'selector must be a full ID, major, or distro-major (version ranges allowed except for uninstall)' 2
         }
@@ -1631,7 +1649,7 @@ Selectors:
   install/uninstall/default/home/env/exec: full ID, major, or distro-major.
   Ranges (except uninstall): 21+, 21..26, temurin-21+; listings show all matches.
   Ranges select the highest major, then its eligible default, then C ID order.
-  Bare install majors/ranges use configured distro or Temurin.
+  Install ranges reuse local matches first; remote majors/ranges use configured distro or Temurin.
   Majors use java_version; IDs use version, with a Java-major prefix if needed.
 
 Options:
@@ -1758,6 +1776,25 @@ try {
     Invoke-Jvm @($args)
     exit $script:CommandExitCode
 } catch {
-    Write-JvmError $_.Exception.Message
-    exit $script:ExitCode
+    # .NET calls can wrap ordinary filesystem/network failures in an invocation
+    # exception. Inspect the chain without treating programming errors as usage.
+    $failure = $_.Exception
+    $expected = $false
+    while ($failure) {
+        if ($failure.Data.Contains('JvmExpected') -or
+            $failure -is [IO.IOException] -or
+            $failure -is [UnauthorizedAccessException] -or
+            $failure -is [Net.WebException] -or
+            $failure -is [Security.SecurityException]) {
+            $expected = $true
+            break
+        }
+        $failure = $failure.InnerException
+    }
+    if ($expected) {
+        Write-JvmError $_.Exception.Message
+        exit $script:ExitCode
+    }
+    Write-Error -ErrorRecord $_ -ErrorAction Continue
+    exit 1
 }

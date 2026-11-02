@@ -80,7 +80,7 @@ Selectors:
   install/uninstall/default/home/env/exec: full ID, major, or distro-major.
   Ranges (except uninstall): 21+, 21..26, temurin-21+; listings show all matches.
   Ranges select the highest major, then its eligible default, then C ID order.
-  Bare install majors/ranges use configured distro or Temurin; remote range ties use C ID order.
+  Install ranges reuse local matches first; remote majors/ranges use configured distro or Temurin.
   Majors use java_version; IDs use version, with a Java-major prefix if needed.
   Bare local majors use an existing per-version default, otherwise match installed JDKs.
   Existing folder names are exact local IDs; ordinary ambiguity needs an exact ID.
@@ -1379,6 +1379,19 @@ install_jdk() {
         INSTALLED_ID=$selector
         install_default "$make_default" || return 1
         printf 'Already installed %s\n' "$selector" >&2; return 0
+    fi
+    classify_selector "$selector"
+    if [ "$SEL_KIND" = range ]; then
+        rows=$(resolve_installed "$selector" probe); result=$?
+        case "$result" in
+            0) INSTALLED_ID=${rows%%$'\t'*}
+               row_field 12 "$rows"
+               check_major "$REPLY" "$expected_major" || return 1
+               install_default "$make_default" || return 1
+               printf 'Already installed %s\n' "$INSTALLED_ID" >&2; return 0 ;;
+            4) ;; # Only a genuine local miss permits remote resolution.
+            *) return "$result" ;;
+        esac
     fi
     # Only an installed directory may use a name that is not a remote selector.
     installation_selector "$selector" || return $?

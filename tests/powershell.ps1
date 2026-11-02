@@ -1,3 +1,5 @@
+param([string]$PowerShellExecutable = (Join-Path $PSHOME 'powershell.exe'))
+
 $ErrorActionPreference = 'Stop'
 if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -lt 1) {
     throw "This smoke suite requires Windows PowerShell 5.1; found $($PSVersionTable.PSVersion)."
@@ -21,7 +23,7 @@ function Assert-Equal {
 function Invoke-JvmTest {
     param([string[]]$Arguments, [int]$ExpectedExitCode = 0, [switch]$Interactive,
         [switch]$Redirect, [switch]$Capture, [switch]$Streams)
-    $powershellExe = Join-Path $PSHOME 'powershell.exe'
+    $powershellExe = $PowerShellExecutable
     $stdout = Join-Path $testRoot ([guid]::NewGuid().ToString('N') + '.out')
     $stderr = Join-Path $testRoot ([guid]::NewGuid().ToString('N') + '.err')
     $redirectOut = "$stdout.redirect"
@@ -89,6 +91,8 @@ try {
     [Environment]::SetEnvironmentVariable('XDG_CONFIG_HOME', $config)
     $argsFile = Join-Path $testRoot 'exec arguments.txt'
     [Environment]::SetEnvironmentVariable('JVM_TEST_ARGS', $argsFile)
+    # Ignore configuration in the contributor's working directory.
+    Push-Location $testRoot
     foreach ($arguments in @(@('--version'), @('--help'), @('list'), @('default'), @('default', '-v', '21'))) {
         $streams = Invoke-JvmTest $arguments -Redirect -Streams
         if (-not $streams.Out) { throw 'Primary result was not captured by >.' }
@@ -96,7 +100,28 @@ try {
     }
     $streams = Invoke-JvmTest @('bogus') -ExpectedExitCode 2 -Redirect -Streams
     Assert-Equal $streams.Out '' 'Usage error leaked to stdout.'
+    Assert-Equal $streams.Err 'jvm: usage: jvm.ps1 <command> [selector]; use jvm.ps1 --help' `
+        'Usage error included PowerShell error formatting.'
     if ($streams.Err -notmatch 'jvm:') { throw 'Usage error was not captured by 2>.' }
+    $originalScriptPath = $scriptPath
+    $programErrorScript = Join-Path $testRoot 'program-error.ps1'
+    [IO.File]::WriteAllText($programErrorScript,
+        [IO.File]::ReadAllText($scriptPath).Replace('    Invoke-Jvm @($args)',
+            "    throw 'synthetic program error'"))
+    try {
+        $scriptPath = $programErrorScript
+        $streams = Invoke-JvmTest @('--version') -ExpectedExitCode 1 -Redirect -Streams
+        if ($streams.Err -notmatch 'synthetic program error' -or
+            $streams.Err -notmatch 'Exception:|CategoryInfo') {
+            throw "Unexpected program error lost its detailed diagnostic: $($streams.Err)"
+        }
+        [IO.File]::WriteAllText($programErrorScript,
+            [IO.File]::ReadAllText($originalScriptPath).Replace('    Invoke-Jvm @($args)',
+                "    throw [IO.IOException]::new('synthetic I/O failure')"))
+        $streams = Invoke-JvmTest @('--version') -ExpectedExitCode 1 -Redirect -Streams
+        Assert-Equal $streams.Err 'jvm: synthetic I/O failure' `
+            'Operational exception included PowerShell error formatting.'
+    } finally { $scriptPath = $originalScriptPath }
     Invoke-JvmTest @('available', 'not_a_selector') -ExpectedExitCode 2 | Out-Null
     Invoke-JvmTest @('exec') -ExpectedExitCode 2 | Out-Null
 
@@ -129,7 +154,10 @@ try {
     [IO.File]::WriteAllText((Join-Path $testRoot '.jvmrc'), "java=$id`n")
     Push-Location $testRoot
     try { Assert-Equal (Invoke-JvmTest @('home')) $install 'Project Java setting was ignored.' }
-    finally { Pop-Location }
+    finally {
+        Pop-Location
+        Remove-Item -LiteralPath (Join-Path $testRoot '.jvmrc')
+    }
     $environment = Invoke-JvmTest @('env', '-f', $id)
     $expectedUsage = "# Use: iex (& '" + $scriptPath.Replace("'", "''") + "' env -f '$id')"
     Assert-Equal (($environment -split "`r?`n")[0]) $expectedUsage 'env usage omitted the quoted script path.'
@@ -162,6 +190,7 @@ try {
     Assert-Equal $streams.Out $environment 'Assignment capture lost environment statements.'
     Assert-Equal $streams.Err '' 'Environment assignment capture emitted stderr.'
     $streams = Invoke-JvmTest @('install', $id) -Redirect -Streams
+    Assert-Equal $streams.Err "Already installed $id" 'Install confirmation included error formatting.'
     Assert-Equal $streams.Out '' 'Install confirmation leaked to stdout.'
     if ($streams.Err -notmatch 'Already installed') { throw 'Install confirmation was not captured by 2>.' }
     Invoke-JvmTest @('install', $id) | Out-Null
@@ -250,6 +279,23 @@ try {
     Assert-Equal (Invoke-JvmTest @('default')) $secondId 'Global default replacement failed.'
     Assert-Equal (Invoke-JvmTest @('default', '-v', '21')) $secondId `
         'Per-major default replacement failed.'
+    foreach ($selector in @('21+', 'temurin-21..25')) {
+        $streams = Invoke-JvmTest @('install', $selector) -Redirect -Streams
+        Assert-Equal $streams.Err "Already installed $secondId" 'Range confirmation included error formatting.'
+        Assert-Equal $streams.Out '' 'Range install confirmation leaked to stdout.'
+        if ($streams.Err -notmatch [regex]::Escape("Already installed $secondId")) {
+            throw 'Range install did not reuse the eligible major default.'
+        }
+    }
+    [IO.File]::WriteAllText((Join-Path $testRoot '.jvmrc'), "java=21+`ndistro=unavailable-vendor`n")
+    Push-Location $testRoot
+    try {
+        $streams = Invoke-JvmTest @('i', '-d') -Redirect -Streams
+        if ($streams.Err -notmatch [regex]::Escape("Already installed $secondId")) {
+            throw 'Configured range install did not reuse the local JDK.'
+        }
+    } finally { Pop-Location }
+    Assert-Equal (Invoke-JvmTest @('default')) $secondId 'Range install -d selected the wrong JDK.'
     $streams = Invoke-JvmTest @('uninstall', $secondId) -Redirect -Streams
     Assert-Equal $streams.Out '' 'Uninstall confirmation leaked to stdout.'
     if ($streams.Err -notmatch 'Successfully uninstalled') { throw 'Uninstall confirmation was not captured by 2>.' }
@@ -260,8 +306,9 @@ try {
     if (Test-Path -LiteralPath $install) { throw 'Uninstall left the installation directory behind.' }
     if (Test-Path -LiteralPath $secondInstall) { throw 'Uninstall left the replacement behind.' }
 
-    [Console]::Out.WriteLine("PowerShell $($PSVersionTable.PSVersion) isolated smoke checks passed.")
+    [Console]::Out.WriteLine("Isolated smoke checks passed using $PowerShellExecutable.")
 } finally {
+    if ((Get-Location).Path -eq $testRoot) { Pop-Location }
     foreach ($name in $oldEnvironment.Keys) {
         [Environment]::SetEnvironmentVariable($name, $oldEnvironment[$name])
     }

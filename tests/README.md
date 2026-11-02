@@ -1,5 +1,15 @@
 # Discovery, installation and uninstallation verification
 
+Range install reuse (2026-11-02): `bash tests/install.sh --ranges` covers
+offline reuse for explicit and configured ranges, aliases, per-major preferences,
+C-order fallback, distro filtering, `-d`, local resolution failures and remote
+installation only on a genuine miss. The focused range and configuration checks and the native
+Windows PowerShell 5.1 isolated smoke suite passed. The PowerShell harness now
+runs from its temporary project directory so checkout configuration is ignored.
+Bash syntax checks and `git diff --check` passed. Distributed script sizes:
+`jvm` 67,383 bytes; `jvm.ps1` 75,231 bytes. Other platforms and Bash 3.2 were
+not rerun for this change.
+
 Run from the repository root in Bash (3.2 or later):
 
 ```bash
@@ -47,6 +57,8 @@ Run the isolated PowerShell 5.1 smoke suite from the repository root:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\powershell.ps1
+# Run the same checks against an installed PowerShell 7 executable:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\powershell.ps1 -PowerShellExecutable 'C:\Program Files\PowerShell\7\pwsh.exe'
 ```
 
 The suite creates synthetic launchers, manifests, XDG roots, and Windows
@@ -75,7 +87,19 @@ Verification on 2026-11-02: the expanded isolated suite passed under Windows
 PowerShell 5.1.26100.9711. `bash -n ./jvm` and `git diff --check` passed.
 `jvm.ps1` measures 73,362 bytes with LF line endings. Network/archive paths
 and other platforms were not validated by this change. Child output is forwarded
-as text lines, and stderr uses normal PowerShell error-record formatting.
+as text lines. The later plain-stderr change below supersedes normal error-record
+formatting for informational and child stderr output.
+
+Plain stderr (2026-11-02): informational messages now use native-style stderr
+records, preserving stream 2 redirection while displaying only message text.
+Expected usage and operational failures also display plain messages; only
+unexpected program errors retain detailed PowerShell error formatting. The install tests
+assert exact confirmation text for exact IDs and range reuse, so source
+locations and error headers fail the checks.
+The isolated suite passed against both Windows PowerShell 5.1 and PowerShell 7,
+including plain usage and I/O failures and retained diagnostics for an injected
+program error. Syntax parsing and `git diff --check` passed. The distributed
+`jvm.ps1` is 76,384 bytes. Network/archive paths were not exercised.
 
 The offline suite creates temporary working directories, HOME and XDG roots,
 including paths with spaces. It never reads the contributor's `.jvmrc` or user

@@ -50,8 +50,11 @@ invalid selector syntax exit 2 before any side effect.
   child's streams pass through unchanged in Bash. PowerShell maps stdout to
   success stream 1 and stderr to error stream 2, including child output, so
   `>`, `2>`, `2>&1`, pipelines and assignment capture work at a PowerShell
-  prompt. Error records use PowerShell's normal diagnostic formatting;
-  informational stderr records do not change the command's exit status.
+  prompt. Expected usage and operational failures, progress, confirmations,
+  ambiguity tables and child stderr use native-style stderr records that display
+  only the message, without a source location or error header. Only unexpected
+  program errors use PowerShell's detailed diagnostic formatting. Informational
+  stderr records do not change the command's exit status.
 - No match reports `No JDK found matching: <selector>`.
 - Multiple matches for `install`, `uninstall`, `default`, `home`, `env` or
   `exec` print `Multiple JDKs match, try again using one of the following
@@ -77,7 +80,11 @@ at four stops; longer values stay untruncated with one separating tab.
   filters it, returning every match without ambiguity errors. With no
   installations it prints `No JDKs are installed. Use 'install' to install one`
   and exits 0. A selector that matches nothing in a nonempty inventory exits 1.
-- `install [-d] [selector]` resolves one remote artifact and installs it. It is
+- `install [-d] [selector]` first resolves range selectors against installed
+  JDKs, reporting `Already installed <ID>` when a match exists, using the same
+  local selection rules as `home`, `env` and `exec`. Only a genuine local miss
+  resolves a remote artifact for a range. Other selectors resolve one remote
+  artifact and install it, except for exact local IDs. It is
   idempotent (an existing complete installation reports `Already installed`
   without downloading). A first install initializes a missing default and
   per-major default but never replaces existing ones; `-d` installs and selects
@@ -188,7 +195,11 @@ C order, independent of row order; artifact collisions still fail. `default -v N
 still requires the resolved JDK's major to be N. `available` and `list` return
 all matches in their usual order. Range `home`/`env`/`exec` use the physical
 home. A local match at a lower major wins over remote availability of a higher
-one (`home 21+` with only Java 21 installed uses it offline).
+one (`home 21+` or `install 21+` with only Java 21 installed uses it offline).
+This local-first policy applies to explicit and configured install ranges;
+the configured installation distro does not filter local matches. Local
+resolution failures never trigger a remote installation. Reused range matches
+follow the normal install default initialization and `-d` rules.
 
 ### Project and user configuration
 
@@ -273,6 +284,9 @@ and supported archive format, plus the explicit or configured distro:
 
 - An exact existing local directory with usable launchers is reused without
   metadata; otherwise an exact ID is matched in the index.
+- Ranges reuse a matching installed JDK before consulting configuration for the
+  installation distro or fetching metadata; only a local miss uses the remote
+  rules below.
 - A bare major or range uses the configured distro (default `temurin`);
   explicit distro-major and full IDs keep their meaning. If the distro has no
   match, installation fails without trying another distribution.
