@@ -50,7 +50,7 @@ TEST_REAL_RM=$(command -v rm)
 for tool in uname ldd curl wget mv rm; do
     printf '#!%s\n' "$BASH_BIN" > "$TOOLS/$tool"
     case "$tool" in
-        uname) printf '%s\n' 'case "$1" in -s) echo "$TEST_SYSTEM" ;; -m) echo "$TEST_MACHINE" ;; esac' >> "$TOOLS/$tool" ;;
+        uname) printf '%s\n' 'echo "$TEST_SYSTEM $TEST_MACHINE"' >> "$TOOLS/$tool" ;;
         ldd) printf '%s\n' 'echo "ldd (GNU libc)"' >> "$TOOLS/$tool" ;;
         rm) cat >> "$TOOLS/$tool" <<'EOF'
 for path in "$@"; do

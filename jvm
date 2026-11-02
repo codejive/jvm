@@ -128,8 +128,9 @@ require_tools() {
 }
 
 detect_host() {
-    local system machine libc
-    system=$(uname -s) && machine=$(uname -m) || return 1
+    local system machine libc info
+    info=$(uname -s -m) || return 1
+    system=${info%% *} machine=${info#* }
     case "$system" in
         Linux) OS=linux ;;
         Darwin) OS=macosx ;;

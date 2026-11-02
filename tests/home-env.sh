@@ -17,7 +17,7 @@ for tool in awk readlink; do
     path=$(command -v "$tool")
     printf '#!%s\nexec "%s" "$@"\n' "$BASH_BIN" "$path" > "$TEMP/tools/$tool"
 done
-printf '#!%s\ncase "$1" in -s) echo "$TEST_SYSTEM" ;; -m) echo x86_64 ;; esac\n' "$BASH_BIN" > "$TEMP/tools/uname"
+printf '#!%s\necho "$TEST_SYSTEM x86_64"\n' "$BASH_BIN" > "$TEMP/tools/uname"
 printf '#!%s\necho "GNU libc"\n' "$BASH_BIN" > "$TEMP/tools/ldd"
 printf '#!%s\n[ "$TEST_CONVERT_FAIL" = 0 ] || exit 1\ncase "$1" in -m) printf "C:%%s\\n" "$2" ;; -u) printf "%%s\\n" "${2#C:}" ;; esac\n' "$BASH_BIN" > "$TEMP/tools/cygpath"
 chmod +x "$TEMP/tools/"*

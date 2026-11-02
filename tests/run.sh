@@ -29,7 +29,7 @@ export TEST_HEADERS=etag
 for tool in uname ldd getconf curl wget cygpath; do
     printf '#!%s\n' "$BASH_BIN" > "$TOOLS/$tool"
     case "$tool" in
-    uname) printf '%s\n' 'case "$1" in -s) echo "$TEST_SYSTEM" ;; -m) echo "$TEST_MACHINE" ;; esac' >> "$TOOLS/$tool" ;;
+    uname) printf '%s\n' 'echo "$TEST_SYSTEM $TEST_MACHINE"' >> "$TOOLS/$tool" ;;
     ldd) printf '%s\n' 'case "$TEST_LIBC" in glibc) echo "ldd (GNU libc) 2.39" ;; musl) echo "musl libc" >&2; exit 1 ;; *) exit 1 ;; esac' >> "$TOOLS/$tool" ;;
     getconf) printf '%s\n' 'exit 1' >> "$TOOLS/$tool" ;;
     cygpath) printf '%s\n' 'printf "%s/%s\n" "$TEST_DRIVE_ROOT" "${2:3}"' >> "$TOOLS/$tool" ;;
