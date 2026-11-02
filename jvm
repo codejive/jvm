@@ -160,23 +160,28 @@ detect_host() {
 }
 
 absolute_path() {
+    REPLY=
     case "$1" in
-        /*) printf '%s\n' "$1" ;;
+        /*) REPLY=$1 ;;
         [a-zA-Z]:[\\/]*)
             [ "$OS" = windows ] && command -v cygpath >/dev/null 2>&1 || return 1
-            cygpath -u "$1" ;;
+            REPLY=$(cygpath -u "$1") ;;
         *) return 1 ;;
     esac
 }
 
+# Absolute XDG base directory in REPLY: the variable named by $1 when it holds
+# an absolute path, otherwise $HOME/$2.
+xdg_base() {
+    local name=$1
+    absolute_path "${!name:-}" && return 0
+    absolute_path "${HOME:-}" || { error "need an absolute HOME or $name"; return 1; }
+    REPLY=$REPLY/$2
+}
+
 cache_path() {
-    local root home
-    root=$(absolute_path "${XDG_CACHE_HOME:-}") || root=
-    if [ -z "$root" ]; then
-        home=$(absolute_path "${HOME:-}") || { error 'need an absolute HOME or XDG_CACHE_HOME'; return 1; }
-        root=$home/.cache
-    fi
-    CACHE=$root/jvm
+    xdg_base XDG_CACHE_HOME .cache || return 1
+    CACHE=$REPLY/jvm
     umask 077
     mkdir -p "$CACHE" || { error "cannot create cache: $CACHE"; return 1; }
     ENTRY=$CACHE/all-$OS-$ARCH-jdk-latest-v1
@@ -377,23 +382,21 @@ local_id() {
 version_major() {
     local version=$1
     case "$version" in 1.*) version=${version#1.} ;; esac
-    version=${version%%[^0-9]*}
-    [ -n "$version" ] || return 1
-    printf '%s\n' "$version"
+    REPLY=${version%%[^0-9]*}
+    [ -n "$REPLY" ]
 }
 
+# Java major of an installed JDK in REPLY.
 installation_major() {
-    local row
-    row=$(read_installation "$JDKS/$1") || return 1
-    row_field 12 "$row"
+    read_installation "$JDKS/$1" || return 1
+    row_field 12 "$ROW"
     version_major "$REPLY"
 }
 
 check_major() {
-    local actual
     [ -z "$2" ] && return 0
-    actual=$(version_major "$1") || { error 'cannot determine Java major without a valid manifest'; return 1; }
-    [ "$actual" = "$2" ] || { error "selected JDK has Java major $actual, expected $2"; return 1; }
+    version_major "$1" || { error 'cannot determine Java major without a valid manifest'; return 1; }
+    [ "$REPLY" = "$2" ] || { error "selected JDK has Java major $REPLY, expected $2"; return 1; }
 }
 
 # Field N (1-based) of the first internal row, preserving empty fields.
@@ -425,14 +428,9 @@ installation_selector() {
 }
 
 data_path() {
-    local root home
     [ -z "${DATA:-}" ] || return 0
-    root=$(absolute_path "${XDG_DATA_HOME:-}") || root=
-    if [ -z "$root" ]; then
-        home=$(absolute_path "${HOME:-}") || { error 'need an absolute HOME or XDG_DATA_HOME'; return 1; }
-        root=$home/.local/share
-    fi
-    DATA=$root/jvm
+    xdg_base XDG_DATA_HOME .local/share || return 1
+    DATA=$REPLY/jvm
     JDKS=$DATA/jdks
 }
 
@@ -480,7 +478,7 @@ read_config() {
 }
 
 config_setting() {
-    local key=$1 root home
+    local key=$1
     if [ -z "${PROJECT_CONFIG_READ:-}" ]; then
         read_config ./.jvmrc || return 1
         PROJECT_JAVA=$CONFIG_JAVA; PROJECT_DISTRO=$CONFIG_DISTRO
@@ -489,12 +487,8 @@ config_setting() {
     if [ "$key" = java ]; then SETTING=$PROJECT_JAVA; else SETTING=$PROJECT_DISTRO; fi
     [ -z "$SETTING" ] || return 0
     if [ -z "${GLOBAL_CONFIG_READ:-}" ]; then
-        root=$(absolute_path "${XDG_CONFIG_HOME:-}") || root=
-        if [ -z "$root" ]; then
-            home=$(absolute_path "${HOME:-}") || { error 'need an absolute HOME or XDG_CONFIG_HOME'; return 1; }
-            root=$home/.config
-        fi
-        read_config "$root/jvm/config" || return 1
+        xdg_base XDG_CONFIG_HOME .config || return 1
+        read_config "$REPLY/jvm/config" || return 1
         GLOBAL_JAVA=$CONFIG_JAVA; GLOBAL_DISTRO=$CONFIG_DISTRO
         GLOBAL_CONFIG_READ=1
     fi
@@ -564,60 +558,79 @@ release_platform() {
 }
 
 # Never source a manifest or vendor release file. Ignore appended TSV columns.
-manifest_row() {
-    local directory=$1 row status
-    safe_id "${directory##*/}" || return 1
-    [ -d "$directory" ] && [ ! -L "$directory" ] && [ -f "$directory/.jvm-manifest" ] || return 1
-    row=$(awk -F '\t' -v OFS='\t' -v os="$OS" -v arch="$ARCH" -v id="${directory##*/}" "$AWK_LIB"'
-        NR==1 {if ($0!="jvm-manifest-v1") bad=1; next}
-        NR==2 {
+# Prints the internal row of every valid manifest among the given files; a
+# manifest belongs to the installation directory that contains it.
+manifest_rows() {
+    awk -F '\t' -v OFS='\t' -v os="$OS" -v arch="$ARCH" "$AWK_LIB"'
+        function finish() {if (file!="" && lines==3 && valid && !bad) print result}
+        FNR==1 {
+            finish(); file=FILENAME; lines=0; valid=0; bad=0; result=""
+            n=split(FILENAME,parts,"/"); id=parts[n-1]
+            if ($0!="jvm-manifest-v1") bad=1
+        }
+        {lines=FNR}
+        FNR==2 {
             sub(/\r$/, "")
             if (NF<15 || !eligible() || make_id($9,$7,to_major($8))!=id) next
             sha=tolower($14)
             if (length(sha)!=64 || sha ~ /[^0-9a-f]/) next
             valid=1; result=id OFS $7 OFS $9 OFS $5 OFS $2 OFS $3 OFS "." OFS $11 OFS sha OFS $10 OFS $13 OFS $8
         }
-        END {if (NR!=3 || !valid || bad) exit 1; print result}' "$directory/.jvm-manifest")
-    status=$?
-    [ "$status" -le 1 ] || { error 'cannot read installed manifest'; return 5; }
-    [ "$status" -eq 0 ] || return 1
-    printf '%s\n' "$row"
+        END {finish()}' "$@"
+}
+
+# Row of a directory with a valid manifest in ROW (status 1 if invalid).
+# local_rows prefetches every manifest into MANIFEST_ROWS with one process.
+manifest_row() {
+    local directory=$1 id=${1##*/} rows status
+    ROW=
+    safe_id "$id" || return 1
+    [ -d "$directory" ] && [ ! -L "$directory" ] && [ -f "$directory/.jvm-manifest" ] || return 1
+    if [ -n "${MANIFEST_PREFETCHED:-}" ]; then rows=$MANIFEST_ROWS
+    else
+        rows=$(manifest_rows "$directory/.jvm-manifest"); status=$?
+        [ "$status" -le 1 ] || { error 'cannot read installed manifest'; return 5; }
+    fi
+    rows=$'\n'$rows
+    case "$rows" in *$'\n'"$id"$'\t'*) ;; *) return 1 ;; esac
+    ROW=${rows#*$'\n'"$id"$'\t'}
+    ROW=$id$'\t'${ROW%%$'\n'*}
 }
 
 # Strict completeness checks remain necessary for installer publication and
 # automatic defaults. Explicit local selection only needs working launchers.
 read_installation() {
-    local row
-    row=$(manifest_row "$1") || return $?
-    jdk_layout "$1" || return 1
-    printf '%s\n' "$row"
+    manifest_row "$1" || return $?
+    jdk_layout "$1" || { ROW=; return 1; }
 }
 
+# ROW gets the manifest row, or a row holding only the ID and a diagnostic.
 local_row() {
-    local directory=$1 row status message='manifest missing'
+    local directory=$1 id=${1##*/} status message='manifest missing'
+    ROW=
     [ -d "$directory" ] && [ ! -L "$directory" ] || return 1
     if ! jdk_layout "$directory"; then
-        printf '%s\t\t\t\t\t\tinvalid JDK\t\t\t\t\t\n' "${directory##*/}"
+        ROW=$id$'\t\t\t\t\t\t'invalid\ JDK$'\t\t\t\t\t'
         return 0
     fi
     if [ -e "$directory/.jvm-manifest" ] || [ -L "$directory/.jvm-manifest" ]; then
-        row=$(manifest_row "$directory"); status=$?
-        if [ "$status" -eq 0 ]; then printf '%s\n' "$row"; return 0; fi
+        manifest_row "$directory"; status=$?
+        [ "$status" -ne 0 ] || return 0
         [ "$status" -le 1 ] || return "$status"
         message='manifest invalid'
     fi
-    printf '%s\t\t\t\t\t\t%s\t\t\t\t\t\n' "${directory##*/}" "$message"
+    ROW=$id$'\t\t\t\t\t\t'$message$'\t\t\t\t\t'
 }
 
 usable_local_row() {
-    local row
-    row=$(local_row "$1") || return $?
-    jdk_layout "$1" || return 1
-    printf '%s\n' "$row"
+    local_row "$1" || return $?
+    jdk_layout "$1" || { ROW=; return 1; }
 }
 
 local_rows() {
     local directory id status parent=$DATA
+    local -a files
+    local MANIFEST_PREFETCHED= MANIFEST_ROWS=
     # A missing inventory is valid; an unusable existing ancestor is not a miss.
     while [ ! -e "$parent" ] && [ ! -L "$parent" ]; do
         parent=${parent%/*}
@@ -633,6 +646,17 @@ local_rows() {
             }
         fi
     done
+    files=()
+    for directory in "$JDKS"/* "$JDKS"/.[!.]* "$JDKS"/..?*; do
+        id=${directory##*/}
+        if local_id "$id" && safe_id "$id" && [ -d "$directory" ] && [ ! -L "$directory" ] &&
+            [ -f "$directory/.jvm-manifest" ]; then files[${#files[@]}]=$directory/.jvm-manifest; fi
+    done
+    if [ "${#files[@]}" -gt 0 ]; then
+        MANIFEST_ROWS=$(manifest_rows "${files[@]}"); status=$?
+        [ "$status" -le 1 ] || { error 'cannot read installed manifest'; return 1; }
+    fi
+    MANIFEST_PREFETCHED=1
     for directory in "$JDKS"/* "$JDKS"/.[!.]* "$JDKS"/..?*; do
         id=${directory##*/}
         local_id "$id" || continue
@@ -640,6 +664,7 @@ local_rows() {
         else local_row "$directory"; fi
         status=$?
         [ "$status" -le 1 ] || return 1
+        [ "$status" -ne 0 ] || printf '%s\n' "$ROW"
     done
     return 0
 }
@@ -654,12 +679,19 @@ default_current() {
     fi
     require_tools readlink || return 1
     target=$(readlink "$link") || return 1
-    target=$(absolute_path "$target") || return 1
-    parent=$(cd "$JDKS" && pwd -P) || return 1
+    absolute_path "$target" || return 1
+    target=$REPLY
+    jdks_real || return 1
+    parent=$JDKS_REAL
     CURRENT=${target##*/}
     local_id "$CURRENT" && [ "$target" = "$parent/$CURRENT" ] || {
         CURRENT=; error 'default points outside the managed JDK inventory'; return 1;
     }
+}
+
+# Physical path of the inventory directory in JDKS_REAL, resolved once.
+jdks_real() {
+    [ -n "${JDKS_REAL:-}" ] || JDKS_REAL=$(cd "$JDKS" && pwd -P) || { JDKS_REAL=; return 1; }
 }
 
 create_default_link() {
@@ -704,7 +736,7 @@ set_default() (
         [ -z "$CURRENT" ] || rm -- "$destination" || return 1
         return 0
     fi
-    local_id "$id" && usable_local_row "$JDKS/$id" >/dev/null || {
+    local_id "$id" && usable_local_row "$JDKS/$id" || {
         error "default JDK is unavailable: $id"; return 1;
     }
     [ "$CURRENT" != "$id" ] || return 0
@@ -730,7 +762,7 @@ set_default() (
         *) flag=-fh ;;
     esac
     default_current "$name" || return 1
-    if [ -n "$CURRENT" ] && usable_local_row "$JDKS/$CURRENT" >/dev/null; then
+    if [ -n "$CURRENT" ] && usable_local_row "$JDKS/$CURRENT"; then
         previous=$(cd "$JDKS/$CURRENT" && pwd -P) || return 1
         create_default_link "$stage/previous" "$previous" || {
             error 'cannot prepare default recovery link'; return 1;
@@ -766,7 +798,7 @@ resolve_installed() {
     if is_major "$selector" &&
         { [ -e "$JDKS/$selector" ] || [ -L "$JDKS/$selector" ]; }; then
         default_current "$selector" || return 1
-        row=$(read_installation "$JDKS/$CURRENT") && { row_field 12 "$row"; check_major "$REPLY" "$selector"; } &&
+        read_installation "$JDKS/$CURRENT" && row=$ROW && { row_field 12 "$row"; check_major "$REPLY" "$selector"; } &&
             [ "$JDKS/$selector" -ef "$JDKS/$CURRENT" ] || {
                 error "default JDK for version $selector is unavailable"; return 1;
             }
@@ -774,8 +806,8 @@ resolve_installed() {
         return 0
     fi
     if local_id "$selector"; then
-        row=$(usable_local_row "$JDKS/$selector"); status=$?
-        if [ "$status" -eq 0 ]; then printf '%s\n' "$row"; return 0; fi
+        usable_local_row "$JDKS/$selector"; status=$?
+        if [ "$status" -eq 0 ]; then printf '%s\n' "$ROW"; return 0; fi
         [ "$status" -le 1 ] || return 1
         if [ -d "$JDKS/$selector" ] && [ ! -L "$JDKS/$selector" ]; then
             error "JDK has no usable java/javac launchers: $selector"; return 1
@@ -800,13 +832,15 @@ resolve_installed() {
 resolve_range_rows() {
     local rows=$1 major link target preferred= parent
     row_field 12 "$rows"
-    major=$(version_major "$REPLY") || return 1
+    version_major "$REPLY" || return 1
+    major=$REPLY
     link=$JDKS/$major
     if [ -L "$link" ]; then
         require_tools readlink || return 1
         target=$(readlink "$link") || { error 'cannot read range major default'; return 1; }
-        target=$(absolute_path "$target") || target=
-        parent=$(cd "$JDKS" && pwd -P) || { error 'cannot resolve installed inventory path'; return 1; }
+        absolute_path "$target" && target=$REPLY || target=
+        jdks_real || { error 'cannot resolve installed inventory path'; return 1; }
+        parent=$JDKS_REAL
         if [ "$target" = "$parent/${target##*/}" ] && [ "$link" -ef "$target" ]; then preferred=${target##*/}; fi
     fi
     printf '%s\n' "$rows" | awk -F '\t' -v preferred="$preferred" '
@@ -822,8 +856,8 @@ default_jdk() {
         if [ -z "$CURRENT" ]; then
             if [ "$name" = default ]; then printf 'No JDK currently set as the default\n'
             else printf 'No JDK currently set as the default for version %s\n' "$name"; fi
-        elif usable_local_row "$JDKS/$CURRENT" >/dev/null &&
-            { [ "$name" = default ] || [ "$(installation_major "$CURRENT")" = "$name" ]; }; then printf '%s\n' "$CURRENT"
+        elif usable_local_row "$JDKS/$CURRENT" &&
+            { [ "$name" = default ] || { installation_major "$CURRENT" && [ "$REPLY" = "$name" ]; }; }; then printf '%s\n' "$CURRENT"
         else error "default JDK is unavailable: $CURRENT"; return 1; fi
         return 0
     fi
@@ -846,25 +880,27 @@ resolve_home() {
         id=${rows%%$'\t'*}
         if [ "${3:-}" != physical ] && is_major "$original" && [ -L "$JDKS/$original" ] &&
             [ "$JDKS/$original" -ef "$JDKS/$id" ]; then
-            RESOLVED_HOME=$(cd "$JDKS" && pwd -P) || { error 'cannot resolve default path'; return 1; }
-            RESOLVED_HOME=$RESOLVED_HOME/$original
+            jdks_real || { error 'cannot resolve default path'; return 1; }
+            RESOLVED_HOME=$JDKS_REAL/$original
         else
-            RESOLVED_HOME=$(cd "$JDKS/$id" && pwd -P) || { error 'cannot resolve JDK home'; return 1; }
+            jdks_real || { error 'cannot resolve JDK home'; return 1; }
+            RESOLVED_HOME=$JDKS_REAL/$id
         fi
     else
         if [ ! -e "$JDKS/default" ] && [ ! -L "$JDKS/default" ]; then
             error 'No JDK currently set as the default'; return 1;
         fi
         default_current 2>/dev/null && [ -n "$CURRENT" ] &&
-            rows=$(usable_local_row "$JDKS/$CURRENT" 2>/dev/null) &&
+            usable_local_row "$JDKS/$CURRENT" 2>/dev/null && rows=$ROW &&
             [ "$JDKS/default" -ef "$JDKS/$CURRENT" ] && jdk_layout "$JDKS/default" || {
                 error 'default JDK is missing or unusable'; return 1;
             }
         if [ "${3:-}" = physical ]; then
-            RESOLVED_HOME=$(cd "$JDKS/$CURRENT" && pwd -P) || { error 'cannot resolve JDK home'; return 1; }
+            jdks_real || { error 'cannot resolve JDK home'; return 1; }
+            RESOLVED_HOME=$JDKS_REAL/$CURRENT
         else
-            RESOLVED_HOME=$(cd "$JDKS" && pwd -P) || { error 'cannot resolve default path'; return 1; }
-            RESOLVED_HOME=$RESOLVED_HOME/default
+            jdks_real || { error 'cannot resolve default path'; return 1; }
+            RESOLVED_HOME=$JDKS_REAL/default
         fi
     fi
     row_field 4 "$rows"
@@ -875,9 +911,8 @@ resolve_home() {
 
 # Literal single-quoted Bash word, escaping embedded apostrophes without eval.
 shell_quote() {
-    local value=$1
-    value=${value//\'/\'\\\'\'}
-    printf "'%s'" "$value"
+    REPLY=${1//\'/\'\\\'\'}
+    REPLY="'$REPLY'"
 }
 
 # Shared path preparation for emitted exports and direct child environments.
@@ -899,7 +934,8 @@ home_environment() {
     resolve_home "$selector" "${3:-$selector}" || return $?
     if [ "$command" = home ]; then printf '%s\n' "$RESOLVED_HOME"; return 0; fi
     jdk_environment || return 1
-    quoted_java=$(shell_quote "$ENV_JAVA_HOME") && quoted_bin=$(shell_quote "$ENV_PATH_HOME/bin") || return 1
+    shell_quote "$ENV_JAVA_HOME"; quoted_java=$REPLY
+    shell_quote "$ENV_PATH_HOME/bin"; quoted_bin=$REPLY
     usage='jvm env'
     # Valid installed selectors contain only shell-safe ID/major/distro characters.
     [ "${option:-}" != -i ] || usage="$usage -i"
@@ -1040,11 +1076,12 @@ list_installed() {
     fi
     while IFS= read -r row; do
         row_field 12 "$row"
-        major=$(version_major "$REPLY") || continue
+        version_major "$REPLY" || continue
+        major=$REPLY
         case "$seen" in *" $major "*) continue ;; esac
         seen="$seen$major "
         if default_current "$major" 2>/dev/null && [ -n "$CURRENT" ] &&
-            [ "$(installation_major "$CURRENT" 2>/dev/null)" = "$major" ]; then
+            installation_major "$CURRENT" 2>/dev/null && [ "$REPLY" = "$major" ]; then
             majors="$majors $major:$CURRENT"
         fi
     done <<< "$rows"
@@ -1232,8 +1269,8 @@ extract_jdk() {
 }
 
 install_default() {
-    local major
-    major=$(installation_major "$INSTALLED_ID") || major=
+    local major=
+    installation_major "$INSTALLED_ID" && major=$REPLY
     [ -z "$major" ] || initialize_default "$INSTALLED_ID" "$major" || return 1
     if [ "${1:-}" = -d ]; then
         set_default "$INSTALLED_ID" || return 1
@@ -1320,7 +1357,8 @@ install_jdk() {
     init_host && require_tools mktemp date cp wc || return 1
     umask 077
     # A known exact ID remains usable offline after upstream drops its record.
-    if local_id "$selector" && rows=$(usable_local_row "$JDKS/$selector"); then
+    if local_id "$selector" && usable_local_row "$JDKS/$selector"; then
+        rows=$ROW
         row_field 12 "$rows"
         check_major "$REPLY" "$expected_major" || return 1
         INSTALLED_ID=$selector
@@ -1349,7 +1387,7 @@ install_jdk() {
     safe_id "$ID" || { error 'unsafe installation ID'; return 1; }
     INSTALLED_ID=$ID
     existing=$JDKS/$ID
-    if read_installation "$existing" >/dev/null; then install_default "$make_default" || return 1; printf 'Already installed %s\n' "$ID" >&2; return 0; fi
+    if read_installation "$existing"; then install_default "$make_default" || return 1; printf 'Already installed %s\n' "$ID" >&2; return 0; fi
     [ ! -e "$existing" ] && [ ! -L "$existing" ] || { error "incomplete or incompatible installation already exists: $existing"; return 1; }
     printf 'Installing %s...\n' "$ID" >&2
     row_field 8 "$rows"; URL=$REPLY
@@ -1373,11 +1411,11 @@ install_jdk() {
     publish_marker=.jvm-publish-${STAGE##*/}
     mv "$JDK_HOME" "$publish_home" || { error 'cannot prepare installation for publication'; return 1; }
     (set -C; : > "$publish_home/$publish_marker") || { error 'cannot mark staging directory'; return 1; }
-    if ! read_installation "$existing" >/dev/null; then
+    if ! read_installation "$existing"; then
         mv "$publish_home" "$existing" 2> "$WORK/publish-error" || :
     fi
     publication_cleanup || return 1
-    if ! read_installation "$existing" >/dev/null; then
+    if ! read_installation "$existing"; then
         error "cannot publish installation: $ID"
         [ ! -s "$WORK/publish-error" ] || cat "$WORK/publish-error" >&2
         return 1
