@@ -10,6 +10,48 @@ BASE=https://getjvm.dev/index
 WORK= STAGE= CURRENT=
 PROJECT_CONFIG_READ= GLOBAL_CONFIG_READ=
 
+# Shared awk helpers, prepended to every awk program that uses them.
+# os, arch (and bad, for normal) are program variables set by the caller.
+AWK_LIB='
+function to_major(v) {sub(/^1\./,"",v); sub(/[^0-9].*$/,"",v); return v}
+function compare(a,b) {return length(a)!=length(b) ? (length(a)>length(b) ? 1 : -1) : (("x" a)>("x" b) ? 1 : (("x" a)<("x" b) ? -1 : 0))}
+# Installation ID: version-distro, prefixed with the Java major when the version does not start with it.
+function make_id(version, distro, jmajor,   id, leading) {
+    id=version "-" distro; leading=id; sub(/[^0-9].*$/,"",leading)
+    return leading==jmajor ? id : jmajor "-" id
+}
+# Index/manifest record usable on this host. Columns are the index TSV columns.
+function eligible() {
+    return ($1=="ga" || $1=="ea") && $2==os && $3==arch && $4=="jdk" &&
+        ($10=="tar.gz" || $10=="zip") && (os=="linux-musl" || $15 !~ /(^\[|,)musl(,|\]$)/)
+}
+# Collapse "." and ".." components; escaping the root returns "!" and sets bad.
+function normal(p,   a,n,i,j,out,parts) {
+    if (os=="windows") p=tolower(p)
+    n=split(p,a,"/"); j=0
+    for (i=1;i<=n;i++) {
+        if (a[i]=="" || a[i]==".") continue
+        if (a[i]=="..") {if (!j) {bad=1; return "!"}; j--}
+        else parts[++j]=a[i]
+    }
+    out=""; for (i=1;i<=j;i++) out=out (i==1 ? "" : "/") parts[i]
+    return out
+}
+# Tab-aligned tables: set every cell, then print rows.
+function cell_set(r, c, text) {cells[r,c]=text; if (length(text)>widths[c]) widths[c]=length(text)}
+function row_print(r, columns,   c, tabs, t) {
+    for (c=1; c<=columns; c++) {
+        printf "%s", cells[r,c]
+        if (c<columns) {
+            tabs=int(widths[c]/8)+1; if (tabs>4) tabs=4
+            tabs-=int(length(cells[r,c])/8); if (tabs<1) tabs=1
+            for (t=0; t<tabs; t++) printf "\t"
+        }
+    }
+    printf "\n"
+}
+'
+
 error() { printf 'jvm: %s\n' "$*" >&2; }
 help_text() {
     local line
@@ -242,90 +284,71 @@ metadata() {
     return 1
 }
 
+is_major() { [[ $1 =~ ^[1-9][0-9]*$ ]]; }
+
+# The one place that interprets selector syntax. Sets SEL_KIND to one of
+# empty, major, distro, distro-major, range, id (a full installation ID) or
+# invalid, plus SEL_DISTRO, SEL_MAJOR, SEL_MIN and SEL_MAX where they apply.
 # Range bounds are decimal strings, compared without shell integer overflow.
-parse_range() {
-    RANGE_DISTRO=; RANGE_MIN=; RANGE_MAX=
+classify_selector() {
+    SEL_KIND=invalid; SEL_DISTRO=; SEL_MAJOR=; SEL_MIN=; SEL_MAX=
     if [[ $1 =~ ^([a-z][a-z0-9-]*-)?([1-9][0-9]*)\+$ ]]; then
-        RANGE_DISTRO=${BASH_REMATCH[1]%-}; RANGE_MIN=${BASH_REMATCH[2]}
+        SEL_KIND=range; SEL_DISTRO=${BASH_REMATCH[1]%-}; SEL_MIN=${BASH_REMATCH[2]}
     elif [[ $1 =~ ^([a-z][a-z0-9-]*-)?([1-9][0-9]*)\.\.([1-9][0-9]*)$ ]]; then
-        RANGE_DISTRO=${BASH_REMATCH[1]%-}; RANGE_MIN=${BASH_REMATCH[2]}; RANGE_MAX=${BASH_REMATCH[3]}
-        [ "${#RANGE_MIN}" -le "${#RANGE_MAX}" ] || return 1
-        if [ "${#RANGE_MIN}" -eq "${#RANGE_MAX}" ] && [[ $RANGE_MIN > $RANGE_MAX ]]; then return 1; fi
-    else return 1; fi
-    return 0
+        SEL_DISTRO=${BASH_REMATCH[1]%-}; SEL_MIN=${BASH_REMATCH[2]}; SEL_MAX=${BASH_REMATCH[3]}
+        if [ "${#SEL_MIN}" -lt "${#SEL_MAX}" ] ||
+            { [ "${#SEL_MIN}" -eq "${#SEL_MAX}" ] && [[ ! $SEL_MIN > $SEL_MAX ]]; }; then
+            SEL_KIND=range
+        else SEL_DISTRO=; SEL_MIN=; SEL_MAX=; fi
+    elif [ -z "$1" ]; then SEL_KIND=empty
+    elif is_major "$1"; then SEL_KIND=major; SEL_MAJOR=$1
+    elif [[ $1 =~ ^([a-z][a-z0-9-]*)-([1-9][0-9]*)$ ]]; then
+        SEL_KIND=distro-major; SEL_DISTRO=${BASH_REMATCH[1]}; SEL_MAJOR=${BASH_REMATCH[2]}
+    elif [[ $1 =~ ^[a-z][a-z0-9-]*$ ]]; then SEL_KIND=distro; SEL_DISTRO=$1
+    elif safe_id "$1"; then SEL_KIND=id; fi
 }
 
+# Selector for available/list filtering.
 parse_selector() {
-    WANTED_MAJOR=; WANTED_DISTRO=
     [ "${#1}" -le 100 ] || { error 'selector is too long'; return 2; }
-    if parse_range "$1"; then WANTED_DISTRO=$RANGE_DISTRO; return 0; fi
-    RANGE_MIN=; RANGE_MAX=
-    case "$1" in
-        '') return 0 ;;
-        *[!0-9]*)
-            if [[ $1 =~ ^([a-z][a-z0-9-]*)-([1-9][0-9]*)$ ]]; then
-                WANTED_DISTRO=${BASH_REMATCH[1]}; WANTED_MAJOR=${BASH_REMATCH[2]}
-            elif [[ $1 =~ ^[a-z][a-z0-9-]*$ ]]; then
-                WANTED_DISTRO=$1
-            else
-                error 'selector must be a major, distro, distro-major, or version range'; return 2
-            fi ;;
-        0*) error 'Java major must be positive, without leading zeros'; return 2 ;;
-        *) WANTED_MAJOR=$1 ;;
-    esac
+    classify_selector "$1"
+    [ "$SEL_KIND" != invalid ] && [ "$SEL_KIND" != id ] && return 0
+    if [[ $1 =~ ^0[0-9]*$ ]]; then error 'Java major must be positive, without leading zeros'
+    else error 'selector must be a major, distro, distro-major, or version range'; fi
+    return 2
 }
 
 available() {
     local selector=$1 result
     parse_selector "$selector" || return $?
-    require_tools uname mkdir mktemp rm sed awk cat mv date cp || return 1
+    require_tools uname mktemp sed awk date cp || return 1
     detect_host && cache_path && metadata || return 1
     # The published TSV is trusted. Read only listing fields and collapse IDs;
     # do not validate unused metadata or compare builds/archive variants.
-    awk -F '\t' -v os="$OS" -v arch="$ARCH" -v distro="$WANTED_DISTRO" -v major="$WANTED_MAJOR" -v lower="$RANGE_MIN" -v upper="$RANGE_MAX" -v show_type="${show_type:-}" '
-        function compare(a,b) {return length(a)!=length(b) ? (length(a)>length(b) ? 1 : -1) : (("x" a)>("x" b) ? 1 : (("x" a)<("x" b) ? -1 : 0))}
-        function add_row(id, distribution, version, jvm, release, features, col) {
+    awk -F '\t' -v os="$OS" -v arch="$ARCH" -v distro="$SEL_DISTRO" -v major="$SEL_MAJOR" -v lower="$SEL_MIN" -v upper="$SEL_MAX" -v show_type="${show_type:-}" "$AWK_LIB"'
+        function add_row(id, distribution, version, jvm, release, features) {
             rows++
-            cells[rows,1]=id; cells[rows,2]=distribution; cells[rows,3]=version
             sub(/^\[/,"",features); sub(/\]$/,"",features)
-            cells[rows,4]=jvm
-            cells[rows,5]=(release=="ea" ? "ea" (features!="" ? "," : "") : "") features
-            for (col=1; col<columns; col++)
-                if (length(cells[rows,col])>width[col]) width[col]=length(cells[rows,col])
+            cell_set(rows,1,id); cell_set(rows,2,distribution); cell_set(rows,3,version); cell_set(rows,4,jvm)
+            cell_set(rows,5,(release=="ea" ? "ea" (features!="" ? "," : "") : "") features)
         }
         BEGIN {columns=(show_type ? 5 : 4); add_row("ID", "DISTRIBUTION", "VERSION", "JVM", "", "TYPE")}
         NR==1 {next}
         {sub(/\r$/, "")}
-        ($1!="ga" && $1!="ea") || $2!=os || $3!=arch || $4!="jdk" {next}
-        $10!="tar.gz" && $10!="zip" {next}
-        os!="linux-musl" && $15 ~ /(^\[|,)musl(,|\]$)/ {next}
+        !eligible() {next}
         distro!="" && $7!=distro {next}
         {
-            java_major=$8; sub(/^1\./,"",java_major); sub(/[^0-9].*$/,"",java_major)
+            java_major=to_major($8)
             if (major!="" && java_major!=major) next
             if (lower!="" && (compare(java_major,lower)<0 || (upper!="" && compare(java_major,upper)>0))) next
-            id=$9 "-" $7
-            leading=id; sub(/[^0-9].*$/,"",leading)
-            if (leading!=java_major) id=java_major "-" id
+            id=make_id($9, $7, java_major)
             if (seen[id]++) next
             add_row(id, $7, $8, $5, $1, $15)
             found=1
         }
         END {
             if ((distro!="" || major!="" || lower!="") && !found) exit 1
-            for (row=1; row<=rows; row++) {
-                for (col=1; col<=columns; col++) {
-                    printf "%s", cells[row,col]
-                    if (col<columns) {
-                        padding=int(width[col]/8)+1
-                        if (padding>4) padding=4
-                        padding-=int(length(cells[row,col])/8)
-                        if (padding<1) padding=1
-                        for (tab=0; tab<padding; tab++) printf "\t"
-                    }
-                }
-                printf "\n"
-            }
+            for (row=1; row<=rows; row++) row_print(row, columns)
         }
     ' "$INDEX" > "$WORK/results"
     result=$?
@@ -363,7 +386,8 @@ version_major() {
 installation_major() {
     local row
     row=$(read_installation "$JDKS/$1") || return 1
-    version_major "$(printf '%s\n' "$row" | awk -F '\t' '{print $12}')"
+    row_field 12 "$row"
+    version_major "$REPLY"
 }
 
 check_major() {
@@ -373,10 +397,27 @@ check_major() {
     [ "$actual" = "$2" ] || { error "selected JDK has Java major $actual, expected $2"; return 1; }
 }
 
+# Field N (1-based) of the first internal row, preserving empty fields.
+# Result in REPLY; no subprocess.
+row_field() {
+    local rest=${2%%$'\n'*} n=$1
+    while [ "$n" -gt 1 ]; do
+        case "$rest" in *$'\t'*) rest=${rest#*$'\t'} ;; *) rest= ;; esac
+        n=$((n - 1))
+    done
+    REPLY=${rest%%$'\t'*}
+}
+
+# Validate a selector for installed-JDK commands. $2=local also accepts an
+# existing directory name; $3=no-range rejects version ranges.
 installation_selector() {
-    [ -z "$1" ] || safe_id "$1" || [[ $1 =~ ^[1-9][0-9]*$ ]] ||
-        [[ $1 =~ ^[a-z][a-z0-9-]*-[1-9][0-9]*$ ]] ||
-        { [ "${3:-}" != no-range ] && parse_range "$1"; } ||
+    local valid=
+    classify_selector "$1"
+    case "$SEL_KIND" in
+        empty|id|major|distro-major) valid=1 ;;
+        range) [ "${3:-}" = no-range ] || valid=1 ;;
+    esac
+    [ -n "$valid" ] ||
         { [ "${2:-}" = local ] && local_id "$1" && data_path &&
           [ -d "$JDKS/$1" ] && [ ! -L "$JDKS/$1" ]; } || {
             error 'selector must be a full ID, major, or distro-major (version ranges allowed except for uninstall)'; return 2;
@@ -386,6 +427,7 @@ installation_selector() {
 
 data_path() {
     local root home
+    [ -z "${DATA:-}" ] || return 0
     root=$(absolute_path "${XDG_DATA_HOME:-}") || root=
     if [ -z "$root" ]; then
         home=$(absolute_path "${HOME:-}") || { error 'need an absolute HOME or XDG_DATA_HOME'; return 1; }
@@ -393,6 +435,14 @@ data_path() {
     fi
     DATA=$root/jvm
     JDKS=$DATA/jdks
+}
+
+# Common start of every command that touches the host or the JDK inventory.
+init_host() {
+    [ -z "${HOST_READY:-}" ] || return 0
+    require_tools uname awk || return 1
+    detect_host && data_path || return 1
+    HOST_READY=1
 }
 
 # Configuration is literal data. Load a file only when one of its settings is
@@ -412,9 +462,9 @@ read_config() {
         value=${value#"${value%%[![:space:]]*}"}
         case "$key" in
             java)
+                classify_selector "$value"
                 [ -z "$java_seen" ] && [ -n "$value" ] &&
-                    { safe_id "$value" || [[ $value =~ ^[1-9][0-9]*$ ]] ||
-                      [[ $value =~ ^[a-z][a-z0-9-]*-[1-9][0-9]*$ ]] || parse_range "$value"; } &&
+                    case "$SEL_KIND" in id|major|distro-major|range) true ;; *) false ;; esac &&
                     [ "${#value}" -le 180 ] || {
                         error "duplicate or invalid java setting: $file"; return 1;
                     }
@@ -455,7 +505,8 @@ config_setting() {
 # The opt-in policy belongs to install/home/env/exec, never default -i.
 installation_distro() {
     INSTALL_DISTRO=$DEFAULT_DISTRO
-    if [[ $1 =~ ^[1-9][0-9]*$ ]] || { parse_range "$1" && [ -z "$RANGE_DISTRO" ]; }; then
+    classify_selector "$1"
+    if [ "$SEL_KIND" = major ] || { [ "$SEL_KIND" = range ] && [ -z "$SEL_DISTRO" ]; }; then
         config_setting distro || return 1
         INSTALL_DISTRO=${SETTING:-$DEFAULT_DISTRO}
     fi
@@ -518,19 +569,13 @@ manifest_row() {
     local directory=$1 row status
     safe_id "${directory##*/}" || return 1
     [ -d "$directory" ] && [ ! -L "$directory" ] && [ -f "$directory/.jvm-manifest" ] || return 1
-    row=$(awk -F '\t' -v OFS='\t' -v os="$OS" -v arch="$ARCH" -v id="${directory##*/}" '
+    row=$(awk -F '\t' -v OFS='\t' -v os="$OS" -v arch="$ARCH" -v id="${directory##*/}" "$AWK_LIB"'
         NR==1 {if ($0!="jvm-manifest-v1") bad=1; next}
         NR==2 {
             sub(/\r$/, "")
-            if (NF<15 || ($1!="ga" && $1!="ea") || $2!=os || $3!=arch || $4!="jdk") next
-            java_major=$8; sub(/^1\./,"",java_major); sub(/[^0-9].*$/,"",java_major)
-            derived=$9 "-" $7; leading=derived; sub(/[^0-9].*$/,"",leading)
-            if (leading!=java_major) derived=java_major "-" derived
-            if (derived!=id) next
+            if (NF<15 || !eligible() || make_id($9,$7,to_major($8))!=id) next
             sha=tolower($14)
             if (length(sha)!=64 || sha ~ /[^0-9a-f]/) next
-            if ($10!="zip" && $10!="tar.gz") next
-            if (os!="linux-musl" && $15 ~ /(^\[|,)musl(,|\]$)/) next
             valid=1; result=id OFS $7 OFS $9 OFS $5 OFS $2 OFS $3 OFS "." OFS $11 OFS sha OFS $10 OFS $13 OFS $8
         }
         END {if (NR!=3 || !valid || bad) exit 1; print result}' "$directory/.jvm-manifest")
@@ -719,11 +764,10 @@ report_default() {
 # references are errors, not permission to select another JDK or install one.
 resolve_installed() {
     local selector=$1 row status
-    if [[ $selector =~ ^[1-9][0-9]*$ ]] &&
+    if is_major "$selector" &&
         { [ -e "$JDKS/$selector" ] || [ -L "$JDKS/$selector" ]; }; then
         default_current "$selector" || return 1
-        row=$(read_installation "$JDKS/$CURRENT") &&
-            check_major "$(printf '%s\n' "$row" | awk -F '\t' '{print $12}')" "$selector" &&
+        row=$(read_installation "$JDKS/$CURRENT") && { row_field 12 "$row"; check_major "$REPLY" "$selector"; } &&
             [ "$JDKS/$selector" -ef "$JDKS/$CURRENT" ] || {
                 error "default JDK for version $selector is unavailable"; return 1;
             }
@@ -739,7 +783,8 @@ resolve_installed() {
         fi
     fi
     row=$(local_rows) || return 1
-    if parse_range "$selector"; then
+    classify_selector "$selector"
+    if [ "$SEL_KIND" = range ]; then
         row=$(printf '%s\n' "$row" | select_rows "$selector" '' range "${2:-}") || return $?
         row=$(resolve_range_rows "$row") || return $?
     else
@@ -755,7 +800,8 @@ resolve_installed() {
 # Invalid preferences are ignored; failures reading an actual link are errors.
 resolve_range_rows() {
     local rows=$1 major link target preferred= parent
-    major=$(printf '%s\n' "$rows" | awk -F '\t' 'NR==1 {m=$12; sub(/^1\./,"",m); sub(/[^0-9].*$/,"",m); print m}') || return 1
+    row_field 12 "$rows"
+    major=$(version_major "$REPLY") || return 1
     link=$JDKS/$major
     if [ -L "$link" ]; then
         require_tools readlink || return 1
@@ -772,9 +818,7 @@ resolve_range_rows() {
 
 default_jdk() {
     local selector=$1 name=${2:-default} rows id version
-    installation_selector "$selector" local || return $?
-    require_tools uname awk || return 1
-    detect_host && data_path && default_current "$name" || return 1
+    init_host && default_current "$name" || return 1
     if [ -z "$selector" ]; then
         if [ -z "$CURRENT" ]; then
             if [ "$name" = default ]; then printf 'No JDK currently set as the default\n'
@@ -786,7 +830,8 @@ default_jdk() {
     fi
     rows=$(resolve_installed "$selector") || return $?
     id=${rows%%$'\t'*}
-    version=$(printf '%s\n' "$rows" | awk -F '\t' '{print $12}')
+    row_field 12 "$rows"
+    version=$REPLY
     [ "$name" = default ] || check_major "$version" "$name" || return 1
     set_default "$id" '' "$name" || return 1
     report_default "$id" "$name"
@@ -796,13 +841,11 @@ default_jdk() {
 # Keep global and selected per-major references unless physical output is requested.
 resolve_home() {
     local selector=$1 original=${2:-$1} rows id
-    installation_selector "$selector" local || return $?
-    require_tools uname awk || return 1
-    detect_host && data_path || return 1
+    init_host || return 1
     if [ -n "$selector" ]; then
         rows=$(resolve_installed "$selector") || return $?
         id=${rows%%$'\t'*}
-        if [ "${3:-}" != physical ] && [[ $original =~ ^[1-9][0-9]*$ ]] && [ -L "$JDKS/$original" ] &&
+        if [ "${3:-}" != physical ] && is_major "$original" && [ -L "$JDKS/$original" ] &&
             [ "$JDKS/$original" -ef "$JDKS/$id" ]; then
             RESOLVED_HOME=$(cd "$JDKS" && pwd -P) || { error 'cannot resolve default path'; return 1; }
             RESOLVED_HOME=$RESOLVED_HOME/$original
@@ -825,7 +868,8 @@ resolve_home() {
             RESOLVED_HOME=$RESOLVED_HOME/default
         fi
     fi
-    RESOLVED_IMPL=$(printf '%s\n' "$rows" | awk -F '\t' '{print $4}') || return 1
+    row_field 4 "$rows"
+    RESOLVED_IMPL=$REPLY
     # Both interfaces promise single-line output. Never emit broken shell code.
     case "$RESOLVED_HOME" in ''|*[$'\r\n']*) error 'JDK home must be a nonempty single-line path'; return 1 ;; esac
 }
@@ -898,12 +942,11 @@ run_jdk() {
 replacement_default() {
     local removed=$1 version=$2 rows
     rows=$(local_rows complete) || return 1
-    printf '%s\n' "$rows" | awk -F '\t' -v removed="$removed" -v version="$version" '
-        function major(v) {sub(/^1\./,"",v); sub(/[^0-9].*$/,"",v); return v+0}
-        BEGIN {old=major(version)}
+    printf '%s\n' "$rows" | awk -F '\t' -v removed="$removed" -v version="$version" "$AWK_LIB"'
+        BEGIN {old=to_major(version)+0}
         NF && $1!=removed {
             if (first=="") first=$1
-            m=major($12)
+            m=to_major($12)+0
             if (m==old && same=="") same=$1
             if (m>old && (higher=="" || m<high)) {higher=$1; high=m}
             if (m<old && (lower=="" || m>low)) {lower=$1; low=m}
@@ -912,17 +955,10 @@ replacement_default() {
 }
 
 remote_rows() {
-    awk -F '\t' -v OFS='\t' -v os="$OS" -v arch="$ARCH" '
+    awk -F '\t' -v OFS='\t' -v os="$OS" -v arch="$ARCH" "$AWK_LIB"'
         NR==1 {next} {source=$0; sub(/\r$/, "")}
-        ($1!="ga" && $1!="ea") || $2!=os || $3!=arch || $4!="jdk" {next}
-        $10!="zip" && $10!="tar.gz" {next}
-        os!="linux-musl" && $15 ~ /(^\[|,)musl(,|\]$)/ {next}
-        {
-            java_major=$8; sub(/^1\./,"",java_major); sub(/[^0-9].*$/,"",java_major)
-            id=$9 "-" $7; leading=id; sub(/[^0-9].*$/,"",leading)
-            if (leading!=java_major) id=java_major "-" id
-            print id,$7,$9,$5,$2,$3,".",$11,$14,$10,$13,$8,source
-        }
+        !eligible() {next}
+        {print make_id($9,$7,to_major($8)),$7,$9,$5,$2,$3,".",$11,tolower($14),$10,$13,$8,source}
     ' "$INDEX"
 }
 
@@ -930,29 +966,27 @@ remote_rows() {
 # latest releases; ranges rank majors and break ID ties by C string order.
 # Only installation supplies a default distro for bare majors/ranges.
 select_rows() {
-    local rows result lower= upper= range_distro=
-    if [ "${5:-}" != no-range ] && parse_range "$1"; then
-        lower=$RANGE_MIN; upper=$RANGE_MAX; range_distro=${RANGE_DISTRO:-${2:-}}
-    fi
-    rows=$(awk -F '\t' -v selector="$1" -v default_distro="${2:-}" -v listing="${3:-}" -v probe="${4:-}" -v lower="$lower" -v upper="$upper" -v range_distro="$range_distro" '
-        function compare(a,b) {return length(a)!=length(b) ? (length(a)>length(b) ? 1 : -1) : (("x" a)>("x" b) ? 1 : (("x" a)<("x" b) ? -1 : 0))}
+    local rows result lower= upper= major= distro= reject=
+    classify_selector "$1"
+    case "$SEL_KIND" in
+        range)
+            if [ "${5:-}" = no-range ]; then reject=1
+            else lower=$SEL_MIN; upper=$SEL_MAX; distro=${SEL_DISTRO:-${2:-}}; fi ;;
+        major) major=$SEL_MAJOR; distro=${2:-} ;;
+        distro-major) major=$SEL_MAJOR; distro=$SEL_DISTRO ;;
+        distro) if [ -n "${3:-}" ]; then distro=$SEL_DISTRO; else reject=1; fi ;;
+        empty) [ -n "${3:-}" ] || reject=1 ;;
+        *) reject=1 ;;
+    esac
+    rows=$(awk -F '\t' -v selector="$1" -v listing="${3:-}" -v probe="${4:-}" -v lower="$lower" -v upper="$upper" -v major="$major" -v distro="$distro" -v reject="$reject" "$AWK_LIB"'
         {rows[NR]=$0; ids[NR]=$1; versions[NR]=$12; distros[NR]=$2; if ($1==selector) exact=1}
         END {
-            if (!exact) {
-                if (lower!="") {distro=range_distro}
-                else if (listing && selector=="") {}
-                else if (selector ~ /^[1-9][0-9]*$/) {major=selector; distro=default_distro}
-                else if (selector ~ /^[a-z][a-z0-9-]*-[1-9][0-9]*$/) {
-                    major=selector; sub(/^.*-/,"",major)
-                    distro=substr(selector,1,length(selector)-length(major)-1)
-                } else if (listing && selector ~ /^[a-z][a-z0-9-]*$/) {distro=selector}
-                else {if (!probe) print "No JDK found matching: " selector > "/dev/stderr"; exit 4}
-            }
+            if (!exact && reject) {if (!probe) print "No JDK found matching: " selector > "/dev/stderr"; exit 4}
             for (i=1;i<=NR;i++) {
                 if (exact) {if (ids[i]!=selector) continue}
                 else {
                     if (versions[i]=="" && !(listing && selector=="")) continue
-                    m=versions[i]; sub(/^1\./,"",m); sub(/[^0-9].*$/,"",m)
+                    m=to_major(versions[i])
                     if ((major!="" && m!=major) || (distro!="" && distros[i]!=distro)) continue
                     if (lower!="") {
                         if (compare(m,lower)<0 || (upper!="" && compare(m,upper)>0)) continue
@@ -995,26 +1029,26 @@ select_rows() {
 }
 
 list_installed() {
-    local selector=${1:-} rows id version major majors= seen=' '
-    { local_id "$selector" && data_path && [ -d "$JDKS/$selector" ] && [ ! -L "$JDKS/$selector" ]; } ||
+    local selector=${1:-} rows row id version major majors= seen=' '
+    init_host || return 1
+    { local_id "$selector" && [ -d "$JDKS/$selector" ] && [ ! -L "$JDKS/$selector" ]; } ||
         safe_id "$selector" || parse_selector "$selector" || return $?
-    require_tools uname awk || return 1
-    detect_host && data_path || return 1
     rows=$(local_rows) || return 1
     default_current 2>/dev/null || CURRENT=
     if [ -z "$rows" ]; then
         printf '%s\n' "No JDKs are installed. Use 'install' to install one"
         return 0
     fi
-    while IFS=$'\t' read -r id version; do
-        major=$(version_major "$version") || continue
+    while IFS= read -r row; do
+        row_field 12 "$row"
+        major=$(version_major "$REPLY") || continue
         case "$seen" in *" $major "*) continue ;; esac
         seen="$seen$major "
         if default_current "$major" 2>/dev/null && [ -n "$CURRENT" ] &&
             [ "$(installation_major "$CURRENT" 2>/dev/null)" = "$major" ]; then
             majors="$majors $major:$CURRENT"
         fi
-    done < <(printf '%s\n' "$rows" | awk -F '\t' '{print $1 "\t" $12}')
+    done <<< "$rows"
     default_current 2>/dev/null || CURRENT=
     MAJOR_DEFAULTS=$majors
     rows=$(printf '%s\n' "$rows" | select_rows "$selector" '' all) || return $?
@@ -1022,31 +1056,22 @@ list_installed() {
 }
 
 format_rows() {
-    awk -F '\t' -v current="${CURRENT:-}" -v majors="${MAJOR_DEFAULTS:-}" '
-        function add(a,b,c,d,status, i) {
-            n++; cell[n,1]=a; cell[n,2]=b; cell[n,3]=c; cell[n,4]=d
+    awk -F '\t' -v current="${CURRENT:-}" -v majors="${MAJOR_DEFAULTS:-}" "$AWK_LIB"'
+        function add(a,b,c,d,status,   i,mark) {
+            n++; cell_set(n,1,a); cell_set(n,2,b); cell_set(n,3,c); cell_set(n,4,d)
             if (status!="" && status!=".") problem[n]=status
-            cell[n,5]=(n==1 ? "DEFAULT" : (a==current ? "global" : ""))
+            mark=(n==1 ? "DEFAULT" : (a==current ? "global" : ""))
             if (n>1) for (i=1;i<=major_count;i++) if (a==major_id[i])
-                cell[n,5]=cell[n,5] (cell[n,5]!="" ? "," : "") major_name[i]
-            for (i=1;i<=5;i++) if (length(cell[n,i])>width[i]) width[i]=length(cell[n,i])
+                mark=mark (mark!="" ? "," : "") major_name[i]
+            cell_set(n,5,mark)
         }
         BEGIN {major_count=split(majors,parts," "); for (i=1;i<=major_count;i++) {
             split(parts[i],pair,":"); major_name[i]=pair[1]; major_id[i]=pair[2]
         }; add("ID","DISTRIBUTION","VERSION","JVM")}
         NF {add($1,$2,$12,$4,$7)}
         END {for (r=1;r<=n;r++) {
-            if (problem[r]!="") {printf "%s\t(%s)\n",cell[r,1],problem[r]; continue}
-            columns=5
-            for (c=1;c<=columns;c++) {
-                printf "%s",cell[r,c]
-                if (c<columns) {
-                    tabs=int(width[c]/8)+1; if (tabs>4) tabs=4
-                    tabs-=int(length(cell[r,c])/8); if (tabs<1) tabs=1
-                    for (t=0;t<tabs;t++) printf "\t"
-                }
-            }
-            printf "\n"
+            if (problem[r]!="") {printf "%s\t(%s)\n",cells[r,1],problem[r]; continue}
+            row_print(r,5)
         }}'
 }
 
@@ -1120,17 +1145,7 @@ archive_inventory() {
         done < "$STAGE/entries"
         mv "$STAGE/zip-entries" "$STAGE/entries" || return 1
     fi
-    awk -F '\t' -v os="$OS" '
-        function normal(p, a,n,i,j,out) {
-            n=split(p,a,"/"); j=0
-            for (i=1;i<=n;i++) {
-                if (a[i]=="" || a[i]==".") continue
-                if (a[i]=="..") {if (!j) {bad=1; return ""}; j--}
-                else parts[++j]=a[i]
-            }
-            out=""; for (i=1;i<=j;i++) out=out (i==1 ? "" : "/") parts[i]
-            return out
-        }
+    awk -F '\t' -v os="$OS" "$AWK_LIB"'
         function ancestors(p, a,n,i,prefix) {
             n=split(p,a,"/"); prefix=""
             for (i=1;i<n;i++) {
@@ -1139,7 +1154,7 @@ archive_inventory() {
             }
         }
         {
-            name=normal($2); if (os=="windows") name=tolower(name)
+            name=normal($2)
             type=$1
             if (name=="" && type=="d") next
             if (name=="" || name in types) bad=1
@@ -1182,18 +1197,7 @@ archive_inventory() {
 # Removing archive wrappers must not turn an internal archive link into a link
 # outside the installed home. Hardlinks are already regular file content here.
 home_links() {
-    awk -F '\t' -v home="${JDK_HOME#"$STAGE/unpacked"}" -v os="$OS" '
-        function normal(p, a,n,i,j,out) {
-            if (os=="windows") p=tolower(p)
-            n=split(p,a,"/"); j=0
-            for (i=1;i<=n;i++) {
-                if (a[i]=="" || a[i]==".") continue
-                if (a[i]=="..") {if (!j) return "!"; j--}
-                else parts[++j]=a[i]
-            }
-            out=""; for (i=1;i<=j;i++) out=out (i==1 ? "" : "/") parts[i]
-            return out
-        }
+    awk -F '\t' -v home="${JDK_HOME#"$STAGE/unpacked"}" -v os="$OS" "$AWK_LIB"'
         BEGIN {home=normal(home)}
         $1=="l" {
             name=normal($2)
@@ -1252,14 +1256,13 @@ restore_removal_defaults() {
 uninstall_jdk() {
     local selector=$1 rows id removal hint= replacement= version major link name
     local references= changed= global_before= candidates
-    installation_selector "$selector" local no-range || return $?
-    require_tools uname awk mkdir mktemp mv rm rmdir || return 1
-    detect_host && data_path || return 1
+    init_host && require_tools mktemp || return 1
     rows=$(local_rows) || return 1
     rows=$(printf '%s\n' "$rows" | select_rows "$selector" '' '' '' no-range) || return $?
     id=${rows%%$'\t'*}
     local_id "$id" || { error 'unsafe installation ID'; return 1; }
-    version=$(printf '%s\n' "$rows" | awk -F '\t' '{print $12}')
+    row_field 12 "$rows"
+    version=$REPLY
     umask 077
     mkdir -p "$DATA/tmp" || return 1
     removal=$(mktemp -d "$DATA/tmp/remove-$id.XXXXXXXX") || return 1
@@ -1271,7 +1274,7 @@ uninstall_jdk() {
     # Reference names remain known even if their target lost its manifest.
     for link in "$JDKS"/[0-9]*; do
         name=${link##*/}
-        [[ $name =~ ^[1-9][0-9]*$ ]] && [ -L "$link" ] || continue
+        is_major "$name" && [ -L "$link" ] || continue
         require_tools readlink || { rmdir "$removal"; return 1; }
         if default_current "$name" 2>/dev/null && [ "$CURRENT" = "$id" ]; then
             references="$references $name"
@@ -1287,8 +1290,8 @@ uninstall_jdk() {
             restore_removal_defaults "$id" "$changed"; rmdir "$removal"; return 1;
         }
         for major in $references; do
-            replacement=$(printf '%s\n' "$candidates" | awk -F '\t' -v removed="$id" -v major="$major" '
-                $1!=removed {v=$12; sub(/^1\./,"",v); sub(/[^0-9].*$/,"",v); if (v==major) {print $1; exit}}')
+            replacement=$(printf '%s\n' "$candidates" | awk -F '\t' -v removed="$id" -v major="$major" "$AWK_LIB"'
+                $1!=removed && to_major($12)==major {print $1; exit}')
             if ! set_default "$replacement" '' "$major"; then
                 restore_removal_defaults "$id" "$changed"
                 rmdir "$removal" 2>/dev/null || :
@@ -1313,51 +1316,47 @@ uninstall_jdk() {
 }
 
 install_jdk() {
-    local selector=$1 make_default=${2:-} expected_major=${3:-} rows result preferred count existing publish_home publish_marker version install_distro=$DEFAULT_DISTRO
+    local selector=$1 make_default=${2:-} expected_major=${3:-} rows result preferred multiple existing publish_home publish_marker install_distro=$DEFAULT_DISTRO
     INSTALLED_ID=
-    installation_selector "$selector" local || return $?
-    require_tools uname awk mkdir mktemp rm sed cat mv date cp wc || return 1
-    detect_host && data_path || return 1
+    init_host && require_tools mktemp sed date cp wc || return 1
     umask 077
     # A known exact ID remains usable offline after upstream drops its record.
     if local_id "$selector" && rows=$(usable_local_row "$JDKS/$selector"); then
-        version=$(printf '%s\n' "$rows" | awk -F '\t' '{print $12}')
-        check_major "$version" "$expected_major" || return 1
+        row_field 12 "$rows"
+        check_major "$REPLY" "$expected_major" || return 1
         INSTALLED_ID=$selector
         install_default "$make_default" || return 1
         printf 'Already installed %s\n' "$selector" >&2; return 0
     fi
+    # Only an installed directory may use a name that is not a remote selector.
     installation_selector "$selector" || return $?
     if [ "${4:-}" = config ]; then
         installation_distro "$selector" || return 1
         install_distro=$INSTALL_DISTRO
     fi
     cache_path || return 1
-    trap installation_cleanup EXIT
-    trap 'exit 1' HUP INT TERM
     metadata || return 1
     rows=$(remote_rows | select_rows "$selector" "$install_distro"); result=$?
     [ "$result" -eq 0 ] || return "$result"
-    version=$(printf '%s\n' "$rows" | awk -F '\t' 'NR==1 {print $12}')
-    check_major "$version" "$expected_major" || return 1
+    row_field 12 "$rows"
+    check_major "$REPLY" "$expected_major" || return 1
     preferred=tar.gz; [ "$OS" != windows ] || preferred=zip
     rows=$(printf '%s\n' "$rows" | awk -F '\t' -v preferred="$preferred" '
         {rows[NR]=$0; formats[NR]=$10; if ($10==preferred) found=1}
         END {for (i=1;i<=NR;i++) if (!found || formats[i]==preferred) print rows[i]}') || return 1
-    count=$(printf '%s\n' "$rows" | awk 'END {print NR}')
-    [ "$count" -eq 1 ] || { error 'multiple artifact rows remain for the resolved ID and chosen archive format; use a corrected upstream index'; return 1; }
-    # Empty TSV cells must not collapse as they do with Bash whitespace IFS.
-    ID=$(printf '%s\n' "$rows" | awk -F '\t' '{print $1}')
+    case "$rows" in *$'\n'*) multiple=1 ;; *) multiple= ;; esac
+    [ -z "$multiple" ] || { error 'multiple artifact rows remain for the resolved ID and chosen archive format; use a corrected upstream index'; return 1; }
+    ID=${rows%%$'\t'*}
     safe_id "$ID" || { error 'unsafe installation ID'; return 1; }
     INSTALLED_ID=$ID
     existing=$JDKS/$ID
     if read_installation "$existing" >/dev/null; then install_default "$make_default" || return 1; printf 'Already installed %s\n' "$ID" >&2; return 0; fi
     [ ! -e "$existing" ] && [ ! -L "$existing" ] || { error "incomplete or incompatible installation already exists: $existing"; return 1; }
     printf 'Installing %s...\n' "$ID" >&2
-    URL=$(printf '%s\n' "$rows" | awk -F '\t' '{print $8}')
-    SHA=$(printf '%s\n' "$rows" | awk -F '\t' '{print tolower($9)}')
-    FORMAT=$(printf '%s\n' "$rows" | awk -F '\t' '{print $10}')
-    SIZE=$(printf '%s\n' "$rows" | awk -F '\t' '{print $11}')
+    row_field 8 "$rows"; URL=$REPLY
+    row_field 9 "$rows"; SHA=$REPLY
+    row_field 10 "$rows"; FORMAT=$REPLY
+    row_field 11 "$rows"; SIZE=$REPLY
     [[ $URL = https://* ]] && [[ $URL != *[$'\r\n\t']* ]] || { error 'artifact URL must use HTTPS'; return 1; }
     [ "${#SHA}" -eq 64 ] && [[ $SHA != *[!a-f0-9]* ]] || { error 'expected SHA-256 is missing or invalid'; return 1; }
     case "$SIZE" in ''|*[!0-9]*|??????????????????*) [ -z "$SIZE" ] || { error 'invalid advertised size'; return 1; } ;; esac
@@ -1390,15 +1389,13 @@ install_jdk() {
 
 # Resolve locally first. Only the selector helper's explicit miss permits install.
 ensure_installed() {
-    local selector=$1 expected_major=${2:-} rows status version
-    installation_selector "$selector" local || return $?
-    require_tools uname awk || return 1
-    detect_host && data_path || return 1
+    local selector=$1 expected_major=${2:-} rows status
+    init_host || return 1
     rows=$(resolve_installed "$selector" probe); status=$?
     case "$status" in
         0) INSTALLED_ID=${rows%%$'\t'*}
-           version=$(printf '%s\n' "$rows" | awk -F '\t' '{print $12}')
-           check_major "$version" "$expected_major" || return 1 ;;
+           row_field 12 "$rows"
+           check_major "$REPLY" "$expected_major" || return 1 ;;
         4) install_jdk "$selector" '' "$expected_major" "${3:-}" || return $? ;;
         *) return 1 ;;
     esac
@@ -1426,7 +1423,7 @@ while [ "$#" -gt 0 ]; do
     shift
     if [ "$command" = exec ] && [ "$argument" = -- ]; then separator=1; break; fi
     if [ "$command" = default ] && [ "$argument" = -v ]; then
-        [ -z "$major_option" ] && [ "$#" -gt 0 ] && [[ $1 =~ ^[1-9][0-9]*$ ]] || {
+        [ -z "$major_option" ] && [ "$#" -gt 0 ] && is_major "$1" || {
             error '-v requires one positive Java major'; exit 2;
         }
         major_option=$1
@@ -1462,8 +1459,11 @@ if [ -z "$selector" ]; then
     esac
 fi
 case "$command" in
+    install|home|env|exec|default) installation_selector "$selector" local || exit $? ;;
+    uninstall) installation_selector "$selector" local no-range || exit $? ;;
+esac
+case "$command" in
     install|home|env|exec)
-        installation_selector "$selector" local || exit $?
         if [ -z "$selector" ]; then
             config_setting java || exit 1
             selector=$SETTING
@@ -1478,10 +1478,7 @@ case "$command" in
             fi
         fi ;;
 esac
-case "$command" in
-    exec) installation_selector "$selector" local || exit $?
-                execution_umask=$(umask) ;;
-esac
+[ "$command" != exec ] || execution_umask=$(umask)
 if [ "$option" = -i ] && [ -n "$selector" ]; then
     config_policy=
     [ "$command" = default ] || config_policy=config
