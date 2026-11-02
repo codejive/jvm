@@ -1,873 +1,14 @@
 # jvm specification
 
-## Status and purpose
-
 `jvm` is a small command line tool for obtaining and selecting Java Development
-Kits (JDKs). Projects commit a copy of the tool and invoke it directly; users do
-not need to install a separate JDK manager. JDK downloads and user preferences
-are shared across those project copies.
-
-This document distinguishes implemented discovery, installation, offline
-listing, uninstallation, persistent defaults, offline home/environment output,
-command execution from later milestones. Requirements expressed as MUST
-are mandatory for their stated scope. Details marked **proposed** remain design
-choices for review.
-
-### First implementation milestone (authorized 2026-10-29)
-
-The original milestone implemented `help` (since removed), `--help`, `--version`,
-and `available [selector]`; host and libc detection; validated XDG cache paths;
-GA latest TSV fetching through curl or wget; discovery across JVM implementations;
-trusted TSV reading; compatible archive filtering; ID construction and selector
-filtering; and a one-hour metadata cache with conditional requests and silent fallback.
-That milestone shipped version 0.1.0. Discovery listings preserve upstream order
-and return all matching IDs; discovery does not choose the highest version or
-an artifact for installation. Each matching ID displays once. Duplicate IDs are collapsed
-silently; build conflicts are not inspected. The project owns the index and fixes
-index problems upstream. Discovery trusts its contents and prioritizes speed.
-`available` accepts a Java major, a distro, or a distro-major selector. Exact-ID
-selection has been removed from discovery. Every selector uses the same latest
-index; distro-major does not fetch historical versions. `available --help` shows
-the main help without detecting the host, accessing storage, or networking.
-A header-only index is a successful empty inventory; a selector with no match
-exits 1. Unknown commands and excess/empty arguments exit 2.
-
-Adopted implementation choices explicitly authorized by the user: Bash 3.2 as
-the baseline, the command names below, exit codes 0/2/1, and a one-hour freshness
-interval. The four discovery entry points remain supported. The
-installation and offline-listing extension is described below. Persistent defaults
-and manual shell setup were subsequently authorized on 2026-10-30. Broader
-session-switching infrastructure and general JSON parsing remain deferred.
-Command execution was authorized and implemented on 2026-11-01. The child-shell
-command was subsequently removed at the user's request on the same date.
-Offline `home` and opt-in `env` output are implemented
-as described below.
-Help advertises implemented commands.
-
-### Installation and offline listing (authorized 2026-10-30)
-
-Version 0.2.0 adds `install <selector>` and `list`. Installation
-now uses the all-release latest index and cache shared with discovery, filtering compatible GA and EA JDKs
-and zip/tar.gz before selection. It requires SHA-256, checks advertised size,
-validates archive paths and links before extraction, checks the JDK layout and
-publishes a complete installation by rename on the destination filesystem.
-Local listing originally required durable managed manifests and a matching host
-and JDK layout. The 2026-11-01 directory-inventory correction below supersedes
-that visibility rule. Empty inventory succeeds. The user restored `list [selector]`
-on 2026-10-30, superseding the earlier removal of its optional selector.
-This milestone originally left defaults unchanged; the persistent-default
-extension below supersedes that behavior. No command edits shell profiles.
-
-Exact full IDs take precedence for installation selectors. Otherwise
-accept a positive major or distro-major (including hyphenated distros). A bare
-install major uses Temurin when no distro is configured: `install 22` then
-means `install temurin-22`.
-The configuration defaults extension below now controls this distribution. `list`
-returns the local directory inventory unless a selector filters it. `install` filters the latest index and
-requires one matching ID for ordinary selectors; multiple IDs fail with their
-full IDs as choices. Range selectors now use the policy below. Complete versions
-are never ranked, and vendor labels do not need parsing.
-This 2026-10-30 user clarification supersedes the earlier highest-version rule.
-
-For the resolved ID, Windows prefers zip and Linux/macOS prefer tar.gz, falling
-back to the other supported format. Exactly one row must remain in the chosen
-format; even identical duplicate rows fail. No feature/JVM/build preference or
-ID extension resolves collisions. An already complete compatible ID succeeds
-without another artifact download; an exact installed ID also works offline.
-
-### Uninstallation (authorized 2026-10-30)
-
-`uninstall <selector>` resolves exclusively against the offline directory
-inventory used by `list`. It accepts an exact full ID, positive major, or
-distro-major, including hyphenated distros and legacy versions. A bare major
-matches all locally installed distributions; it does not assume Temurin.
-This user clarification on 2026-10-30 applies only to uninstall; install uses
-its configured distribution, falling back to Temurin. Exact IDs take precedence. Multiple matching IDs fail with all their
-full IDs and ask the user to retry using one; no match exits 1. Invalid usage
-exits 2. No metadata fetch or cache access is needed.
-
-Reserve a private directory using `mktemp -d` at
-`jvm/tmp/remove-<ID>.XXXXXXXX`, alongside `jdks/` on the data filesystem. First
-use ordinary `mv` to move `jdks/<ID>` into that directory. Only after a successful
-move recursively delete the private directory and report
-`Successfully uninstalled <ID>`. Never recursively delete beneath `jdks/`.
-A failed move reports `couldn't uninstall <ID>` on stderr, adding exactly
-` (it might be in use)` on Windows, and exits 1. Only an empty reservation is
-removed after failure; a failed or interrupted move/deletion may leave temporary
-data for manual cleanup. Default replacement now follows the extension below;
-shell configuration is never edited. Concurrent installations use independent
-staging directories and no lock.
-
-See [tests/README.md](tests/README.md) for exact verification commands and gaps.
-
-## Proposed next milestones (recorded 2026-10-30)
-
-The core command set is implemented. The proposed next milestone is release
-readiness, including validation and user documentation. Configuration defaults
-were implemented on 2026-11-02. Version ranges and range disambiguation
-were implemented on 2026-11-02. Entries distinguish planned work from
-completed features; implementation does not imply full platform verification.
-
-1. **Configurable installation distribution (implemented 2026-11-02).** Bare
-   installation selectors use project/global distro settings, then Temurin.
-   See [Project-local defaults](#project-local-defaults) for independent Java
-   and distro precedence and the unchanged `default` command policy.
-2. **Range disambiguation (implemented 2026-11-02).** Use an eligible
-   per-major default, with deterministic C-order ID fallback as specified below.
-3. **Version-range selectors (implemented 2026-11-02).** Support open-ended
-   major bounds (`21+`, `temurin-21+`) and inclusive major ranges (`21..25`, `temurin-21..25`).
-   This feature was added to the near-term roadmap by the user on 2026-10-30.
-   Command coverage, highest-major selection, per-major disambiguation,
-   installation distro and offline-first install-on-demand policies are below.
-   Ordinary selectors retain their existing ambiguity behavior.
-4. **Smart `env` (implemented 2026-11-01).** Omit the PATH export line
-   when the selected JDK's `bin` directory is already an entry in the current
-   PATH. `env -f` forces the PATH export line to always be printed.
-   The usage comment and JAVA_HOME export are always printed.
-5. **JDK execution (closed 2026-11-01; implemented).** `exec` (alias `x`)
-   runs a command with a selected JDK. See [JDK execution](#jdk-execution).
-   The paired `shell`/`s` command was excluded as unfeasible: interactive startup
-   files can override JAVA_HOME and PATH, defeating the selected environment.
-6. **Real JDK smoke testing (implemented 2026-11-02).** The optional
-   `tests/jdk-smoke.sh` covers download, verified installation, first-install
-   default selection, offline listing/reinstall, actual `java`/`javac` execution
-   and uninstallation in isolated storage. It passed with Temurin 21 on native
-   Windows Git Bash. Other real-JDK host/interpreter combinations remain
-   unverified.
-   Live downloads remain separate from the deterministic offline suite;
-   commands and results are recorded in [tests/README.md](tests/README.md).
-7. **Portability checks and CI (configured 2026-11-02).** GitHub Actions runs
-   the offline suite on Linux and macOS with Bash 3.2 and current Bash, and on
-   Windows with current Git Bash/MSYS2/Cygwin plus Bash 3.2 on Cygwin. Bash 3.2
-   means an actual interpreter, with explicit version checks; a compatibility
-   mode does not qualify. Windows jobs also run the native junction smoke.
-   Real-JDK downloads are opt-in for manual workflow runs. Configuration alone
-   does not establish that hosted jobs or native platforms have passed;
-   actual results and remaining gaps are recorded in
-   [tests/README.md](tests/README.md).
-8. **User README.** Add a short root README explaining how to copy `jvm` into
-   a project, use the basic commands and configure the shell for the persistent
-   default. Keep contributor procedures in AGENTS.md and tests/README.md.
-9. **Project-local `.jvmrc` (implemented 2026-11-02).** Read optional
-   `java=<selector>` and/or `distro=<name>` defaults from `.jvmrc` in the current
-   directory. Related to configurable installation distribution; see
-   [Project-local defaults](#project-local-defaults).
-
-Version ranges and range disambiguation are implemented as specified below.
-Broader session-switching integration remains deferred.
-Offline `home` and `env` output were subsequently authorized and implemented on
-2026-10-30; their contract follows the range feature below.
-
-### Project-local defaults
-
-**Implemented 2026-11-02:** support `.jvmrc` in the
-current working directory and user-wide `$XDG_CONFIG_HOME/jvm/config`, falling
-back to `~/.config/jvm/config` using the existing absolute XDG/HOME path rules.
-Both files accept either or both of these keys:
-
-```text
-java=21+
-distro=graalvm-community
-```
-
-`java` is a selector, including major, distro-major, full ID and supported
-version ranges. `distro` is a distribution name. Read both files as literal
-data, never source them or evaluate their contents. Lookup of `.jvmrc` is
-limited to the current directory; do not search parent directories.
-
-Resolve each setting independently: explicit command-line selector takes
-precedence over project settings, project settings over user-wide settings.
-For `install` and installation through `home`/`env`/`exec` with `-i`, when
-the selector omits a distribution, use project `distro`, then
-user-wide `distro`, then built-in `temurin`. Explicit distro selectors and full
-IDs retain their meaning. A configured `java` containing a distro therefore
-retains that distro even if a separate `distro` setting differs.
-
-Command behavior:
-
-- `install` without a selector uses project `java`, then user-wide `java`,
-  then built-in Java major `25`. With no configuration, `jvm install` means
-  `jvm install temurin-25`. The installation distro rules also apply to the
-  built-in major fallback; `install -d` accepts the same omitted selector.
-- **Latest user correction (2026-11-02):** `home`, `env` and `exec` resolve
-  explicit CLI selector, then explicitly configured project `java`, then
-  explicitly configured user-wide `java`, then the existing global installed
-  default. Without `-i`, never use built-in major `25`: if neither configuration
-  nor a default supplies selection, preserve the existing missing-default error.
-  A configured selector that fails resolution does not fall through to a lower
-  priority setting or the installed default.
-- With `-i`, `home`, `env` and `exec` may omit the selector. Use the
-  same precedence above, and use built-in major `25` only when there is no
-  explicit/configured selector and no global default is set. An existing but
-  unusable/dangling default remains an error, not permission to install Java 25.
-  Retain offline-first resolution: install only on a genuine local miss;
-  ambiguity and operational errors must not trigger installation. Distribution
-  settings govern installation, not filtering of an existing local bare-major
-  selection. Ordinary installation/default lifecycle behavior remains intact.
-  Resolving an existing default preserves its normal path/output semantics;
-  `exec` continues to use its physical home.
-- **Final user correction (2026-11-02): `default` remains entirely unchanged.**
-  Do not apply configuration or new selectorless installation behavior to it.
-  Selectorless queries print the current value; there is no new operation to
-  set a default without a selector. Preserve existing flag validation, including
-  the explicit-selector requirement for `default -i`, and existing installation
-  distro behavior. Shared helpers must not change this command or alias `d`.
-- `available` and `list` retain their current query behavior;
-  project/global `java` does not turn a query into a selection.
-  `uninstall` continues to require an explicit selector. Aliases follow their
-  corresponding commands. `exec` still requires `--` and a command.
-- Existing `default -v <major>` query/selection behavior and selected-JDK
-  major consistency checks remain unchanged.
-
-The built-in major is the fixed value `25`, not a moving latest-major policy.
-The user-wide `java` setting supersedes the earlier proposal to allow only
-user-wide `distro`. Selectorless `-i` supersedes the earlier
-explicit-selector requirement only for `home`, `env` and `exec`.
-This latest correction supersedes the earlier plan to leave `home`/`env`/`exec`
-unchanged. All proposed changes to `default`, including selectorless
-`default -i` and configuration-based selection or installation, are withdrawn.
-
-Agreed parsing policy: allow blank lines, full-line `#` comments and surrounding
-whitespace. Reject duplicate or unknown keys, empty or invalid values, and
-unreadable files when a command needs settings from that file. Values are
-literal; shell quoting, variable expansion and inline comments are not syntax.
-A missing file leaves its settings unset. No command writes configuration or
-edits shell profiles.
-
-Settings are read after CLI syntax validation, only when needed. An explicit
-selector skips Java settings. Installation distro settings are read only for a
-bare-major/range installation, after a genuine local miss for `-i`. A local
-match does not require distro configuration. Consult the project file first;
-consult the global file only if the needed key is absent. Validate every key in
-a file when consulting it, including otherwise unused settings. A malformed
-lower-priority file is irrelevant when the project file supplies the needed key.
-Help and unaffected commands never read either file. No configuration directories
-are created. The offline harness covers this behavior; actual verification and
-remaining platform gaps are recorded in [tests/README.md](tests/README.md).
-
-### JDK execution
-
-**Authorized and implemented 2026-11-01:** `exec` (`x`) resolves a JDK and prepares
-JAVA_HOME and PATH for that installation, reusing the installed selectors and
-offline-first `-i` policy of `home`/`env`.
-Resolve to the physical installation home rather than a mutable default link,
-so later default changes do not switch the selected JDK.
-
-`exec [-i] [selector] -- <command> [args...]` runs the requested command with
-JAVA_HOME set and the selected JDK's `bin` directory prepended to PATH. The `--`
-separator ends JVM option parsing. The three-dash form `---` is accepted as an
-equivalent separator (user request 2026-11-02) because PowerShell removes an
-unquoted `--` before `jvm.ps1` sees it; both implementations accept both forms,
-Bash usage and help show `--`, and PowerShell usage and help show `---`. Only
-the first separator counts, so later `--` or `---` arguments belong to the child. Preserve argument boundaries and invoke the
-command through Bash's `exec "$@"`, without evaluating a command string or
-generated `env` output. The selector is optional (user correction 2026-11-01).
-When omitted, apply the configuration precedence above, then validate the global
-default using the same rules and diagnostics as `home`/`env`. Use its physical
-home. Only `-i` may install after a local miss, or use major 25 when both settings
-and the global default are absent. A broken default remains an error.
-The `--` separator and a nonempty command are required; missing parts exit 2
-before host detection, storage access or installation, reporting the full syntax:
-`jvm: usage: jvm exec [-i] [selector] -- <command> [args...]`.
-This includes invocation with no arguments and applies equally to alias `x`.
-All arguments after `--`, including JVM-looking flags, empty strings and shell
-metacharacters, belong to the child unchanged. The child's stdout/stderr, stdin,
-working directory and exit status reach the caller. A missing command exits 127;
-a command that cannot be executed exits 126, following Bash exec behavior.
-No JDK selection announcement is printed for `exec`.
-Users explicitly invoke a shell when they need shell syntax:
-
-```bash
-./jvm exec -- java -version
-./jvm exec 21 -- java -version
-./jvm x -i 21 -- mvn test
-./jvm x 21 -- bash -c 'java -version && mvn test'
-```
-
-The command does not explicitly change persistent defaults or the parent shell's
-environment; `-i` retains ordinary installation's default-initialization behavior.
-It requires no shell functions, profile edits, shims, or temporary session
-links; child processes inherit the selected environment.
-Always prepend the selected physical `bin` path, even if it already appears in
-PATH: command execution must give the selected JDK precedence. Use native
-forward-slash JAVA_HOME and POSIX PATH entries on Windows, sharing `env`'s
-conversion and validation. Restore the caller's umask after optional installation
-and clean this operation's private installation/cache staging before exec,
-because successful process replacement does not run Bash EXIT traps.
-Shell-function, shim, and mutable session-link approaches were considered and
-discarded. Real-JDK execution passed on native Windows Git Bash with Temurin 21
-on 2026-11-02 through `tests/jdk-smoke.sh`; broader platform verification remains
-outstanding.
-
-**User correction (2026-11-01):** retain `exec`/`x` and remove `shell`/`s`,
-superseding the earlier proposal to adopt or discard the pair together.
-The user closed this roadmap item with the dedicated shell command excluded
-as unfeasible.
-Interactive startup files such as `.bashrc` and `.zshrc` can reset JAVA_HOME
-and PATH, defeating the selected environment. No dedicated child-shell command,
-shell selection policy or startup hooks are provided. `shell` and `s` are
-unknown commands (exit 2). Users may still explicitly run a shell through `exec`.
-
-### Per-major defaults
-
-**Selected and implemented (2026-11-01):** retain one default installed
-JDK for each major, in addition to the global default reference.
-**Layout (user requested 2026-11-01):** place the global link at
-`jvm/jdks/default` and per-major links directly at `jvm/jdks/<major>`, for example
-`jdks/11`, `jdks/21` and `jdks/25`, alongside actual installation directories.
-This supersedes the proposed separate `defaults/` directory and moves the
-global reference from `jvm/default`. Each per-major reference points to a usable
-managed JDK home of that major, using the same platform link mechanism as the
-global default (Unix symlink or Windows directory junction); the global link
-may select any installed major.
-
-```text
-jvm/
-  jdks/
-    default -> 25.0.1-temurin/
-    21      -> 21.0.9-temurin/
-    25      -> 25.0.1-temurin/
-    21.0.9-temurin/
-    25.0.1-temurin/
-```
-
-The targets above are illustrative. Reserve `default` and positive-major names
-for aliases and exclude them from installation inventory scanning and removal
-as installations. Preserve existing link replacement and cleanup safeguards.
-Home/environment output, shell setup examples and tests use this layout.
-
-**Compatibility decision (2026-11-01):** backwards compatibility is not a goal.
-Do not retain a compatibility link at `jvm/default` or add migration machinery
-for this layout change. Users of the old path would update their shell/IDE
-configuration. The old layout is neither read nor migrated.
-
-**Advantage (recorded 2026-11-01):** per-major links provide stable JDK paths
-for IDEs and other tools that manage several Java versions. Configure each IDE
-once with paths such as `jvm/jdks/11`, `jvm/jdks/21` and
-`jvm/jdks/25`, then manage which actual installed JDK each link targets
-centrally through `jvm`. Changing a major's selected JDK would not require
-editing that JDK path separately in every IDE. Tools that cache or resolve a
-link's target may still
-need a refresh or restart to pick up a change.
-
-Apply the existing automatic default lifecycle within each major: a successful
-first installation initializes its missing major default, including an
-idempotent installation; later installations preserve an existing reference.
-When uninstalling that major's selected JDK, replace its reference with a
-remaining usable installation of the same major, using the existing inventory
-tie order. Remove the reference when none remains for that major; never point
-it at another major. Preserve the existing protections for unrelated data,
-failed changes, interrupted removal and concurrent initialization. The global
-default retains its own lifecycle, including replacement across majors.
-
-**Implemented UX (2026-11-01):** extend `default` with `-v <major>` to
-choose which major's default to query or change. Use the short flag `-v`, not
-`--major`. Without it, `default` continues to manage the global default.
-
-| Command | Behavior |
-| --- | --- |
-| `jvm default -v 21` | Show Java 21's default ID. |
-| `jvm default -v 21 temurin-21` | Set Java 21's default to the selected installed JDK. |
-| `jvm default -v 21 -i temurin-21` | Install if needed, then set Java 21's default. |
-
-A full installed ID may replace the selector. The selected JDK must match the
-major supplied to `-v`; a mismatch produces a clear error without changing the
-default. The major identifies the preference being changed, while the selector
-identifies the JDK. Explicit per-major selection leaves the global default
-unchanged. Explicit global selection, including `install -d`, leaves existing
-per-major defaults unchanged; ordinary installation still initializes a missing
-major default. The `-i` flag retains offline-first installation semantics.
-
-Reuse the `DEFAULT` column in `list` to show `global`, a major such as `21`, or
-`global,21` when both references select the same JDK. No separate command to
-list defaults or explicit unset command is included: each installed
-major should have a default, maintained by the automatic lifecycle above.
-
-Use existing selectors for home/environment output rather than adding a flag:
-
-| Command | Path behavior |
-| --- | --- |
-| `jvm home` | Return the stable global `jvm/jdks/default` path. |
-| `jvm home 21` | Return the stable `jvm/jdks/21` path if valid; otherwise, when absent, resolve against installed JDKs and return the selected physical home. |
-| `jvm home <full-ID>` | Return that specific installation's physical home. |
-| `jvm env 21` | Use the same stable reference or physical fallback path as `home 21`. |
-
-Existing path conversion and shell quoting rules still apply. No `-v` or
-`--major` flag is needed for `home` or `env`. As corrected by the user on
-2026-11-01, all explicit `home`/`env` selectors resolve against installed JDKs
-using the same selection and ambiguity rules as `default`. A positive-major
-selector first checks `jdks/<major>`. If present, validate its managed target,
-host compatibility, layout and major, and use that JDK without enumerating the
-inventory. An existing invalid reference fails without falling back or installing.
-An absent reference falls back to ordinary inventory matching: one match selects
-it, multiple matches show options, and no match fails (or permits `-i` installation).
-This rule applies to `default`, `home` and `env`, including `-i`; it does not
-change `install`, `uninstall` or `list`. Distro-major selectors do not use defaults.
-The complete lookup and scan order is specified under
-[Installed selector resolution](#installed-selector-resolution-implemented).
-
-Without a selector, missing or unusable global references make read-only
-`home`/`env` fail; these commands never repair storage.
-A missing `default -v` reference reports
-`No JDK currently set as the default for version <major>`, while an
-unusable one fails. Major selectors without a reference and explicit distro-major
-selectors retain ambiguity errors.
-Range fallback policy is specified below and does not change ordinary selectors.
-
-### Distribution preference order alternative
-
-**Unselected alternative (user requested 2026-10-30):** disambiguate
-different distributions using a configurable preference order instead of
-maintaining per-major default links. Keep the existing global default. This
-alternative does not require per-major links or per-major selection commands;
-it was not selected and is not implemented.
-
-The suggested default order is the default installation distro first (currently
-`temurin`, later configurable), followed by all other eligible distros in
-alphabetical order by canonical distro identifier. Users could override that
-order with a simple comma-separated value in a config file, for example
-`temurin,semeru,graalvm-community`. The example is a value, not adopted config
-syntax: the filename, setting name and surrounding format remain undecided.
-
-For ranges, apply distro preference after retaining the highest matching major;
-a preferred distro at major 21 must not outrank an eligible distro at major 25
-for `21+`. Honor explicit distro filters and exact IDs. A preference order ranks
-eligible candidates; it does not change `available`/`list` output order or
-authorize falling back to other distros during installation, which currently
-filters to the explicit or default installation distro. Offline-first `-i`
-selection remains unchanged: a usable local match avoids a remote lookup.
-
-**Proposed config detail:** consider explicitly listed distros in their supplied
-order, then unlisted eligible distros alphabetically, skipping absent distros.
-Whether to use that remainder policy, and how to handle whitespace, duplicate
-or unknown identifiers and empty values, remain open. Configuration is data,
-never sourced or evaluated as shell code.
-
-This alternative resolves ties between distros, but not multiple installed IDs
-of the same distro and major or multiple remote artifact rows for one ID. Those
-cases still need a deterministic policy consistent with the range-success
-requirement. Applying preferences to ordinary non-range selectors is also an
-open scope decision; their implemented ambiguity behavior is unchanged.
-
-### Open versions and inclusive version ranges
-
-Extend selectors with major-version bounds:
-
-| Selector | Meaning |
-| --- | --- |
-| `21+` | Any major version 21 or higher. |
-| `temurin-21+` | Any Temurin major version 21 or higher. |
-| `21..25` | Any major version from 21 through 25, inclusive. |
-| `temurin-21..25` | Any Temurin major version from 21 through 25, inclusive. |
-
-Range bounds apply to majors extracted from `java_version`. Selection among matches
-uses the highest-major rule below. Preserve exact full-ID precedence, including
-IDs whose version already contains `+`, and support hyphenated distros.
-
-**Adopted 2026-10-30; implemented 2026-11-02:**
-
-- Accept ranges in `available`, `list`, `install`, `default`, `home`, `env` and
-  `exec` (including aliases).
-  Exclude `uninstall`; no bulk-uninstall behavior is authorized.
-- `available` and `list` return all matches in their existing listing order.
-  Commands selecting one JDK first retain only matches at the highest matching
-  Java major. Disambiguate multiple installed IDs using that major's default.
-  A range MUST NOT fail merely because multiple
-  relevant JDKs exist. This user clarification supersedes the earlier planned
-  ambiguity error at the highest major. It does not adopt complete-version
-  comparisons, vendor-version ranking or fallback to a lower major.
-- Bare installation ranges use the normal installation distro: currently
-  Temurin, later the configured distro when configurable defaults are implemented.
-  Local selection still considers all installed distros unless explicitly filtered.
-- Range-based `default/home/env/exec -i` remains offline-first: use the highest
-  matching local major, resolving ties through the chosen policy. Only a genuine
-  local no-match permits remote installation. Multiple candidates must not cause
-  failure locally or during range-based installation; `-i` should resolve and
-  install a matching JDK when one is available. Network, unavailable-version and
-  other operational failures remain errors; checksum, archive and publication
-  safeguards are not relaxed. Operational failures do not trigger installation.
-  Continue using the exact ID returned by installation. Do not check remotely
-  for a newer JDK when a usable local match exists.
-
-For example, `home -i 21+` uses a sole installed Java 21 match without networking,
-even if Java 25 is available remotely. If Java 25 is installed too, select that
-major. With two installed IDs at major 25, the major default at `jdks/25`
-selects the installation.
-`install 21..25` instead filters
-remote candidates to the ordinary installation distro and chooses the highest
-matching major in the latest index.
-
-**Resolution policy (approved and implemented 2026-11-02):**
-
-- Bounds are positive decimal majors without leading zeros. Equal bounds are
-  allowed; reversed bounds and malformed ranges exit 2. Compare decimal bounds
-  without relying on fixed-width integer arithmetic or floating-point precision.
-- Installed resolution scans the complete inventory, retaining usable JDKs with
-  valid metadata, applies the distro/bounds filter and keeps the highest major.
-  Use that major's default only when it selects an eligible candidate. Otherwise
-  choose the lexicographically smallest full ID in C locale order. This is an
-  identity tie-break, not a newest-patch or vendor-version comparison.
-- Missing, dangling, unrelated, wrong-major, unusable or distro-incompatible
-  major preferences do not prevent this fallback. Do not repair references as
-  part of read-only resolution. Operational failures reading inventory, manifests
-  or an existing link remain errors and never authorize `-i` installation.
-  Existing destination-reference safeguards still apply when changing defaults.
-- Remote resolution applies the explicit or normal installation distro, keeps
-  the highest eligible major, then chooses the smallest full ID in C order,
-  independent of upstream row order. Local defaults do not rank remote IDs.
-  Keep every artifact row for the chosen ID, apply the existing platform archive
-  preference, and require exactly one remaining row. Artifact collisions remain
-  errors, even for ranges; do not silently pick a row or try another ID.
-- Range `home`/`env` output uses the selected physical home; `exec` also uses the
-  physical home. `default -v N` still requires the resolved JDK's major to equal
-  N; the flag does not narrow the range. Installation retains ordinary automatic
-  default initialization and explicit `-d` behavior.
-- Exact-ID precedence remains unchanged for commands that support it, including
-  existing safe local directory names resembling ranges. `uninstall` does not
-  interpret ranges but may remove such a directory by its exact name.
-
-No complete-version comparator, historical index fetching, new storage format
-or runtime dependency is introduced by ranges. Configuration is described above.
-
-## Offline home and environment output (implemented 2026-10-30)
-
-Without `-i`, `home [<selector>]` and `env [<selector>]` use only the complete
-managed inventory and existing default reference. They never fetch metadata, access the
-metadata cache, create storage directories, change the persistent default or
-installed inventory, or edit shell profiles. They do not download missing JDKs.
-
-Both accept the same installed selectors as `default`: exact full ID first,
-otherwise a positive major or distro-major, including hyphenated distributions
-and legacy Java versions. After syntax validation, a positive major first uses
-an existing valid per-major reference, without scanning the inventory. If that
-reference is absent, match the installed inventory. Other explicit selectors
-resolve against complete installed JDKs. For ordinary selectors, multiple matches
-use the existing ambiguity diagnostic/table and exit 1; no highest version is
-chosen. No match uses `No JDK found matching: <selector>` and exits 1.
-Version ranges use the resolution policy above. Invalid selectors and
-excess/empty arguments
-exit 2. Each command's `--help` prints main help without external utilities or
-storage access.
-
-Without an explicit or configured selector, validate that the stable global
-default reference points to an ordinary inventory directory with usable launchers. A valid manifest is not
-required for a global reference. An absent reference reports
-`jvm: No JDK currently set as the default` on stderr and exits 1, using the same
-wording as the `default` query. A dangling reference, a target outside the
-inventory or a target without usable launchers reports
-`jvm: default JDK is missing or unusable` on stderr and exits 1.
-Never repair or select a default implicitly. Successful ordinary
-invocations without secondary informational messages have empty stderr; failures
-have empty stdout. The output-stream decision below permits informational
-messages on stderr, including installation messages for the `-i` flag.
-
-### JDK home output: `home [<selector>]`
-
-Print exactly one unquoted absolute path and a newline. Positive-major selectors
-that use a per-major reference return its stable `jvm/jdks/<major>` path, retaining
-the final link component. Without that reference, inventory fallback returns the
-selected installation's normalized physical JDK home. Exact-ID and distro-major
-selectors always return the selected physical home.
-Omitted selection uses the stable `jvm/jdks/default` path, retaining that final reference rather than
-resolving it to an installation. Output is an absolute POSIX path in the running
-Bash environment on every platform, including Windows. A 2026-10-30 user
-correction supersedes the earlier native-path output policy: `home` does not
-convert its result through `cygpath`, so the result is directly usable in Bash.
-Windows drive-style storage inputs still use the ordinary storage conversion.
-No label, comment, shell quoting or selection announcement is printed on stdout.
-
-### Shell environment output: `env [-i] [-f] [<selector>]`
-
-Use the same home/reference choice as `home`. Print a usage comment and the
-JAVA_HOME export, followed by a PATH export when the selected `bin` directory
-is absent from the producer's current PATH:
-
-```bash
-# Use: eval "$(jvm env temurin-21)"
-export JAVA_HOME='/absolute/selected/home'
-export PATH='/absolute/selected/home/bin':"$PATH"
-```
-
-**GraalVM environment output (authorized and implemented 2026-11-01):** when
-the selected installation's valid manifest has `jvm_impl` exactly `graalvm`,
-emit `export GRAALVM_HOME=...` immediately after JAVA_HOME, using the same
-selected path, shell quoting and Windows native-path conversion. This applies
-to explicit selectors, global/per-major defaults, alias `e`, and `-i`/`-f`.
-The export is emitted even when smart PATH output omits PATH. Use the manifest's
-JVM type, not its distro or ID. Other JVM types and installations with missing
-or invalid manifests emit no GRAALVM_HOME statement, leaving any caller value
-untouched. This extension applies to `env`; `exec` retains its existing behavior.
-
-**Smart PATH output (implemented 2026-11-01):** compare the selected POSIX
-`bin` path literally against whole colon-separated PATH entries. An exact
-entry anywhere in PATH suppresses the PATH export, preserving the caller's
-entry order. Do not resolve symlinks, normalize trailing slashes, fold case or
-match path substrings; stable default paths and physical homes remain distinct
-entries. Spaces and shell metacharacters are literal data. Empty PATH entries
-do not match the selected absolute path. `env -f` always emits the PATH export,
-including when that duplicates an existing entry. It can be combined with `-i`
-and used without a selector. This behavior also applies to alias `e`.
-
-Without a selector or flags, the comment is exactly `# Use: eval "$(jvm env)"`.
-Include the supplied selector in the comment; accepted selector syntax contains
-only shell-safe ID/major/distro characters. Paths are literal single-quoted
-Bash words with embedded apostrophes safely escaped. Spaces, dollar signs,
-backticks and other metacharacters are data. Preserve the literal `"$PATH"` in
-the statement for expansion by the evaluating caller; do not embed the
-producer's PATH. Prepare and validate all paths and output before printing.
-Single-line output requires rejecting paths containing CR or LF.
-
-On Windows, JAVA_HOME uses a native forward-slash path and the PATH entry uses
-the Bash environment's POSIX path, both converted with `cygpath`. A native drive
-colon never enters the PATH entry. Output does not itself change the caller's
-environment: the user explicitly evaluates it. The implementation never uses
-`eval` or sources metadata. No extra session-switching infrastructure is added.
-
-### Command flags (adopted and implemented 2026-10-30)
-
-The implementation handoff explicitly adopted the following previously assumed
-or proposed policies. They are current behavior, not earlier requirements.
-
-`install -d <selector>` installs and selects the resolved ID as the persistent
-default, including when that JDK is already installed. It reuses the installation
-and atomic default-replacement helpers. Without `-d`, installation retains its
-ordinary first-install default initialization and preserves an existing default.
-Installation failure preserves the previous usable default. Selection failure
-returns 1 and preserves the previous default; a successfully published JDK may
-remain installed.
-
-`default -i <selector>`, `home -i <selector>` and
-`env -i <selector>` first resolve locally using the existing selector rules:
-positive majors first check their per-major reference, before enumerating the
-inventory. Otherwise exact IDs take precedence and bare majors match every
-distribution. One match
-uses that ID without networking. Ambiguity fails with the existing local table;
-validation, storage and other operational failures also fail without installation.
-Only a genuine no-match result permits installation using ordinary install
-selectors, including Temurin for a bare major. Continue with the exact ID returned
-by installation, without resolving the original broad selector again.
-
-For bare-major `home -i` and `env -i`, an existing valid major reference selects
-its stable link path; otherwise one local match returns its physical home.
-Without a major reference, multiple matches fail without networking.
-When no installation of that major exists, `-i` installs through the ordinary
-bare-major rule and returns the stable major reference if it points at that exact
-installation, including a newly initialized reference. Otherwise return the exact
-installation's physical home, without selecting a different JDK after a race.
-
-`default -i` selects that ID persistently. `home -i` and `env -i` preserve ordinary
-installation's first-install initialization and do not replace an existing usable
-default. Home output follows the corrected POSIX policy above; env quoting and
-Windows conversion retain their existing behavior. The env
-usage comment retains the supplied selector and includes `-i` and `-f` when
-requested, in that canonical order. Aliases emit the same canonical comment as
-their full command names.
-
-`default -i` requires an explicit selector. Missing selection prints
-`jvm: Missing selector` on stderr, leaves stdout empty and exits 2 without state
-changes. `home`, `env` and `exec -i` allow omitted selectors using the
-configuration/default/major-25 precedence above. Flags may precede or follow the
-selector. `-d` is accepted only by install, `-i` only by default/home/env/exec, and `-f` only by env.
-`-v <major>` is accepted only by `default`; a missing, repeated or invalid major
-exits 2. Unsupported or repeated flags, empty selectors and extra arguments
-exit 2 before side effects. Primary output is
-prepared before printing; any failure leaves stdout empty.
-
-### Output streams (decision recorded 2026-10-30)
-
-Reserve stdout for information that is the command's primary purpose: JDK
-listings from `available` and `list`, the current-default query result, the path
-from `home`, and the usage comment and shell statements from `env`. Help and
-version queries likewise print their requested information to stdout.
-For `exec`, both streams pass through from the child, even when it exits
-unsuccessfully; manager diagnostics use stderr.
-
-All secondary output, including progress, informational confirmations and
-default-change announcements, goes to stderr. This includes `Installing <ID>...`,
-`Successfully installed <ID>`, `Already installed <ID>`,
-`Successfully uninstalled <ID>`, `Default JDK set to: <ID>` and automatic
-`No JDK currently set as the default` announcements. Diagnostics also go to
-stderr. State-changing commands need not produce stdout merely to confirm
-success. A no-selector `default` query remains primary output, including its
-no-default result.
-
-This rule applies equally when one command performs another operation, such as
-installation or default initialization through `home -i` or `env -i`. Those
-operations may print informational messages on stderr while stdout retains
-exactly the command's primary result. For example, an invocation of
-`jvm home -i temurin-21` could produce:
-
-| Stream | Line |
-| --- | --- |
-| stderr | `Installing 21.1.2-temurin...` |
-| stderr | `Successfully installed 21.1.2-temurin` |
-| stderr | `Default JDK set to: 21.1.2-temurin` |
-| stdout | `/home/user/.local/share/jvm/jdks/21.1.2-temurin` |
-
-The ID is illustrative; this example does not prescribe message ordering.
-Selector resolution and initialization follow the adopted flag policy above.
-A failed manager operation must leave stdout empty rather than print a partial
-primary result; output already produced by an executed child is preserved.
-
-This decision supersedes the earlier requirement that `home` and `env` print
-nothing else on either stream: their stdout remains restricted, while stderr
-may contain secondary messages. Existing installation, uninstallation and
-default-change confirmations now follow this rule in the script. The `-i` flag
-follows the adopted policy above.
-
-### First-letter command aliases
-
-**Adopted and implemented 2026-10-30, extended 2026-11-01:** commands can be
-invoked using the explicit single-letter aliases below, retaining the full
-command names except for the removal of `help` described below:
-
-| Alias | Command |
-| --- | --- |
-| `a` | `available` |
-| `l` | `list` |
-| `i` | `install` |
-| `u` | `uninstall` |
-| `d` | `default` |
-| `e` | `env` |
-| `h` | `home` |
-| `x` | `exec` |
-
-Aliases use the same arguments, flags, behavior, output and exit status as
-their full command names. For example, `jvm l 21` means `jvm list 21`, and
-`jvm i temurin-21` means `jvm install temurin-21`. This requests explicit
-single-letter aliases, not arbitrary command-prefix matching. `x` was added on
-2026-11-01 for `exec`, since `e` already means `env`.
-
-**Decision recorded 2026-10-30:** remove the `help` command and expose help only
-through `--help`, including the existing subcommand `--help` forms. This leaves
-`h` unambiguously available for `home`. `jvm help` is an
-unknown command (exit 2). Normalize explicit aliases before shared argument
-parsing and dispatch. Full-command and alias `--help` print the main help
-without host detection, storage access, networking or external utilities.
-
-## Scope
-
-The complete version MUST:
-
-- List JDKs available for download from jdkdb-index.
-- Download and install compatible JDKs into user-owned storage.
-- List JDKs installed by this tool, including their full IDs and default status.
-- Select a persistent default JDK for the user.
-- Accept a full JDK ID, a Java major version, or `<distro_name>-<major_version>`
-  wherever an installed JDK is selected.
-- Stay compact enough to copy into every Java project.
-- Keep help and routine output short and to the point. Show extra technical
-  information only when it is important to the user's immediate task; keep
-  storage, dependency, cache and contributor details in documentation.
-- Continue useful work when nonessential inconsistencies can be handled safely.
-  A technical detail affecting one candidate MUST NOT abort an otherwise usable
-  discovery listing. Report important limitations briefly, preserve valid results,
-  and reserve failures for cases where the requested operation cannot complete
-  safely (for example, no usable metadata or no selector match).
-
-The 2026-11-01 extension adds selected-JDK command execution.
-Broader integration that switches the parent shell remains deferred.
-
-Initial scope does not require system-wide installation, automatic
-updates, importing unrelated installations, or a GUI. Project and user-wide
-configuration defaults are implemented as described above.
-Discovering arbitrary JDKs on PATH or in vendor-specific directories is separate
-from listing installations managed by `jvm`.
-
-## Implementation and portability constraints
-
-- The Bash implementation remains one file named `jvm`, directly executable
-  where supported and runnable as `bash ./jvm` everywhere supported. The
-  separately requested native Windows PowerShell implementation is
-  `jvm.ps1`; fixtures and tests remain outside both runtime files.
-- The Bash implementation MUST run on Linux, macOS, and Windows through Cygwin,
-  MSYS2, and Git Bash. Native PowerShell support is provided separately by
-  `jvm.ps1` and does not change the Bash platform contract.
-- `jvm` and `jvm.ps1` MUST behave the same wherever the platform allows:
-  commands, options, selectors, output, exit codes and diagnostics. Any
-  difference MUST be a documented platform boundary, and a behavior change to
-  one implementation MUST be applied to the other in the same change.
-- **Adopted:** support Bash 3.2 and later, including macOS's bundled Bash. Avoid
-  associative arrays and other features requiring newer Bash.
-- Runtime logic in `jvm` MUST remain Bash, apart from ordinary system utilities.
-  The separate `jvm.ps1` runtime MUST remain PowerShell 5.1 and built-in .NET;
-  neither implementation may require package managers or downloaded helpers.
-  Do not require Python, Perl, Ruby, JavaScript, Node.js, or `jq`.
-- Do not add a third runtime language. A Java feature MUST document why a
-  suitable existing JDK is assured, or how Bash first installs a specifically
-  known suitable JDK without invoking Java. No circular dependency on Java for
-  initial discovery, metadata parsing, or installation.
-- Development tools and test fixtures need not be shipped with the runtime files.
-  They MUST NOT become hidden runtime dependencies.
-- Prefer clarity and small dependencies to code golfing. **Proposed:** record
-  script byte size as it grows; there is no arbitrary hard size limit yet.
-
-### System utilities
-
-Use Bash builtins and widely available filesystem/text utilities. Detect actual
-capabilities and accommodate GNU/BSD differences; do not assume GNU `readlink
--f`, `sort -V`, `date`, `stat`, `sed -i`, or `mv -T` behavior.
-
-| Capability | Required approach |
-| --- | --- |
-| HTTPS transfer | Support both `curl` and `wget`; use whichever is available. |
-| Filesystem/text work | Ordinary tools such as `mkdir`, `mv`, `rm`, `ln`, `uname`, `mktemp`, `sed`, `awk`, and `sort`, only as needed. |
-| Extraction | `tar` with gzip for `.tar.gz`; `unzip`, or a verified ZIP-capable `tar`, for `.zip`. |
-| Strong checksum | Detect a compatible implementation, such as `sha256sum`, `shasum -a 256`, or `openssl dgst -sha256`. |
-| Windows path conversion | Use `cygpath` when supplied by the Bash environment and conversion is needed. |
-
-An individual utility is not assumed to exist on every platform. Check only the
-capabilities a command needs and give an actionable error when unavailable.
-`--help` and local listing MUST NOT require networking or archive tools. Do not
-install missing dependencies automatically. Other archive formats and native
-installers are outside initial scope.
-
-### Native Windows PowerShell implementation
-
-**Requested 2026-11-02:** provide a native `jvm.ps1` implementation compatible
-with Windows PowerShell 5.1. It is a separate entry point; it does not invoke
-Bash, require PowerShell Core, or install packages. It follows the existing
-selectors, configuration precedence, XDG storage layout, cache lifetime,
-manifest format, defaults, and offline-first installation policy. Its `env`
-command emits PowerShell assignments, for example:
-
-```powershell
-Invoke-Expression (& .\jvm.ps1 env temurin-21)
-```
-
-PowerShell-specific boundaries: when `jvm.ps1` is invoked from a PowerShell
-session, the parser consumes an unquoted `--` before the script sees it, so
-use the equivalent `---` separator there (`--` still works with `-File`
-and `cmd.exe`). At a prompt, PowerShell also drops
-a later unquoted `--` argument intended for the child; quote it. `exec` launches native `.exe`/`.com` programs
-directly. `.bat` and `.cmd` files are launched like any other command, so
-Windows runs them through `cmd.exe`, which re-parses their arguments exactly as
-it would when the file is run without `jvm`. `.ps1` scripts are run with
-`powershell.exe -NoProfile -NonInteractive -File`, subject to the user's
-execution policy, and an extensionless command prefers a `.ps1` file over the
-`PATHEXT` extensions, as PowerShell does, both for bare names on `PATH`
-and for path-qualified names. ZIP
-extraction is implemented with .NET and rejects symbolic
-links. A `tar.gz` fallback requires the Windows `tar.exe` utility and rejects
-links and special entries. These archive/link boundaries are intentionally
-conservative and differ from Bash's support for verified internal archive
-links. PowerShell 5.1 compatibility and native junction behavior are covered by the
-isolated test in `tests/powershell.ps1`. Local validation was performed on
-2026-11-02; broader PowerShell platform coverage remains outstanding.
-
-TODO (not yet authorized or implemented): extend `tests/powershell.ps1` with
-offline coverage of the PowerShell network and archive paths, using a local
-`HttpListener` server with checked-in or generated fixtures. It should cover
-index/metadata fetching and conditional 304/cache handling, ZIP and `tar.gz`
-installation, checksum mismatch, archive traversal and link/special-entry
-rejection, and HTTP failures. These paths are currently unverified.
-
-## Adopted command interface
-
-The names and exit codes are adopted. `--help`, `--version`,
-`available`, `list`, `install`, `uninstall`, `default`, `home`, `env` and `exec`
-are implemented.
-The following commands describe the intended complete interface.
+Kits (JDKs). Projects commit a copy of the tool and invoke it directly; no
+separate JDK manager is needed. Downloads and user preferences are shared by all
+project copies. This document describes the current behavior of both
+implementations: the Bash script `jvm` and the native Windows PowerShell 5.1
+script `jvm.ps1`. Verification procedures and results live in
+[tests/README.md](tests/README.md).
+
+## Commands
 
 ```text
 jvm --help
@@ -882,1014 +23,541 @@ jvm env [-i] [-f] [selector]
 jvm exec [-i] [selector] -- <command> [args...]
 ```
 
-- `available` lists compatible JDKs across JVM implementations from the API's
-  latest index, covering the latest release of every major across distributions. No argument,
-  a major, a distro, and a distro-major all use that same index and cache.
-  Always include GA and EA releases from the all-release latest index. `-t`
-  only appends TYPE; it does not change filtering, the endpoint or the cache.
-  The flag may precede or follow the selector and works with alias `a`;
-  repeated `-t`, the removed `-a`, or use of `-t` with
-  any other command exits 2. Historical versions remain outside this interface.
-- `list [selector]` lists local JDK directories offline, including directories
-  with absent/invalid manifests or invalid launcher layouts. With no selector
-  it returns the complete directory inventory. If no such directories exist,
-  print `No JDKs are installed. Use 'install' to install one` to stdout,
-  without a table header, and exit 0 whether or not a valid selector was supplied.
-  An optional full ID, major, distro or distro-major filters this inventory.
-  Exact IDs take precedence; majors match all distributions. Return every
-  matching ID without ambiguity errors. With a nonempty installed inventory,
-  a selector with no match exits 1;
-  invalid syntax or excess/empty arguments exit 2. No network or cache access
-  is allowed.
-- `install` resolves a remote selector and installs that exact artifact. It is
-  idempotent for an already complete installation, and for an exact local ID
-  with usable launchers even when its manifest is missing or invalid. It
-  initializes a missing default, but MUST NOT replace an existing default unless
-  `-d` is supplied.
-  Print `Installing <ID>...` to stderr after resolving the full ID and before
-  downloading the artifact, then
-  `Successfully installed <ID>` to stderr after publication. An existing complete
-  installation reports `Already installed <ID>` on stderr without another download.
-  With no selector, use project Java, user-wide Java, then major 25, with the
-  independent installation distro policy described above. This also applies to
-  `install -d`. An installed global default does not supply this selector.
-  `install --help` prints the main help page to stdout with exit 0 and no stderr,
-  without external utilities, configuration, host detection, storage or networking.
-  `-help` is an unsupported flag and exits 2.
-- `uninstall` removes one selected local directory using the offline
-  selection and move-before-delete procedure above.
-  With no argument, print `jvm: usage: jvm uninstall <selector>` followed by
-  `for more information run: jvm uninstall --help` on stderr and exit 2,
-  without host detection, storage access, networking or external utilities.
-- `default` without an argument reports the current selection, or explicitly
-  reports that none exists. With an argument it selects an already installed
-  JDK; it downloads only when explicitly requested with `-i`.
-- `home` prints the installed home or stable default path; `env` prints safely
-  quoted Bash exports for the same path, as specified above.
-- `exec` runs a command with the
-  selected physical JDK home and its bin directory first on PATH, as specified above.
-- `--help` shows implemented command usage, aliases, flags and a short selector
-  explanation.
-  Include a brief purpose statement, one-line command descriptions and a few
-  examples. Keep it readable without a wall of text; omit routine implementation
-  details and deferred commands. This clarifies the user's 2026-10-30 request
-  that help should explain the tool rather than compress usage into a few lines.
-- Full IDs MUST be shown untruncated. Discovery does not accept them as selectors;
-  exact IDs are accepted by installation, uninstallation and local listing. Listings
-  show `ID`, `DISTRIBUTION`, `VERSION`, and `JVM`. The `VERSION` column uses
-  upstream `java_version` in all listings, including ambiguity tables; its header
-  stays unchanged (user requested 2026-11-01). Omit the platform column;
-  discovery already filters for the current host.
-  Local listings and ambiguity tables add a `DEFAULT` column showing `global`,
-  a major, or both when references select the row. Default labels do not change IDs.
-  **Opt-in discovery TYPE (user requested 2026-11-02):** only `available -t`
-  adds a final `TYPE` column. Show `ea` for release type `ea` and no release label
-  for `ga`. Strip the surrounding `[` and `]` from `features`, retaining the
-  comma-separated values and their order. If both `ea` and nonempty features
-  are present, join them with a comma, EA first: `ea,feat,feat2`. GA with features
-  displays `feat,feat2`; GA with `[]` has an empty TYPE cell. Duplicate IDs keep
-  the first eligible row, including its TYPE, in upstream order.
-  Ordinary `available`, local listings and ambiguity tables retain their original
-  columns. Installation and installed-manifest eligibility accept GA and EA alike.
-- Align listing headers and values with tabs at 8-column stops. Size each column
-  from the widest displayed value or header, placing the next column at the
-  following tab stop, capped at four tab stops (32 columns) per column. Longer
-  values remain untruncated and get one separating tab; they may overflow the
-  usual alignment without widening the other rows. Preserve row order and apply
-  the same layout to redirected output; repeated tabs are display padding.
-- Diagnostics, progress and secondary informational messages go to stderr;
-  only primary command results go to stdout, as specified in the output-stream
-  decision above. Avoid
-  interactive prompts and terminal-only formatting in redirected output.
-- When install, uninstall, default, home, env or exec matches multiple IDs, print
-  `Multiple JDKs match, try again using one of the following IDs:` followed by
-  the matching JDKs using the same table renderer as `list <selector>` (ID,
-  distribution, version and JVM, with the same headers and tab alignment).
-  Print each ID once, using its first matching row. The message and table go to
-  stderr; stdout stays empty and the command exits 1. Uninstall shows the local
-  matches; install shows its matching remote candidates, including its default
-  distribution filter for bare majors.
-- **Adopted:** exit 0 for success (including empty lists and `default` reporting
-  no default), 2 for invalid usage, and 1 for operational failures, no selector match, or ambiguity.
-  A selector with no matching JDK reports `No JDK found matching: <selector>`.
-  `exec` propagates the executed child's status instead of mapping it
-  to these manager statuses.
+Single-letter aliases behave exactly like their commands: `a` available, `l`
+list, `i` install, `u` uninstall, `d` default, `h` home, `e` env, `x` exec. There
+is no `help`, `shell` or `s` command; unknown commands exit 2. `--help` (also as
+a command's only argument) prints the main help to stdout without host
+detection, storage, networking or external utilities. Help gives a purpose
+statement, command descriptions, selectors, options, shell setup and examples.
+
+Flags may precede or follow the selector. `-t` is accepted only by `available`,
+`-d` only by `install`, `-i` only by `default`/`home`/`env`/`exec`, `-f` only by
+`env`, and `-v <major>` only by `default`. Repeated or unsupported flags, empty
+selectors, excess arguments and invalid selector syntax exit 2 before any side
+effect.
+
+### Exit codes and streams
+
+- `0` success (including empty listings and a `default` query with no default),
+  `2` invalid usage, `1` operational failure, no match or ambiguity. `exec`
+  returns the child's status instead; a missing command exits 127 and a command
+  that cannot run exits 126.
+- stdout carries only a command's primary result: listings, the `default`
+  query, the `home` path, `env` statements, help and version. Everything
+  secondary goes to stderr: progress, confirmations (`Installing <ID>...`,
+  `Successfully installed <ID>`, `Already installed <ID>`, `Successfully
+  uninstalled <ID>`, `Default JDK set to: <ID>`), diagnostics and ambiguity
+  tables. A failed manager operation leaves stdout empty. For `exec`, the
+  child's streams pass through unchanged.
+- No match reports `No JDK found matching: <selector>`.
+- Multiple matches for `install`, `uninstall`, `default`, `home`, `env` or
+  `exec` print `Multiple JDKs match, try again using one of the following
+  IDs:` plus the `list` table (one row per ID) on stderr and exit 1.
+
+### Listings
+
+Columns are `ID`, `DISTRIBUTION`, `VERSION` (upstream `java_version`) and `JVM`;
+IDs are never truncated. Local listings and ambiguity tables add `DEFAULT`
+showing `global`, a major such as `21`, or `global,21`. `available -t` appends a
+final `TYPE` column: `ea` for early access, followed by the bracket-stripped
+`features` values (`ea,feat,feat2`); a GA row with no features is empty.
+Columns are tab-aligned to 8-column stops, sized to the widest value and capped
+at four stops; longer values stay untruncated with one separating tab.
+
+### Command behavior
+
+- `available` lists compatible latest JDKs from the shared index across all JVM
+  implementations (GA and EA), in upstream order, each ID once. It accepts no
+  selector, a major, a distro or a distro-major. An empty result for a valid
+  selector exits 1.
+- `list [selector]` lists the local directory inventory offline; a selector
+  filters it, returning every match without ambiguity errors. With no
+  installations it prints `No JDKs are installed. Use 'install' to install one`
+  and exits 0. A selector that matches nothing in a nonempty inventory exits 1.
+- `install [-d] [selector]` resolves one remote artifact and installs it. It is
+  idempotent (an existing complete installation reports `Already installed`
+  without downloading). A first install initializes a missing default and
+  per-major default but never replaces existing ones; `-d` installs and selects
+  the global default, even when already installed. A failed selection preserves
+  the previous default, though the published JDK stays installed. Without a
+  selector it uses project `java`, user `java`, then major 25.
+- `uninstall <selector>` is described under [Uninstallation](#uninstallation).
+- `default` without selector prints the current default ID, or `No JDK currently
+  set as the default` (exit 0); `-v N` queries major N, reporting `No JDK
+  currently set as the default for version N`. An unusable reference is an
+  error. With a selector it selects an installed JDK as default and prints
+  `Default JDK set to: <ID>` to stderr. `default -i` requires an explicit
+  selector (`jvm: Missing selector`, exit 2). Configuration never applies to
+  `default`.
+- `home` prints one unquoted absolute path. `env` prints shell statements.
+  `exec` runs a command. See below.
 
 ## Identity and selection
 
 ### Full IDs
 
-Build a full ID from `<version>-<distro>` for every JVM implementation,
-using the API's `version` value unchanged. If its leading decimal number is not
-the Java major extracted from `java_version`, prepend `<major>-`. Compare the
-whole leading number: Java 19 with vendor version `190.1` also needs `19-`.
-For example, vendor version `22.3.1+java19` with Java 19 produces
-`19-22.3.1+java19-graalvm`; legacy vendor version `1.8.0_482-b08` with Java 8
-produces `8-1.8.0_482-b08-temurin`. A version already starting with the correct
-major receives no extra prefix.
+An ID is `<version>-<distro>` using the index's `version` unchanged. If the
+whole leading decimal number of `version` is not the Java major taken from
+`java_version`, `<major>-` is prepended (`19-22.3.1+java19-graalvm`,
+`8-1.8.0_482-b08-temurin`). `jvm_impl`, OS, architecture and features never
+enter the ID. The ID is the installation directory name under `jdks/`.
 
-**User correction (closed 2026-11-01; implemented):** all Java-major operations MUST derive their
-major from `java_version`, including discovery, installation and offline
-selectors, per-major reference initialization/validation, and default replacement.
-`version` is used only as the vendor-version portion of the ID, never to infer
-the Java major. This supersedes the 2026-10-30 major-matching decision.
-The `VERSION` column continues to display `java_version`.
-Apply the same ID derivation to discovery, installation and saved manifest
-validation. Existing directories are not renamed or migrated; the ordinary
-local-directory inventory rules still apply to them.
+All Java-major operations derive the major from `java_version`, accepting modern
+(`8.0.482+8`) and legacy (`1.8.0_482-b08`) forms; `version` is only the
+vendor-version part of the ID. Version strings are never compared or ranked.
 
-`distro` is the canonical distribution identifier. Never append `jvm_impl` to
-the ID. This 2026-10-30 user decision prioritizes shorter IDs; collisions across
-JVM implementations fail installation if multiple rows remain after archive
-preference; discovery still silently deduplicates. For example:
+### Selector forms
 
-```text
-21.0.12+8-temurin
-21.0.12+8-semeru
-```
+| Form | Meaning |
+| --- | --- |
+| full ID | Exact match; takes precedence over every other interpretation. |
+| `21` | Positive major, no leading zeros. |
+| `temurin-21` | Distro plus major; the major is split at the final hyphen, so `graalvm-community-21` works. |
+| `21+`, `temurin-21+` | Major 21 or higher. |
+| `21..25`, `temurin-21..25` | Inclusive major range. |
 
-The ID MUST also be the on-disk installation folder name, directly beneath
-`jdks/`. For example, `21.0.12+8-temurin` is installed in
-`${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/21.0.12+8-temurin/`.
-Validate IDs as single portable directory names before using them in paths;
-reject path separators, traversal components, and names invalid on supported
-filesystems. Do not silently rename a folder or use a separate opaque key.
+Distro tokens are lowercase letters, digits and hyphens starting with a letter.
+Bare distro names are not accepted as selectors, except `list` and `available`
+where a distro filters, or when the name exactly matches a local directory.
+Range bounds are compared as decimal strings; equal bounds are allowed and
+reversed or malformed bounds exit 2. Ranges are accepted everywhere except
+`uninstall`.
 
-IDs are scoped to the current machine's compatible JDK inventory. OS,
-architecture, archive variant and JVM implementation MUST NOT appear in the ID.
-Ignore features for identity and user selectors. Filter metadata for the host and
-supported archive format before displaying IDs. Multiple archive records for the
-same JDK do not represent separate installations. Discovery trusts the index,
-prints each ID once, and does not inspect or warn about different builds sharing
-an ID, including when JVM implementations differ. The first matching row
-supplies display fields (including the JVM column); no artifact is selected.
-Installation applies the format preference and unique-row requirement above;
-discovery does not perform those checks.
+### Local directory inventory
 
-Installed directory names preserve the ID even if the corresponding download
-later disappears from the upstream index. A manifest supplies metadata rather
-than permission to use or uninstall that directory. Retain platform and source artifact metadata
-for validation, without encoding them into the ID.
+The inventory is the ordinary directories directly beneath `jdks/`, including
+hidden and manually named ones. It excludes `default`, numeric names (reserved
+for references), files, directory links and unsafe names. A name is a single
+component of at most 180 characters, not `.`/`..`, not starting with `-`, and
+free of path separators, tabs, CR and LF. Names may contain spaces.
 
-### Local directory inventory (user correction 2026-11-01)
-
-A directory's name is its local ID. Missing or invalid metadata does not make
-working launchers unusable and must not hide a directory or prevent its removal.
-This supersedes the earlier complete-manifest-only inventory policy.
-
-List ordinary directories directly beneath `jdks/`, including hidden folders
-and manually named folders. Exclude `default` and numeric names reserved for
-references, ordinary files, directory symlinks/junctions and unsafe path names.
-Local names must be nonempty single components of at most 180 characters;
-reject `.`, `..`, leading `-`, path separators, tabs, CR and LF. Existing local
-names may contain spaces and need not follow the remote `<version>-<distro>`
-grammar. No metadata is inferred from a directory's spelling.
-
-Apply these checks in order:
-
-| Directory state | `list` output | Local command behavior |
+| Directory state | `list` row | Behavior |
 | --- | --- | --- |
-| Missing/unusable java or javac launcher | ID plus `(invalid JDK)` only | Exact-ID uninstall works; default/home/env/exec selection fails. |
-| Usable launchers, no manifest | ID plus `(manifest missing)` only | Exact-ID selection and uninstall work. |
-| Usable launchers, invalid/unrecognized manifest or mismatched identity/host | ID plus `(manifest invalid)` only | Exact-ID selection and uninstall work. |
-| Usable launchers and valid matching manifest | Ordinary metadata columns and default labels | Exact-ID and metadata-based selectors work. |
+| Missing/unusable `java` or `javac` | ID + `(invalid JDK)` | Exact-ID uninstall only. |
+| Usable launchers, no manifest | ID + `(manifest missing)` | Exact-ID selection and uninstall. |
+| Usable launchers, invalid or mismatched manifest | ID + `(manifest invalid)` | Exact-ID selection and uninstall. |
+| Usable launchers, valid manifest | Full columns | All selectors work. |
 
-The diagnostic rows show only the ID and message, with no guessed distro,
-version, JVM or default columns. Invalid launcher layout takes precedence over
-manifest status. Existing launcher checks apply: executable java/javac files on
-Unix; accepted native launcher suffixes on Windows. These checks establish
-layout, not proof that a binary can execute on this machine.
+Launchers are executable `bin/java` and `bin/javac` on Unix; on Windows they
+may have no suffix or `.exe`, `.bat` or `.cmd`. Diagnostic rows appear only for
+`list <ID>`/`uninstall <ID>` and for unfiltered `list`; major, distro and
+distro-major filters skip them. Layout is checked, not execution.
 
-An exact directory name takes precedence over short-selector interpretation.
-`list <ID>` and `uninstall <ID>` include diagnostic rows. Major, distro and
-distro-major filters skip them. `home`, `env`, `exec` and global `default` can
-select a working directory by exact ID without metadata, including through
-`-i`; no metadata fetch, manifest repair or invented manifest is needed.
-`install <exact-ID>` likewise reports an existing working directory as already
-installed without fetching metadata. `default -v N` requires a known major and
-fails clearly when metadata cannot establish it. An existing major reference
-whose target has no valid metadata remains unavailable for major selection;
-it never bypasses metadata requirements or silently falls back.
-
-Global default query/home/env/exec validate its target's launchers and directory
-identity without requiring its manifest. Automatic per-major initialization and
-all automatic replacement candidates still require valid host-compatible
-metadata and working launchers. An exact reinstall without metadata may
-initialize a missing global default, but cannot initialize a major reference.
-
-Uninstallation by exact ID requires neither launchers nor a manifest. Keep
-move-before-delete and scoped cleanup. Inspect references that actually point
-to the removed ID so loss of its metadata does not leave dangling references.
-For major references, use the reference name to choose a remaining known JDK
-of that major or remove the reference. If the removed global default has no
-known major, choose the first remaining complete compatible installation in
-existing inventory order, or clear the default when none remains. Unknown
-metadata directories are never chosen automatically as replacements. Failed
-moves restore prior usable selections, including those without manifests.
-
-### Discovery selectors (implemented)
-
-Range selectors additionally follow [the range policy](#open-versions-and-inclusive-version-ranges).
-
-- With no selector, list compatible latest JDKs across distributions, majors and
-  JVM implementations.
-- A positive integer such as `21` filters by the major extracted from `java_version`.
-- A canonical distro such as `temurin` filters by distribution across majors.
-  Hyphenated distro names such as `graalvm-community` are supported.
-- `<distro>-<major>` such as `temurin-21` filters by both. Split a positive major
-  suffix from the final hyphen; other hyphens remain part of the distro name.
-- Discovery and installation always fetch `/metadata/all/{os}/{arch}/jdk-latest.tsv`
-  and share its cache. Discovery includes GA and EA with or without `-t`;
-  installation accepts both GA and EA candidates. The user withdrew the
-  proposed separate history endpoint for distro-major; do not fetch history or
-  add JVM-specific requests for this selector.
-- Include all `jvm_impl` values in the broad index for every selector. Do not
-  filter to HotSpot or select a preferred JVM. The 2026-10-30 clarification
-  supersedes HotSpot-only discovery: HotSpot was only intended as a parameter
-  for the separate endpoint that was subsequently withdrawn. JVM implementations
-  remain eligible, but shared version-distro IDs collapse silently; no suffix or
-  collision-resolution policy is introduced.
-- Exact-ID matching is removed from `available`. Invalid selector syntax exits 2;
-  a syntactically valid selector with no compatible matches exits 1. Majors must
-  be positive decimal integers without leading zeros. Distro tokens use lowercase
-  letters, digits and hyphens, starting with a letter. Inputs are validated before
-  transfer or storage use. Positive numeric suffixes without leading zeros use
-  the distro-major interpretation.
-- `jvm available --help` prints the same short help as `jvm --help`, with exit 0.
-
-### Installed selector resolution (implemented)
-
-**Current behavior (2026-11-01):** `default`, `home`, `env` and `exec`
-share the following resolution order. Here, an **inventory scan** means
-enumerating `jdks/*` and inspecting candidate installations; checking a known
-path is not a scan.
-This sequence does not change discovery, ordinary installation, listing or
-uninstallation selector policies.
+### Installed selection (`default`, `home`, `env`, `exec`)
 
 With an explicit selector:
 
-1. Validate selector syntax, detect the host and resolve the data storage path.
-   Accept a full ID, positive major without leading zeros, or distro-major,
-   including hyphenated distros and legacy version IDs, or a version range.
-   Ranges follow the dedicated resolution policy above instead of ordinary
-   ambiguity handling in step 5. Bare distro names are unsupported unless they
-   name an existing local directory exactly. An existing safe local folder name
-   is also an exact ID, including names with spaces or a leading dot. No inventory scan occurs.
-2. For a positive major such as `21`, check `jdks/21` directly. If present,
-   validate that it is a managed link/junction to a compatible, usable
-   installation of that major. A valid reference selects its target without
-   scanning the inventory. An existing invalid, unrelated, dangling, unusable
-   or wrong-major reference fails without scanning or permitting installation.
-   An absent reference proceeds to step 4.
-3. For an exact local ID, check `jdks/<ID>` directly. An ordinary directory
-   with usable java/javac launchers selects that ID without requiring a valid
-   manifest or scanning the inventory. An existing invalid launcher layout
-   fails with a clear error. An absent directory proceeds to step 4; an
-   operational manifest-read error fails immediately. Distro-major selectors
-   proceed directly to step 4 unless an exact directory name matches.
-4. Scan the inventory: enumerate ordinary directories directly beneath `jdks/`,
-   including hidden directories, excluding reserved references and unsafe names.
-   Classify each by launcher layout and manifest validity as specified below;
-   operational manifest-read errors fail the scan. Collect the complete directory
-   inventory before filtering, even if an early candidate matches. An absent inventory is
-   empty; inaccessible or invalid storage ancestors are operational failures.
-5. Filter the collected inventory. An exact ID match takes precedence;
-   otherwise only directories with valid metadata and usable launchers
-   participate: a major matches every distro of that major, and a distro-major
-   matches that distro and major. One distinct matching ID selects it. Multiple
-   matching IDs print the existing options table on stderr and exit 1. Zero
-   matches report `No JDK found matching: <selector>` and exit 1, unless `-i`
-   permits the installation fallback below. Neither the global default nor a
-   distro preference breaks ties during this filtering step.
-6. Apply the command's result. `default` updates the global reference;
-   `default -v N` requires the selected JDK to have major N and updates that
-   major's reference. `home` and `env` retain the stable `jdks/N` link path for
-   an original positive-major selector when that reference points to the selected
-   installation. Otherwise they use the selected physical installation home.
-   Full-ID and distro-major selectors always use physical homes. Existing
-   platform path conversion and shell quoting rules still apply.
-   `exec` always uses the physical home of the selected ID, including when the
-   selector is a major; it never executes through a mutable default link.
+1. Validate syntax; detect the host; resolve storage. No inventory scan yet.
+2. A positive major first checks `jdks/<major>`. A valid reference (managed link
+   to a usable installation of that major) selects its target without scanning.
+   An existing invalid reference fails and never triggers installation. An
+   absent reference continues.
+3. An exact directory name `jdks/<ID>` with usable launchers is selected without
+   needing a manifest. An invalid layout fails.
+4. Otherwise scan the inventory. Exact IDs match first; otherwise only
+   directories with a valid manifest and usable launchers participate. A major
+   matches every distro; a distro-major matches that distro and major.
+5. One match selects it, several are ambiguous (exit 1), none reports no match
+   (or permits `-i`). Neither the global default nor a distro preference breaks
+   ties.
 
-With `-i`, first perform the same local resolution. Only a genuine zero-match
-result permits installation; ambiguity, invalid references and operational
-failures do not. Use ordinary installation selectors, including Temurin for a
-bare major, then continue with the exact installed ID rather than resolving the
-original broad selector again. The command rechecks that exact ID directly,
-without a new inventory scan while that installation remains valid. For an
-original major selector, home/env retain the stable major link when it points to
-that exact ID, including a link initialized by installation; otherwise use the
-physical home so a competing reference change cannot select a different JDK.
+`-i` is offline-first: resolve locally, and only a genuine no-match installs,
+using the installation rules (bare major means the configured distro, default
+Temurin), then continues with the exact installed ID. Ambiguity, invalid
+references and operational failures never install. No remote check is made when
+a usable local match exists.
 
-Without an explicit or configured selector, no inventory scan occurs before
-checking the global reference (configuration never applies to `default`):
+Without a selector, no scan occurs: `default` and `default -v N` read their
+reference; `home`/`env` use the stable `jdks/default` path and `exec` uses its
+target's physical home. An absent reference reports `jvm: No JDK currently set
+as the default` (exit 1); a dangling or unusable one reports `jvm: default JDK
+is missing or unusable`. These commands never repair storage. With `-i` and
+neither configuration nor a default, major 25 is installed; an unusable default
+remains an error.
 
-| Command | Direct lookup and result |
-| --- | --- |
-| `default` | Read and validate `jdks/default`; show its target ID or the documented no-default message. |
-| `default -v N` | Read and validate `jdks/N`; show its target ID or the documented per-version no-default message. |
-| `home` / `env` | Validate `jdks/default` and use that stable link path. With `-i`, an absent reference permits major 25 installation; an unusable reference fails. |
-| `exec` | Validate `jdks/default` and use its target's physical home. With `-i`, an absent reference permits major 25 installation; an unusable reference fails. |
+### Ranges
 
-The current `default` implementation also checks the destination reference it
-will query or update before resolving an explicit selector. This is a direct
-reference check, not an inventory scan. With `-i`, the initial local/install
-resolution happens before that command-specific destination check. `-v N`
-identifies the reference being managed and imposes a major check on the selected
-JDK; it does not implicitly add a selector. `default -i` always requires an
-explicit selector.
+For commands selecting one JDK, resolution keeps only matches at the highest
+matching major and never fails merely because several remain. Locally, that
+major's default is used if it selects an eligible candidate; otherwise the
+smallest full ID in C-locale order. Missing, dangling or mismatched references
+fall back silently without repair. Remotely, the explicit or configured
+installation distro is applied, the highest major kept, then the smallest ID in
+C order, independent of row order; artifact collisions still fail. `default -v N`
+still requires the resolved JDK's major to be N. `available` and `list` return
+all matches in their usual order. Range `home`/`env`/`exec` use the physical
+home. A local match at a lower major wins over remote availability of a higher
+one (`home -i 21+` with only Java 21 installed uses it offline).
 
-### Installation selectors (implemented)
+### Project and user configuration
 
-**EA support (authorized and implemented 2026-11-02):** GA and EA records from
-the shared all-release latest index are eligible for installation. Saved EA
-manifests participate in the same offline selection, default lifecycle,
-home/env output, command execution and uninstallation as GA installations.
-No additional release preference or version ranking is introduced: ordinary
-multi-ID ambiguity, range rules, host/archive filters and verification safeguards
-continue to apply. `-i` may install an EA release after a genuine local miss.
+`.jvmrc` in the current directory (parents are not searched) and
+`$XDG_CONFIG_HOME/jvm/config` (default `~/.config/jvm/config`) may contain:
 
-The rules below describe ordinary selectors; range selectors additionally use
-[highest-major selection and deterministic ties](#open-versions-and-inclusive-version-ranges).
-
-- First reuse an exact existing local directory with usable launchers, even
-  without a valid manifest. Otherwise try an exact full-ID match in the index.
-- A positive integer such as `21` selects that major from the configured
-  installation distribution, falling back to `temurin`. This applies to install
-  and installation after a home/env/exec `-i` local miss. `default -i` always
-  retains its Temurin policy; `available 21` still lists all distros.
-- A selector such as `temurin-21` selects that distribution and Java major.
-  Split the major from the final hyphen; distro names can contain hyphens.
-- Distribution names use canonical jdkdb-index identifiers.
-- `list` is an optionally filtered offline inventory. `install` and
-  `default` must resolve to a single artifact or installation.
-- Filter the latest index by the major extracted from upstream `java_version` and
-  the explicit or default distro. The endpoint already selects latest releases; do not
-  rank versions or reject vendor version syntax such as `+java17` or `-Final`.
-- If several distinct IDs remain, fail with their full IDs and ask the user
-  to supply a full ID. Beyond the explicit/default distro filter, do not prefer
-  a vendor, JVM, build or API row order. If the selected distro has no compatible match,
-  fail rather than falling back to a different distribution.
-  A single ID proceeds to archive-format preference and the unique-row check.
-- Print the resolved ID on installation
-  and persistent default selection. `home` and `env` print only their specified
-  path/environment output. A persistent default stores the exact ID, not the selector.
-
-Remote resolution uses the API's own latest selection for each major version;
-the API need not supply an ordering key. Resolve within that inventory, retaining
-the ambiguity rules above. Local default resolution works offline; bare majors
-first use their per-major reference, then fall back to matching every installed
-distribution when it is absent. Current `list` returns all local selector
-matches rather than resolving a single installation.
-
-**Configuration (implemented 2026-11-02):** Java selection and the installation
-distribution are configurable in project `.jvmrc` and user-wide `jvm/config`.
-See [Project-local defaults](#project-local-defaults) for paths, parsing,
-precedence and selectorless behavior. `default -i` retains its Temurin policy.
-
-## Host compatibility
-
-- Detect the target OS, process architecture, and Linux libc family. Normalize
-  names to API values, for example macOS to `macosx`, AMD64 to `x86_64`, and ARM64
-  to `aarch64`. Cygwin/MSYS2/Git Bash target Windows JDKs; WSL targets Linux.
-- Distinguish glibc and musl; never knowingly install a glibc-only JDK on musl.
-  Fail clearly when compatibility cannot be determined.
-- Select JDK images, never JRE-only images. Discovery always includes GA and EA
-  across all JVMs. `available -t` only shows TYPE. Installation also accepts GA and EA.
-- Choose compatible `.tar.gz` or `.zip` artifacts. Unsupported installers may
-  be omitted from the discovery listing; document these filters here.
-- Do not silently choose an emulated architecture. Unsupported host combinations
-  must fail with the detected platform and useful context.
-- Normalize the JDK home after extraction, including macOS `Contents/Home`.
-  Publish the actual home directly as `jdks/<ID>/`, with no `payload`, archive
-  root or `Contents/Home` wrapper. Locate exactly one home containing `bin/java`
-  and `bin/javac`; Unix launchers must be executable files. Windows accepts
-  launchers with no suffix or `.exe`, `.bat`, or `.cmd`. Use ordinary `find`
-  without following directory links to locate homes, including nested archive
-  wrappers. Validate version/platform metadata without sourcing vendor files.
-  The installed manifest retains the index's upstream version and host tokens.
-  When a vendor `release` file supplies OS_ARCH/OS_NAME, installation checks
-  them against the host without executing the file. JAVA_VERSION is not used
-  for identity or selection: it can differ from the upstream vendor version.
-
-## User storage
-
-Use the freedesktop XDG directory conventions on every platform, including
-Windows; do not substitute AppData or macOS Library paths.
-
-| Purpose | Location |
-| --- | --- |
-| Installed JDKs and their manifests | `${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/<id>/` |
-| Private installation staging | `${XDG_DATA_HOME:-$HOME/.local/share}/jvm/tmp/jdk-<id>.XXXXXXXX/` |
-| Private removal staging | `${XDG_DATA_HOME:-$HOME/.local/share}/jvm/tmp/remove-<id>.XXXXXXXX/` |
-| Global default reference (implemented) | `${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/default` |
-| Per-major default references (implemented) | `${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/<major>` |
-| User configuration, if needed | `${XDG_CONFIG_HOME:-$HOME/.config}/jvm/` |
-| Download and metadata cache | `${XDG_CACHE_HOME:-$HOME/.cache}/jvm/` |
-| Operational state, if needed | `${XDG_STATE_HOME:-$HOME/.local/state}/jvm/` |
-
-Only absolute nonempty XDG overrides are valid; ignore relative values and use
-the fallback. In Windows Bash environments, accept absolute drive paths after
-conversion to the environment's POSIX path representation. Missing usable HOME
-and required overrides must yield a clear error. Never create an empty PATH
-component or use the working directory as an implicit home.
-
-Store installation metadata sufficient for offline listing and selection: ID,
-distribution, Java version, platform/libc, JVM implementation, JDK home,
-source URL, and expected/verified digest. Use a versioned, non-executable data
-format. Cache deletion must not remove installations or reset the default.
-
-### Installation manifest (adopted 2026-11-01)
-
-**User-requested and implemented:** `.jvm-manifest` is a non-executable UTF-8
-file with exactly three lines:
-
-1. The exact format marker `jvm-manifest-v1`.
-2. An exact copy of the upstream TSV data row used to install the JDK, from
-   the same all-release index used by `available`. This is the original artifact row,
-   not the formatted table printed by `available`. Preserve all fields,
-   empty cells, escaping, case and unknown trailing columns without rebuilding
-   the row from selected fields. Retain a source CRLF row ending when present;
-   the marker and local-values lines use LF.
-3. A TSV record for our own values, currently an empty line. No local columns
-   are defined yet; future fields can be appended as needed. The empty third
-   line is required even when there are no local values.
-
-**User-supplied upstream guarantee (2026-11-01):** the remote service may only
-append columns at the end. Existing columns will never be removed, changed or
-reordered. This guarantee is recorded from the user's instruction, not a new
-live API verification. Readers use the known column positions, accept additional
-trailing columns and ignore fields they do not understand. Starting with public
-release, our local-values row MUST follow the same append-only rule: never
-remove, change the meaning of, or reorder an existing column. New optional
-fields must not prevent older readers from using the installation. The marker
-identifies the three-line envelope; adding TSV columns does not change it.
-
-Derive the ID from the saved upstream `version` and `distro`, applying the
-`java_version` major-prefix rule above, rather than storing it twice. Read
-platform, JVM, URL, archive format, advertised size, checksum and
-`java_version` from that row. Installation verifies SHA-256 before publishing;
-the manifest preserves the original checksum spelling, while comparisons use
-lowercase. It never sources or evaluates either TSV row.
-
-This format supersedes the short-lived single-record `jvm-install-v3` format
-introduced for `java_version` display earlier on 2026-11-01, and all earlier
-manifest formats. The change preserves upstream metadata for future readers
-without duplicating its schema in our durable format.
-
-**User correction (2026-11-01, before first public release):** remove the
-redundant relative JDK home value before the local columns become a public
-append-only contract. Every installation is already flattened into `jdks/<ID>/`;
-no stored relative path is needed to locate its home. The third line starts
-empty, and readers ignore future local columns they do not understand.
-
-Extract to private staging, locate and validate the actual home, write its
-manifest, then rename that home directly to `<ID>` on the same filesystem.
-Discard archive wrappers and siblings with the operation's remaining staging
-files. Reject archive-provided `.jvm-manifest` entries in the selected home and
-links that would escape the selected home after normalization. Local listing
-uses a recognized three-line manifest with matching derived ID/platform to
-display metadata, but also shows directories without usable manifests or
-launchers, as specified under local directory inventory below.
-
-During preproduction, backward compatibility with earlier storage layouts and
-manifest formats is not required. Only the current flat layout and manifest
-format are recognized; no compatibility reader or migration is provided.
-
-Installers use no shared-storage lock. Each independently stages in a unique
-`tmp/jdk-<ID>.XXXXXXXX/` directory created by `mktemp`, alongside `jdks/` on the
-data filesystem. Temporary directories never enter the inventory directory.
-The complete, validated home
-and manifest are given that same unique basename inside staging. Check for a
-complete winner immediately before moving that home to `jdks/<ID>`.
-
-If the destination appears during the move, ordinary `mv` may put the uniquely
-named home inside the winner's directory as `<ID>/jdk-<ID>.<random>`. Cleanup
-first renames that owned copy back to its now-empty location inside the private
-staging directory, then deletes it there. Never recursively delete the copy
-while it remains beneath the winner. A uniquely named marker identifies the
-copy owned by this operation; cleanup never removes an unrelated directory.
-Different installers reclaim into their own distinct temporary paths. Remove the marker
-from a successfully published home as well. No GNU-only `mv` option is needed.
-
-If another installer publishes a complete compatible installation of the same
-ID before or during the move, discard only this installer's copy and print the
-normal `Successfully installed <ID>` message. Concurrent installers may download
-and extract the same artifact independently; no waiting or stale-lock recovery
-is needed. A publication failure without a complete winner remains an error.
-Traps clean up owned staging and marked copies on HUP/INT/TERM. An uncatchable
-kill can leave staging or a marked nested copy; these are outside the direct
-JDK inventory scan and do not block new installers. Existing incomplete or incompatible ID directories cause an error
-instead of replacement. Complete installation directories are immutable.
-
-Archive inspection requires tar gzip listing/extraction or Info-ZIP-compatible
-`unzip -Z -1`, `-Z -l`, `-p` and extraction. This implementation does not yet
-provide a ZIP-capable tar fallback. Tar verbose listings must expose ordinary
-file/directory entries, `name -> target` symlinks and `name link to target`
-hardlinks. Ambiguous or unrecognized listings fail before extraction. Archive
-member names use a conservative ASCII alphabet (letters, digits, `. _ + @ % = -`
-and `/`, without the spaces in this description); absolute paths, traversal,
-duplicate normalized paths and special files are rejected. Links must remain
-internal; links as ancestors of entries or link targets are rejected. Internal
-file-link chains and hardlinks to regular members are preserved. Unsupported
-pathname/listing forms fail safely rather than being guessed. On Windows,
-case aliases, reserved device names and trailing dots are rejected. These
-restrictions concern archive member names; HOME and XDG paths support spaces.
-
-Selection keeps upstream version strings intact within IDs. For example,
-`17-22.3.3+java17-graalvm` matches Java major 17 when its `java_version` is
-`17.0.19+7`; `17-22.1.0.1-Final-gluon-graalvm` likewise matches 17 when its
-`java_version` is `17.0.1+12`. Vendor annotations are neither errors nor a
-reason to prefer one ID.
-Bare `install 22` filters to Temurin; explicit distro-major/full-ID selectors
-remain available for these other distributions.
-Installation has no version comparator, recognized-version grammar or numeric
-component limit. Existing portable ID/path checks still apply before storage.
-
-## Persistent default and shell integration
-
-**Authorized and implemented 2026-10-30, extended 2026-11-01:** `default` references the selected
-normalized JDK home, using a directory symlink on Unix and `mklink /J` directory
-junction on Windows. Users add its `bin` directory to PATH once. The main help
-has a dedicated `Shell setup` section with Unix and Windows Bash instructions.
-Default selection prints no setup instructions. The 2026-10-30 Windows Bash
-help correction sets JAVA_HOME to a native forward-slash Windows path, then
-converts that value to POSIX form for its bin entry in Bash's colon-separated
-PATH. This handles both native XDG overrides and POSIX HOME fallback paths.
-The two-line example is:
-
-```bash
-export JAVA_HOME="$(cygpath -m "${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/default")"
-export PATH="$(cygpath -u "${JAVA_HOME}")/bin:$PATH"
+```text
+java=21+
+distro=graalvm-community
 ```
 
-Help explains `-d` and `-i` in an `Options` section between `Selectors` and
-`Examples`. It omits the first-install-default and shell-file-editing sentences;
-the underlying installation behavior is unchanged.
-The Unix setup is:
+`java` is any selector; `distro` is a distribution name. Files are literal
+data, never sourced. Blank lines, full-line `#` comments and surrounding
+whitespace are allowed; duplicate or unknown keys, empty or invalid values and
+unreadable files are errors when a command needs that file. A missing file
+leaves its settings unset. Nothing writes configuration.
+
+Each setting resolves independently: command line, then project, then user
+file. Files are read only when needed, project file first; every key in a
+consulted file is validated, but a malformed lower-priority file is irrelevant
+once the project file supplies the needed key.
+
+- `distro` selects the distribution for bare-major and range *installation*
+  (then `temurin`). It does not filter local selection. A distro inside a
+  configured `java` is retained.
+- `install` without selector: `java`, then major 25.
+- `home`/`env`/`exec` without selector: configured `java`, then the global
+  default. Never major 25 without `-i`. A configured selector that fails does
+  not fall through. With `-i`, major 25 is used only when there is no
+  configuration and no default.
+- `available`, `list`, `default` and `uninstall` ignore configuration.
+
+## `home`, `env` and `exec`
+
+`home` prints one absolute path: the stable `jdks/<major>` link for a major
+selector backed by a valid reference, the stable `jdks/default` path when there
+is no selector, and the physical installation home otherwise (full ID,
+distro-major, ranges, or a major without reference). Bash prints POSIX paths
+(no `cygpath` conversion).
+
+`env` prints a usage comment, then:
+
+```bash
+# Use: eval "$(jvm env temurin-21)"
+export JAVA_HOME='/absolute/selected/home'
+export GRAALVM_HOME='/absolute/selected/home'      # GraalVM manifests only
+export PATH='/absolute/selected/home/bin':"$PATH"
+```
+
+The comment names the selector and any `-i`/`-f` flags in that order. The PATH
+line is omitted when the selected `bin` directory is already a whole PATH entry
+(literal comparison; no symlink resolution or normalization); `-f` always emits
+it. `GRAALVM_HOME` appears when the manifest's `jvm_impl` is `graalvm` and is
+emitted regardless of PATH. Values are single-quoted with apostrophes escaped;
+paths containing CR/LF are rejected. On Windows Bash, `JAVA_HOME` is a native
+forward-slash path and the PATH entry a POSIX path, both via `cygpath`. Output
+is prepared fully before printing and never evaluated by `jvm`. `jvm.ps1 env`
+emits equivalent PowerShell `$env:` assignments, for example
+`Invoke-Expression (& .\jvm.ps1 env temurin-21)`.
+
+`exec` runs `<command>` with `JAVA_HOME` set and the selected JDK's `bin` first
+on `PATH` (always prepended). It uses the physical home, never a mutable link,
+and does not change defaults or the parent shell (apart from `-i`'s normal
+installation). Syntax errors (no `--`, empty command) exit 2 before host
+detection or storage access with `jvm: usage: jvm exec [-i] [selector] --
+<command> [args...]`. The separator is `--` or `---`, both accepted by both
+implementations; Bash usage and help show `--`, PowerShell shows `---`. Only
+the first separator counts; everything after is passed to the child unchanged.
+Bash replaces itself with the child (`exec "$@"`), restoring umask and cleaning
+private staging first.
+
+## Installation
+
+### Remote selection
+
+Installation filters the all-release latest index for the host, JDK image type
+and supported archive format, plus the explicit or configured distro:
+
+- An exact existing local directory with usable launchers is reused without
+  metadata; otherwise an exact ID is matched in the index.
+- A bare major or range uses the configured distro (default `temurin`);
+  explicit distro-major and full IDs keep their meaning. If the distro has no
+  match, installation fails without trying another distribution.
+- Several distinct IDs fail, listing them; nothing is ranked beyond what ranges
+  specify. Windows prefers `zip`, Linux/macOS `tar.gz`, falling back to the
+  other format. Exactly one row must remain; duplicates (even identical) fail.
+- EA and GA records are both eligible. IDs, checksums and archives are never
+  guessed from vendor strings.
+
+### Download and verification
+
+HTTPS with certificate validation is mandatory; HTTP downgrade is never
+allowed. A SHA-256 digest from the index is required (`sha256sum`, `shasum -a
+256` or `openssl dgst -sha256` in Bash; .NET in PowerShell), compared in
+lowercase; the advertised size is checked when present. Mismatches and
+incomplete downloads are errors. Artifact timeouts are bounded.
+
+### Extraction and publication
+
+Archives are extracted into a private `jvm/tmp/jdk-<ID>.XXXXXXXX/` staging
+directory beside `jdks/` (same filesystem). The tool locates exactly one home
+containing `bin/java` and `bin/javac` (including macOS `Contents/Home` and
+nested wrappers, found without following links), writes `.jvm-manifest`, and
+renames that home directly to `jdks/<ID>`. Archive wrappers and siblings are
+discarded. Vendor `release` files are not sourced; when they supply
+`OS_ARCH`/`OS_NAME` they are checked against the host. Archive entries named
+`.jvm-manifest` are rejected.
+
+Archive validation (Bash) requires tar+gzip or Info-ZIP-compatible `unzip`.
+Member names use a conservative alphabet (letters, digits, `. _ + @ % = -` and
+`/`); absolute paths, traversal, duplicate normalized paths, special files,
+links that leave the home, and links as path ancestors are rejected. Internal
+links and hardlinks are preserved. Unrecognized listings fail before
+extraction. On Windows, case aliases, reserved device names and trailing dots
+are rejected.
+
+Installers use no shared lock; each stages independently. A complete,
+compatible `<ID>` that appears during publication wins: the loser discards only
+its own copy and reports success. A uniquely marked nested copy left by a lost
+`mv` race is renamed back into the private staging directory before deletion;
+cleanup never recursively deletes beneath `jdks/`. Existing incomplete or
+incompatible ID directories are errors, and complete installations are
+immutable. HUP/INT/TERM traps clean owned staging; an uncatchable kill may leave
+staging under `jvm/tmp/` outside the inventory. Failed or interrupted
+installation preserves existing JDKs and defaults.
+
+### Manifest
+
+`.jvm-manifest` is a non-executable UTF-8 file with exactly three lines:
+
+1. `jvm-manifest-v1`
+2. An exact copy of the upstream TSV data row (all fields, escapes, unknown
+   trailing columns, and a source CRLF if present; never rebuilt).
+3. Local values as a TSV record, currently empty. The empty line is required.
+
+Readers use known column positions, ignore unknown trailing columns, and treat
+the local record as append-only. The ID is derived from the saved `version` and
+`distro`; platform, URL, format, size, checksum and `java_version` come from the
+saved row. Manifests are never sourced or evaluated. Only this format is
+recognized; no migration exists.
+
+## Uninstallation
+
+`uninstall <selector>` uses only the offline inventory (no metadata, cache or
+network). It accepts a full ID (even without launchers or manifest), a major or
+a distro-major; a bare major matches all installed distributions. Ranges are not
+accepted. Multiple matches fail with their full IDs; none exits 1. With no
+argument it prints `jvm: usage: jvm uninstall <selector>` and `for more
+information run: jvm uninstall --help` to stderr and exits 2.
+
+Removal reserves a private directory `jvm/tmp/remove-<ID>.XXXXXXXX` (via
+`mktemp -d`), moves `jdks/<ID>` into it with an ordinary `mv`, and only after a
+successful move recursively deletes the reservation, reporting `Successfully
+uninstalled <ID>`. Nothing beneath `jdks/` is ever deleted recursively. A failed
+move reports `couldn't uninstall <ID>` (plus ` (it might be in use)` on Windows)
+and exits 1; only an empty reservation is cleaned up after failure, and an
+interrupted move or delete may leave data in `jvm/tmp/` for manual cleanup.
+
+References are updated before the move so none intentionally points at a removed
+JDK; a failed update aborts the removal and a failed move restores the previous
+selection when still safe.
+
+- Global default: replaced from the remaining complete compatible inventory by
+  the same major, then the smallest higher major, then the largest lower major;
+  ties use C-locale directory-name order. If the removed JDK's major is unknown,
+  the first remaining complete compatible ID is used. If none remains the link
+  is removed. Directories with unknown metadata are never chosen automatically.
+  The result is announced on stderr (`Default JDK set to: <ID>` or `No JDK
+  currently set as the default`).
+- Major default: replaced by the first remaining usable ID of the same major, or
+  removed. A reference never points at another major.
+- Only references that actually point at the removed ID are touched.
+
+## Defaults and shell integration
+
+`jdks/default` (global) and `jdks/<major>` (one per installed major) are
+directory symlinks on Unix and directory junctions (`mklink /J`) on Windows,
+pointing at managed JDK homes beside the installation directories:
+
+```text
+jvm/jdks/
+  default -> 25.0.1-temurin/
+  21      -> 21.0.9-temurin/
+  25      -> 25.0.1-temurin/
+  21.0.9-temurin/
+  25.0.1-temurin/
+```
+
+The stable paths let IDEs and tools be configured once (for example
+`jvm/jdks/21`) while `jvm` changes the target centrally; tools that cache link
+targets may need a refresh. There is no `jvm/default` compatibility link.
+
+Lifecycle:
+
+- A successful first install, including an idempotent one, creates a missing
+  global default and a missing major default (the first creator wins under
+  concurrency, announcing `Default JDK set to: <ID>` before the install
+  message). Later installs never replace references or unrelated data. If link
+  creation fails, the JDK stays installed and the command exits 1 with an
+  explanation.
+- `default <selector>` replaces the global reference; `default -v N <selector>`
+  replaces major N's reference and requires the selected JDK to be major N.
+  Explicit global changes (including `install -d`) leave major references alone
+  and vice versa. A mismatch changes nothing.
+- Replacement stages a verified link in `jvm/tmp/default.XXXXXXXX`, then swaps
+  it with `mv -fT` (GNU) or `mv -fh` (BSD) without following the destination.
+  Unrelated files, directories or links outside the managed inventory are never
+  replaced. `readlink` inspects references; Unix creation needs `ln`; Windows
+  needs `cygpath` and `cmd.exe` with fixed `mklink /J` text, quoted values and
+  delayed expansion off. No copy fallback exists. A recovery link preserves the
+  old selection if replacement fails or a catchable signal arrives; if
+  restoration fails its path is reported. Windows swap atomicity is not
+  established, and an uncatchable kill during it may need manual recovery from
+  `jvm/tmp/default.XXXXXXXX/previous`. Concurrent explicit changes: last
+  publication wins.
+
+Shell setup is manual; the tool never edits profiles or the registry. Unix:
 
 ```bash
 export JAVA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/default"
 export PATH="$JAVA_HOME/bin:$PATH"
 ```
 
-Use the same converted path and XDG validation rules as storage handling.
-Do not automatically edit shell profiles or the Windows registry. Selection is
-persistent through the reference; subsequent program invocations resolve it.
-An executable cannot export variables into its parent shell. An existing
-JAVA_HOME pointing elsewhere, earlier PATH entries, command caching, or software
-that resolves JAVA_HOME once can prevent immediate adoption; describe how to
-refresh the shell environment or restart that software.
+Windows Bash:
 
-`default` without a selector prints the exact ID, or `No JDK currently set as the default`
-and exits 0. The unset message makes no claim about installed JDKs: installations
-can exist without a default reference. A dangling managed reference reports an unavailable-default error.
-Without `-i`, selectors resolve entirely offline. Positive majors first use an
-existing valid per-major reference. Otherwise exact local IDs take precedence
-and require usable launchers, but no manifest; major and distro-major selectors
-require valid metadata and must resolve to one installation. Bare majors without
-a reference match all distros. Success prints
-`Default JDK set to: <ID>` to stderr. This ordinary path uses no network or cache;
-`-i` follows the adopted install-on-demand policy above.
-`default --help` uses the main help without accessing storage or external tools.
-
-Without `-d`, installation initializes an absent default after successful
-publication, including an idempotent install of an existing ID. It never replaces
-an existing reference or unrelated data at that path. Link failure returns 1 and explains that the JDK
-was installed but default selection failed; the installed JDK is retained.
-Concurrent initialization creates the final link directly without replacement:
-the first creator wins. No shared-storage lock is introduced.
-The installer that creates the default also prints `Default JDK set to: <ID>`
-on stderr, before its installation success/already-installed message. Subsequent
-ordinary installs and losing concurrent initializers do not announce a default
-change. Explicit `install -d` uses the same atomic replacement as `default` and
-announces the selected ID on stderr; unrelated data remains protected.
-
-When uninstalling the default, choose from the remaining complete compatible
-inventory: first the same major, then the smallest higher major, then the largest
-lower major. Ties use the first ID in local inventory order (C-locale directory
-name order). This orders only extracted majors, never vendor version strings.
-If the removed JDK's major is unknown, use the first remaining complete
-compatible ID in that order. If no complete compatible replacement remains,
-remove the link/junction. After successful removal, print
-`Default JDK set to: <ID>`
-for a replacement, or `No JDK currently set as the default` when there is no
-eligible replacement, even if directories with unknown metadata remain.
-When the removed JDK is also its major's default, replace that reference with
-the first remaining usable ID of the same major in local inventory order, or
-remove it when none remains. Update both selected references before moving the
-installation. If either update or the move fails, restore any prior selection
-that is still safe to restore; keep the original installation in place when
-the move was not made.
-Default-change announcements follow the uninstall success message on stderr. Failed removals
-do not announce a successful default change. Change the reference before moving
-the old installation so it never intentionally points to a removed JDK. If the
-move fails, restore the old selection provided the replacement is still current.
-A failed default change aborts removal. Interruption between selection and removal
-can leave the old installation present with the replacement already selected.
-
-Explicit replacement stages and verifies a real link in `jvm/tmp/default.XXXXXXXX`,
-then uses GNU-compatible `mv -fT` when advertised or BSD `mv -fh` to avoid following
-the destination link. Never replace an unrelated file, directory, or link outside
-the managed inventory. `readlink` is required for inspecting existing references;
-Unix creation requires `ln`; Windows requires `cygpath` and `cmd.exe`.
-Windows creation runs fixed `mklink /J` text with quoted environment values and
-delayed expansion disabled. No directory-copy fallback is permitted. Junctions
-avoid the special symlink privilege requirement; filesystem/access errors still
-fail explicitly. See [Microsoft's mklink reference](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/mklink)
-(checked 2026-10-30).
-
-Unix rename replacement is atomic with the supported utilities. A staged recovery
-link preserves the prior usable selection if replacement fails or a catchable
-signal arrives after the old reference disappears. If restoration itself fails,
-retain that link and report its recovery path. Windows junction replacement was
-verified with Git Bash's native `mv`; crash atomicity inside Windows/MSYS rename
-is not established. An uncatchable kill in a non-atomic replacement window can
-require manual recovery from `jvm/tmp/default.XXXXXXXX/previous`.
-Simultaneous explicit default changes use last successful
-publication; there is no transaction spanning independent install/uninstall/default
-processes. Native Cygwin/MSYS2 and macOS replacement remain verification gaps.
-
-## Metadata API
-
-Use [getjvm.dev index](https://getjvm.dev/index) as the discovery
-source and the artifact URLs it returns for downloads. Isolate API normalization
-from selection and installation so schema changes remain contained.
-
-### Index base migration (verified 2026-11-02)
-
-The runtime base is `https://getjvm.dev/index`. HTTPS requests for its
-[OpenAPI definition](https://getjvm.dev/index/openapi.yaml),
-[Windows x86_64 all-release latest TSV](https://getjvm.dev/index/metadata/all/windows/x86_64/jdk-latest.tsv)
-and [Linux x86_64 all-release latest TSV](https://getjvm.dev/index/metadata/all/linux/x86_64/jdk-latest.tsv)
-returned HTTP 302 redirects to the corresponding `jbangdev.github.io/jdkdb-index`
-paths, followed by HTTP 200. The inspected OpenAPI still advertises the original
-server and the existing 15-column TSV schema. Representative responses retained
-that header and field layout (479 Windows rows and 500 Linux rows at inspection).
-The existing HTTPS redirect policy needs no change. Earlier source links below
-record their original research locations. Native Windows Git Bash discovery and
-a second cached invocation succeeded with isolated HOME/XDG paths; this does
-not establish artifact download or real-JDK execution.
-
-### Observed contract (2026-10-19)
-
-The published [OpenAPI definition](https://jbangdev.github.io/jdkdb-index/openapi.yaml)
-documents static files including:
-
-- `/metadata/all.json` and `/metadata/{distro}/all.json`.
-- `/metadata/{release_type}/{os}/{arch}/{image_type}.json`, with progressively
-  narrower paths adding JVM implementation, distro, major version, and file type.
-- `/metadata/{release_type}/{os}/{arch}/{image_type}/{jvm_impl}/{distro}/{version}/{file_type}-latest.json`.
-- The same final path ending in `-latest-url.txt`, returning download URLs.
-- `/metadata/{distro}/{artifact_name}.json` and
-  `/checksums/{distro}/{artifact_name}.{hash_algorithm}`.
-
-A Linux Temurin 21 latest JSON response and the corresponding Windows ZIP
-latest-URL response were retrieved successfully during specification research.
-This is not evidence that every documented combination exists or that the API
-is stable. HTTP and transfer failures remain distinct from an empty listing;
-discovery now trusts successful response contents as described below. Do not
-infer a server-side query API from static paths.
-
-Fields include distro, filename, file type, Java/vendor versions, platform, image
-type, JVM implementation, features, URL, size, and checksum fields. The schema
-does not declare these all required. Discovery trusts the TSV layout below;
-unused fields are ignored. No stable ID or structured version sort
-key is documented. The TSV design below supersedes JSON as the planned input.
-
-### Published TSV contract (verified 2026-10-20)
-
-The API provider can offer alternative formats and subsets of existing JSON
-metadata, but no new information, `jvm`-specific IDs, or ordering keys. Construct
-IDs in `jvm` and use upstream latest semantics. The published
-[OpenAPI definition](https://jbangdev.github.io/jdkdb-index/openapi.yaml) now
-documents TSV endpoints and their `metadataTsv` schema. The
-[Linux x86_64 latest index](https://jbangdev.github.io/jdkdb-index/metadata/all/linux/x86_64/jdk-latest.tsv)
-was retrieved and inspected, along with the GA-only latest index and the
-all-release full-history index.
-
-Use one broad platform-specific latest index, filtering distro, major, and
-compatible artifacts locally for every discovery selector, retaining all JVMs.
-Avoid requiring additional indexes for every distro or selector. The documented paths are:
-
-```text
-/metadata/{release_type}/{os}/{arch}/{image_type}-latest.tsv
-/metadata/{release_type}/{os}/{arch}/{image_type}.tsv
+```bash
+export JAVA_HOME="$(cygpath -m "${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/default")"
+export PATH="$(cygpath -u "${JAVA_HOME}")/bin:$PATH"
 ```
 
-The initial implementation used `/metadata/ga/{os}/{arch}/jdk-latest.tsv`.
-As corrected by the user on 2026-11-02, always use
-`/metadata/all/{os}/{arch}/jdk-latest.tsv`, which includes GA and EA rows.
-The API prefers GA over EA for a given major/distribution/JVM implementation, but does not exclude EA altogether. Latest means the latest
-release per major version for each distro and JVM implementation. The full
-history counterpart omits `-latest`; a future all-versions option can use it.
+An executable cannot export variables into its parent shell; an existing
+`JAVA_HOME`, earlier PATH entries, command caching or software that resolves
+`JAVA_HOME` once can prevent immediate adoption and may need a refreshed shell.
 
-**Verified 2026-11-02 for all-release discovery:** inspected the live
-[OpenAPI definition](https://jbangdev.github.io/jdkdb-index/openapi.yaml) and
-[GA](https://jbangdev.github.io/jdkdb-index/metadata/ga/linux/x86_64/jdk-latest.tsv)
-and [all-release](https://jbangdev.github.io/jdkdb-index/metadata/all/linux/x86_64/jdk-latest.tsv)
-Linux x86_64 latest responses. GA contained 487 GA rows and no EA rows; `all`
-contained those 487 GA rows plus 13 EA rows, including Liberica Java 26 with
-`[lite]` and `[]` features. Use `all` unconditionally and one shared
-`all-<os>-<arch>-jdk-latest-v1` cache entry per platform, retaining the existing
-freshness, validation and failure-fallback rules. Old GA cache entries are not
-read or migrated. The API still prefers GA within a group; discovery includes
-EA rows returned by the latest index, not every historical EA build. `-t` only
-controls TYPE display. These counts describe the observed responses.
+## Host compatibility
 
-OS tokens follow the API, including `macosx` and `linux-musl`. Validate actual
-host-specific coverage before claiming support.
+- Detect OS, architecture and Linux libc. API values: `macosx`, `linux`,
+  `linux-musl`, `windows`; `x86_64`, `aarch64`. Cygwin, MSYS2 and Git Bash
+  target Windows JDKs; WSL targets Linux. glibc and musl are distinguished, a
+  glibc-only JDK is never installed on musl, and undeterminable compatibility
+  fails clearly. Emulated architectures are not chosen silently.
+- JDK images only; `.tar.gz` and `.zip` only. Other installers are omitted.
+- Unsupported host combinations fail with the detected platform.
 
-Files are UTF-8 with a header. A subsequent 2026-10-20 retrieval confirmed that
-`version` and `file_type` have been added. There are now 15 columns, in this
-exact published order:
+## Storage
 
-| Column | Field | Purpose |
-| --- | --- | --- |
-| 1 | `release_type` | Validate GA/EA selection. |
-| 2 | `os` | Validate host compatibility. |
-| 3 | `architecture` | Validate host compatibility. |
-| 4 | `image_type` | Require a JDK image. |
-| 5 | `jvm_impl` | Display; installed `env` GraalVM detection; not filtered or included in IDs. |
-| 6 | `vendor` | Publisher metadata; use `distro` for selectors. |
-| 7 | `distro` | Display, distro filtering, and ID construction. |
-| 8 | `java_version` | Displayed version, all Java-major operations and ID prefix. |
-| 9 | `version` | Vendor-version portion of ID construction only. |
-| 10 | `file_type` | Archive format used for filtering and extraction. |
-| 11 | `url` | Artifact download location. |
-| 12 | `filename` | Source artifact filename. |
-| 13 | `size` | Expected artifact size in bytes. |
-| 14 | `sha256` | Expected download digest. |
-| 15 | `features` | TYPE display and musl host compatibility; not part of identity. |
+XDG conventions apply on every platform, including Windows and macOS. Only
+absolute, nonempty overrides are honored (otherwise the fallback is used); a
+missing usable `HOME` is an error, and the working directory is never an
+implicit home. Windows Bash accepts absolute drive paths converted to POSIX
+form.
 
-The API provider confirms that every TSV field is populated. The OpenAPI schema
-also permits empty missing text fields; this historical contract discrepancy is
-recorded as upstream information, not a reason to validate the index in `jvm`.
-The project creates and maintains this index: errors should be fixed upstream.
-
-**Adopted on 2026-10-29:** trust the published TSV contents. Discovery MUST NOT
-validate headers, column counts, populated fields, version/ID tokens, checksums,
-URLs, or feature-list syntax, either when fetching or on cached reads. It uses
-the documented fixed column positions and skips the first (header) record. A
-successful nonempty HTTP 200 body is cached as received. Empty/missing bodies
-are handled as transfer/cache availability failures, not schema validation.
-Schema or content errors may affect listings until corrected upstream.
-
-Backslashes, tabs, carriage returns, and newlines in text fields are published
-as backslash escapes (`\\`, `\t`, `\r`, `\n`). Discovery reads only canonical
-listing fields, which need no escape decoder, and leaves unused text untouched.
-Literal tabs remain field boundaries (including empty fields). CRLF record
-endings are stripped. Data is never evaluated or sourced as shell code.
-
-Use OS, architecture and image type for host/JDK filtering. Discovery admits
-both GA and EA, as do installation and saved-manifest validation.
-Discovery uses `jvm_impl` for display only, without filtering it or including
-it in IDs.
-Use `file_type` for `tar.gz`/`zip` filtering. The bracketed
-features field supplies the bracket-stripped `TYPE` display and is also inspected
-for a `musl` feature on a non-musl host; it is not compared as build metadata. `version` supplies the vendor-version
-portion of IDs; `java_version` supplies the displayed version, Java-major
-matching and the conditional major prefix on IDs. Major extraction accepts
-both modern versions such
-as `8.0.482+8` and legacy `1.8.0_482-b08` notation. Vendor, URL,
-filename, size and SHA-256 are ignored by discovery.
-
-Print each matching ID once in upstream order. Duplicate IDs, including archive
-or feature variants and different builds, do not trigger comparison, warnings,
-or failures. This supersedes both earlier fatal-collision handling and its later
-warning-only policy. Installation separately requires a unique candidate row
-after the adopted archive-format preference.
-
-Use a single ordinary text-filtering utility pass for filtering, ID construction
-and deduplication. Avoid Bash row-by-row validation and quadratic build-comparison
-loops. Runtime logic stays in the single Bash file, using ordinary utilities;
-no general JSON parser or language runtime is introduced.
-
-### Metadata caching
-
-`jvm` manages its own persistent index cache beneath
-`${XDG_CACHE_HOME:-$HOME/.cache}/jvm/`; curl/wget downloads alone are not a cache.
-Keep cache entries and validators associated with the exact index URL so that
-different platforms, GA/all-release indexes and latest/history indexes cannot
-be confused.
-The inspected latest endpoint returned both ETag (a weak validator, `W/"..."`)
-and Last-Modified headers, as well as `Cache-Control: max-age=600`. Preserve ETag
-quoting and its weak prefix verbatim in conditional requests; do not treat the
-ETag as a download checksum. These observed headers may change.
-
-A usable cache has matching internal URL/time metadata and a nonempty body.
-This checks our cache envelope, not the provider's TSV contents. Cached TSV is
-never schema-checked or parsed until the single listing/filtering pass.
-
-- Reuse a recently checked valid index without network access. **Adopted:**
-  refresh after one hour (3600 seconds), adopted for this milestone.
-- Prefer conditional GET over a separate HEAD request followed by GET. Save the
-  server's ETag and send `If-None-Match`; use Last-Modified/If-Modified-Since
-  when ETags are unavailable. Treat validators as opaque server data.
-- A `304 Not Modified` reuses the valid cached index. A `200 OK` supplies a
-  replacement without TSV validation. If a 304 arrives without a usable cached
-  body, retry without a condition rather than treating missing data as success.
-- Store the last successful check time separately from the server modification
-  time. A 304 updates the check time; a failed refresh does not.
-- Download to a temporary file, then atomically publish a successful nonempty
-  HTTP 200 body with matching validator metadata. Failed transfers and empty
-  bodies must not overwrite an existing cache. Do not inspect the TSV contents.
-- If any conditional check or subsequent refresh download fails and a valid
-  cached index exists, silently use it. Do not fail the command or display an
-  update-failure/stale-cache warning. A nonempty HTTP 200 replacement is trusted,
-  even if its contents would previously have failed TSV validation.
-  Report later operational failures, such as an unavailable JDK artifact, if
-  they actually occur; do not substitute the earlier cache-refresh failure.
-- Without a valid cached index, a failed fetch remains an actionable error.
-  Never turn transfer failure into an empty inventory or successful no-match.
-- Detect downloader capabilities rather than assuming every wget is GNU Wget or
-  requiring recent curl ETag convenience options. Send conditional headers with
-  supported options, normalize response handling in the transfer adapter, and
-  fall back to an unconditional GET when conditional transfers are unsupported.
-- Bound transfer retries/timeouts even when falling back to cache. The
-  PowerShell implementation follows the same HTTP/cache behavior.
-  Curl uses a 45-second metadata limit and a 30-minute artifact limit; wget
-  uses a 15-second connection/read timeout with one attempt in both cases.
-
-## Download and installation behavior
-
-- Use HTTPS with certificate validation for metadata, artifacts, and redirects;
-  never disable TLS verification or silently downgrade to HTTP.
-- Handle metadata transfer failures according to the silent cached
-  fallback rules above. Artifact transfer failures remain errors. Bound retries
-  and timeouts and reject incomplete downloads.
-- Before downloading a JDK, require the expected SHA-256 digest from the index
-  and an available verifier. SHA-256 is the single agreed TSV checksum column;
-  detect utilities such as `sha256sum`, `shasum -a 256`, or `openssl dgst
-  -sha256` and normalize hexadecimal case for comparison. The PowerShell
-  implementation uses the built-in .NET SHA-256 provider with the same index.
-  Do not silently fall back to MD5/SHA-1 or unverified installation. Reject
-  mismatches; validate advertised size when present.
-- Stage downloads and extraction in private temporary locations. Validate archive
-  entries and links against absolute paths, traversal, and writes outside the
-  staging tree; preserve legitimate internal JDK links. Do not run installers
-  or metadata-provided commands.
-- Verify the extracted JDK layout before publishing a complete installation.
-  Final publication must stay on the same filesystem for atomic rename.
-- Install concurrently using independent temporary directories and a final
-  same-filesystem rename. A losing publisher succeeds when a complete compatible
-  installation of the same ID was published by another installer. Do not use a
-  shared-storage lock.
-- Failed/interrupted installation must leave existing JDKs and the default
-  usable. Clean up only temporary paths owned by that operation. Staged partial
-  installs must never appear in `list` or resolve as usable JDKs. An incomplete
-  directory already directly beneath `jdks/` is shown as `(invalid JDK)` and
-  remains removable by exact ID.
-- Quote paths and handle spaces and shell metacharacters in HOME, XDG paths,
-  project paths, and download data. Do not use `eval` or source manifests, API
-  responses, config, or JDK `release` files.
-- Use user-owned locations without sudo/admin installation. No telemetry or
-  unrelated network traffic is required.
-
-## Acceptance criteria
-
-The complete version is ready when the following hold. These are not claims
-that native verification is complete on every supported platform:
-
-1. A copied `jvm` script can list/download/install a JDK without Java already
-   installed and without a language runtime or `jq` dependency.
-2. All three selector forms work locally; ambiguous and missing matches give
-   actionable errors. Remote short selectors follow documented resolution.
-3. A downloaded JDK has a verified strong digest and usable compiler/runtime.
-   Reinstalling its ID succeeds without duplicate installation or redownload.
-4. Listing and default selection work offline from durable metadata.
-5. Selecting a default updates the stable PATH/JAVA_HOME reference; the setup
-   works on Linux/macOS and supported Windows link configurations. Link failure
-   preserves the prior selection and gives a useful diagnostic.
-6. curl-only and wget-only configurations work. Missing extractors/verifiers,
-   corrupted downloads, hostile/malformed metadata or archives, concurrent
-   processes, and interruptions fail without corrupting managed state.
-7. Platform/libc detection, macOS bundles, Windows paths, Bash 3.2 compatibility,
-   spaces in paths, and nondefault XDG locations are covered by verification.
-8. Opt-in `env` output and command execution are
-   implemented; broader parent-shell session integration remains deferred.
-9. TSV discovery trusts the published layout, uses explicit `file_type`, and
-   lists compatible latest JDKs across JVM implementations. Unused fields stay
-   untouched; repeated IDs display once without build checks or warnings.
-   Conditional 304 responses reuse the cache; failed refreshes silently retain
-   cached data, while initial-fetch failure without a cache is an error.
-
-## Decisions to revisit before declaring full platform support
-
-- Verify junction replacement and interruption behavior in native Cygwin/MSYS2.
-- Keep general JSON parsing deferred as a last resort. Artifact preference is
-  adopted above; no feature or JVM preference is introduced.
-- Record actual platform/architecture coverage; a simulated detection test does
-  not establish that native extraction, linking, and Java execution work.
-
-
-## Latest-index selection verification (2026-10-30)
-
-Re-inspected the live [OpenAPI definition](https://jbangdev.github.io/jdkdb-index/openapi.yaml).
-Its latest TSV endpoint groups by JVM implementation, distro, Java major and
-file type, retaining entries tied at the highest version. Selection therefore
-filters that inventory and asks for an exact ID when more than one ID matches;
-it does not add another version-ordering policy. This implements the user's
-explicit latest-index clarification and supersedes the earlier comparator.
-
-Retrieved representative GA latest indexes directly over HTTPS:
-
-| Platform response | Data rows |
+| Purpose | Location |
 | --- | --- |
-| [Linux x86_64](https://jbangdev.github.io/jdkdb-index/metadata/ga/linux/x86_64/jdk-latest.tsv) | 487 |
-| [Linux aarch64](https://jbangdev.github.io/jdkdb-index/metadata/ga/linux/aarch64/jdk-latest.tsv) | 362 |
-| [Linux musl x86_64](https://jbangdev.github.io/jdkdb-index/metadata/ga/linux-musl/x86_64/jdk-latest.tsv) | 138 |
-| [macOS x86_64](https://jbangdev.github.io/jdkdb-index/metadata/ga/macosx/x86_64/jdk-latest.tsv) | 523 |
-| [macOS aarch64](https://jbangdev.github.io/jdkdb-index/metadata/ga/macosx/aarch64/jdk-latest.tsv) | 428 |
-| [Windows x86_64](https://jbangdev.github.io/jdkdb-index/metadata/ga/windows/x86_64/jdk-latest.tsv) | 468 |
-| [Windows aarch64](https://jbangdev.github.io/jdkdb-index/metadata/ga/windows/aarch64/jdk-latest.tsv) | 112 |
+| Installations | `${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/<id>/` |
+| References | `.../jvm/jdks/default`, `.../jvm/jdks/<major>` |
+| Private staging | `.../jvm/tmp/` (`jdk-<id>.*`, `remove-<id>.*`, `default.*`) |
+| Configuration | `${XDG_CONFIG_HOME:-$HOME/.config}/jvm/config` |
+| Metadata cache | `${XDG_CACHE_HOME:-$HOME/.cache}/jvm/` |
 
-Supported-archive JDK rows contained 235 distinct upstream version strings.
-The checked-in `tests/fixtures/upstream-versions.tsv` retains each version with
-a representative distro and java_version. Examples include `22.3.3+java17`,
-`22.1.0.1-Final`, `17.0.18+8_openj9-0.57.0`, `21.0.11b1163.125`, `10.0.2+13.1`
-and `8u462-b08_1`. Offline selection tests use all these captured forms with
-inert archive metadata; they make no live artifact downloads and do not claim
-those artifacts are installable on the verification host. Latest-index
-selection, source version strings, IDs and archive preference are kept separate.
+Clearing the cache never removes installations or the default. Paths with
+spaces and shell metacharacters are handled everywhere; nothing is passed to
+`eval` or sourced (manifests, API data, configuration, `release` files).
 
-## Discovery research and implementation record (2026-10-29)
+## Metadata index
 
-The live [OpenAPI definition](https://jbangdev.github.io/jdkdb-index/openapi.yaml)
-and these GA latest responses were retrieved directly over HTTPS on 2026-10-29:
+The runtime base is `https://getjvm.dev/index`, which redirects over HTTPS to
+`jbangdev.github.io/jdkdb-index` (redirects are followed). Discovery and
+installation share one file per platform:
 
-| Platform response | HTTP | Data rows |
-| --- | --- | --- |
-| [Linux x86_64](https://jbangdev.github.io/jdkdb-index/metadata/ga/linux/x86_64/jdk-latest.tsv) | 200 | 467 |
-| [Linux aarch64](https://jbangdev.github.io/jdkdb-index/metadata/ga/linux/aarch64/jdk-latest.tsv) | 200 | 361 |
-| [Linux musl x86_64](https://jbangdev.github.io/jdkdb-index/metadata/ga/linux-musl/x86_64/jdk-latest.tsv) | 200 | 140 |
-| [macOS aarch64](https://jbangdev.github.io/jdkdb-index/metadata/ga/macosx/aarch64/jdk-latest.tsv) | 200 | 413 |
-| [Windows x86_64](https://jbangdev.github.io/jdkdb-index/metadata/ga/windows/x86_64/jdk-latest.tsv) | 200 | 441 |
-| [Windows aarch64](https://jbangdev.github.io/jdkdb-index/metadata/ga/windows/aarch64/jdk-latest.tsv) | 200 | 109 |
+```text
+/metadata/all/{os}/{arch}/jdk-latest.tsv
+```
 
-Every retrieved data row had exactly 15 nonempty fields, in the published header
-order above. The schema still explicitly permits empty missing text fields;
-that remains a conflict with the previously recorded provider-confirmed
-populated-field contract. Discovery now trusts the index and does not reject
-unexpected empty fields. `[]` is populated and valid. The OpenAPI definition
-still documents the four backslash escapes and bracketed feature notation.
-Retrieved samples used LF. Current fixtures cover CRLF transport and leaving
-unused escaped fields untouched. No naturally escaped text appeared in these
-six samples; discovery does not decode unused fields.
+It lists the latest release per major for each distro and JVM implementation,
+including EA rows the API returns (GA is preferred within a group). The
+[OpenAPI definition](https://jbangdev.github.io/jdkdb-index/openapi.yaml)
+documents the static files. No history index is fetched.
 
-Representative values included `1.8.0_482-b08`, `17.0.20+1-LTS`, and `11.0.32.b1`.
-These historical `java_version` samples describe upstream data, not current ID
-inputs. On 2026-10-30 the user adopted `version` for IDs, display and major
-matching. The 2026-11-01 display change uses `java_version` for the `VERSION`
-column. The subsequent 2026-11-01 Java-major correction uses `java_version`
-for every major operation and conditionally prefixes IDs with that major;
-`version` remains the vendor-version portion of IDs. Build comparisons remain
-removed.
-Linux x86_64 returned ETag `W/"6ae33697-2234d"`; this is an observation, not a
-stable value. Header validators are preserved as opaque strings.
-The Windows x86_64 latest response had a Temurin 21 MSI row and no supported
-Temurin 21 ZIP/tar.gz row. Thus `available temurin-21` correctly returned no
-match on that host during the live check. The adapter does not invent an archive
-URL or switch to a history endpoint. `available temurin-8` succeeded there.
-Endpoint availability and the historical record checks do not prove download availability
-or native platform compatibility.
+The TSV is UTF-8 with a header and these 15 columns, in order: `release_type`,
+`os`, `architecture`, `image_type`, `jvm_impl`, `vendor`, `distro`,
+`java_version`, `version`, `file_type`, `url`, `filename`, `size`, `sha256`,
+`features`. The provider only appends columns at the end and populates every
+field. Usage: `os`/`architecture`/`image_type` filter for the host and JDKs,
+`jvm_impl` is display and GraalVM detection only, `distro`/`version`/
+`java_version` build IDs and major matching, `file_type` selects the archive
+format, `url`/`filename`/`size`/`sha256` drive installation, and `features`
+supplies the `TYPE` display and a `musl` host check (not identity).
 
-### Adopted discovery details and remaining gaps
+Discovery trusts the index: it does not validate headers, column counts,
+populated fields, checksums, URLs or feature syntax, either fetched or cached,
+skips only the header row, and prints each ID once (first row wins, with its
+display fields) without comparing builds. Backslash escapes (`\\`, `\t`, `\r`,
+`\n`) in unused text are left alone; literal tabs are field boundaries and CRLF
+endings are stripped. Upstream errors are fixed upstream. Installation (not
+discovery) requires a unique row after the archive-format preference.
 
-- `uname` detects Linux, Darwin and Windows CYGWIN/MSYS/MINGW environments;
-  WSL reports Linux. AMD64/x86_64 and ARM64/aarch64 normalize to API tokens;
-  32-bit x86 normalizes to `i686` (the live schema token). `ppc64le`, `s390x`
-  and `riscv64` are recognized without claiming verified endpoint coverage.
-  ARMv7 is rejected because `uname` alone does not establish the supported ARM
-  ABI (`arm32` versus `arm32-vfp-hflt`). Unknown machines fail explicitly.
-- Linux detection uses musl/glibc identification from `ldd --version`, with
-  `getconf GNU_LIBC_VERSION` as a glibc fallback. Unknown libc fails. Musl targets
-  `linux-musl`; musl-feature artifacts are excluded on other hosts. Actual ABI
-  compatibility and emulation detection beyond process architecture need native
-  verification before broader support claims.
-- In the original discovery milestone, cache storage alone was used. Only the
-  needed cache XDG root is resolved by discovery;
-  relative/empty overrides fall back to an absolute HOME. Windows drive paths
-  use `cygpath`; no data/config/state directories or shell profiles are created.
-- Each platform cache file includes the exact URL, successful check time, ETag,
-  Last-Modified and raw TSV body in one versioned entry. A private same-filesystem
-  staging directory and a single file rename publish body and validators
-  together. Readers see a complete generation; concurrent refreshes may perform
-  duplicate work and the last complete publication wins. No JDK storage lock is
-  needed in this read-only discovery milestone. Timestamps in the future are
-  rechecked; failed refreshes preserve the previous entry and check time.
-- Curl uses HTTPS-only redirect restrictions and connect/total timeouts. Wget
-  capability detection requires `--https-only`, uses response headers and bounded
-  retries/read timeouts, and omits conditional headers if `--header` is absent.
-  A wget without safe HTTPS redirect support fails actionably; it is not assumed
-  to be GNU Wget. At most two GET attempts cover a 304 with no usable cached body.
-- Artifact preference and installed manifests were subsequently implemented in
-  0.2.0 as described above. Version ordering was removed following the user's
-  latest-index clarification. Windows defaults now use junctions; general JSON
-  parsing remains deferred.
-- Verification to date: Bash syntax validation, the deterministic offline suite,
-  and native Git Bash 5.3 discovery with curl plus a second cached invocation.
-  Other host cases and both downloader adapters are simulated by the suite.
-  Bash 3.2 and ShellCheck were not available; Linux, macOS, Cygwin and standalone
-  MSYS2 native runs remain unverified. No archive/execution/linking support is
-  claimed by discovery checks.
+### Cache
+
+Each index lives under the cache directory keyed by exact URL (one
+`all-<os>-<arch>-jdk-latest-v1` entry per platform), with URL, ETag,
+Last-Modified and last-check metadata.
+
+- A valid cache (matching URL/time metadata, nonempty body) younger than one
+  hour (3600 s) is used without network access.
+- Otherwise a conditional GET is sent: `If-None-Match` with the ETag preserved
+  verbatim (including a weak `W/` prefix), or `If-Modified-Since` when only
+  Last-Modified exists; validators are opaque. `304` reuses the cache and
+  updates the check time; a `304` without a usable body is retried
+  unconditionally. A nonempty `200` is published atomically (temporary file,
+  then rename) with its validators and is not content-validated.
+- Failed transfers and empty bodies never overwrite the cache. If a refresh
+  fails and a valid cache exists it is used silently, without a warning. With no
+  cache, a failed fetch is an actionable error, never an empty listing.
+- Downloaders are detected, not assumed: Bash supports `curl` and `wget`
+  (including non-GNU wget), falling back to an unconditional GET when
+  conditional requests are unsupported. Curl uses 45 s (metadata) and 30 min
+  (artifact) limits; wget a 15 s connect/read timeout with one attempt.
+  PowerShell uses `HttpWebRequest` with equivalent behavior.
+
+## Implementation constraints
+
+- **Bash `jvm`**: one file, executable and runnable as `bash ./jvm`; LF line
+  endings and a Bash shebang. Supports Bash 3.2 and later (no associative
+  arrays or newer features) on Linux, macOS, Cygwin, MSYS2 and Git Bash. Uses
+  Bash plus ordinary utilities and no Python, Perl, Ruby, Node.js or `jq`;
+  no general JSON parser exists. GNU-only behavior is not assumed (`readlink
+  -f`, `sort -V`, `stat`, `sed -i`, `mv -T`); capabilities are detected and
+  missing ones give an actionable error. Required capabilities per command:
+  `curl` or `wget`; `tar` with gzip for `.tar.gz`; `unzip` for `.zip`; a SHA-256
+  tool; `cygpath` on Windows. `--help` and local commands need no network or
+  archive tools. Nothing is installed automatically; no installers or
+  vendor-provided commands are run; no telemetry; user-owned locations only.
+- **PowerShell `jvm.ps1`**: a separate Windows-only entry point for Windows
+  PowerShell 5.1 using built-in .NET only (no Bash, PowerShell Core features or
+  packages). It follows the same selectors, configuration, storage layout, cache
+  lifetime, manifest, defaults and offline-first policy. Paths are native
+  Windows paths and directory junctions provide references. The two
+  implementations MUST behave alike wherever the platform allows; any
+  difference is a documented boundary below, and a behavior change applies to
+  both in one change.
+- **`jvm.cmd`**: a thin launcher for `cmd.exe` and double-click use. It runs
+  the `jvm.ps1` beside it with `powershell.exe -NoProfile -ExecutionPolicy
+  Bypass -File`, forwards all arguments and returns its exit code. It contains
+  no logic. Because `cmd.exe` has no `---` problem, `--` and `---` both work.
+- Fixtures, tests and contributor tooling stay outside the shipped scripts and
+  are never runtime dependencies. No runtime dependency on Java.
+
+### PowerShell boundaries
+
+- The parser removes an unquoted `--` at a prompt, so use `---` there (`--`
+  still works with `-File` and `cmd.exe`). A later unquoted `--` meant for the
+  child must be quoted.
+- `exec` starts `.exe`/`.com` directly. `.bat`/`.cmd` run through `cmd.exe`,
+  which re-parses their arguments as it would without `jvm`. `.ps1` scripts run
+  with `powershell.exe -NoProfile -NonInteractive -File` (Windows PowerShell
+  5.1 from the system directory when the host has no `powershell.exe`), subject
+  to the execution policy. An extensionless command, bare or path-qualified,
+  prefers `.ps1` over the `PATHEXT` extensions, as PowerShell does.
+- ZIP extraction uses .NET and rejects symbolic links. `tar.gz` needs the
+  Windows `tar.exe` and rejects links and special entries. Both are stricter
+  than Bash, which preserves verified internal links.
+
+## Open items
+
+- **TODO:** extend `tests/powershell.ps1` with offline coverage of the
+  PowerShell network and archive paths: a local `HttpListener` server, index
+  fetching and 304/cache handling, ZIP and `tar.gz` installation, checksum
+  mismatch, traversal and link rejection, HTTP failures. These paths are
+  currently unverified.
+- Junction replacement and interruption on native Cygwin/MSYS2, macOS
+  replacement, real-JDK runs beyond native Git Bash and broader PowerShell
+  platform coverage remain unverified; see tests/README.md.
