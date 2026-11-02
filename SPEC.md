@@ -772,21 +772,24 @@ from listing installations managed by `jvm`.
 
 ## Implementation and portability constraints
 
-- The distributed tool MUST be one Bash file named `jvm`, directly executable
-  where supported and runnable as `bash ./jvm` everywhere supported.
-- It MUST run on Linux, macOS, and Windows through Cygwin, MSYS2, and Git Bash.
-  Windows support means this Bash execution environment; a native PowerShell or
-  cmd.exe implementation is not required.
+- The Bash implementation remains one file named `jvm`, directly executable
+  where supported and runnable as `bash ./jvm` everywhere supported. The
+  separately requested native Windows PowerShell implementation is
+  `jvm.ps1`; fixtures and tests remain outside both runtime files.
+- The Bash implementation MUST run on Linux, macOS, and Windows through Cygwin,
+  MSYS2, and Git Bash. Native PowerShell support is provided separately by
+  `jvm.ps1` and does not change the Bash platform contract.
 - **Adopted:** support Bash 3.2 and later, including macOS's bundled Bash. Avoid
   associative arrays and other features requiring newer Bash.
-- All runtime logic MUST be Bash, apart from ordinary system utilities. Do not
-  require Python, Perl, Ruby, JavaScript, Node.js, `jq`, package managers,
-  downloaded helper executables, or a separate native launcher.
-- Java is the only permitted additional programming language. A Java feature
-  MUST document why a suitable existing JDK is assured, or how Bash first
-  installs a specifically known suitable JDK without invoking Java. No circular
-  dependency on Java for initial discovery, metadata parsing, or installation.
-- Development tools and test fixtures need not be shipped with the single file.
+- Runtime logic in `jvm` MUST remain Bash, apart from ordinary system utilities.
+  The separate `jvm.ps1` runtime MUST remain PowerShell 5.1 and built-in .NET;
+  neither implementation may require package managers or downloaded helpers.
+  Do not require Python, Perl, Ruby, JavaScript, Node.js, or `jq`.
+- Do not add a third runtime language. A Java feature MUST document why a
+  suitable existing JDK is assured, or how Bash first installs a specifically
+  known suitable JDK without invoking Java. No circular dependency on Java for
+  initial discovery, metadata parsing, or installation.
+- Development tools and test fixtures need not be shipped with the runtime files.
   They MUST NOT become hidden runtime dependencies.
 - Prefer clarity and small dependencies to code golfing. **Proposed:** record
   script byte size as it grows; there is no arbitrary hard size limit yet.
@@ -810,6 +813,36 @@ capabilities a command needs and give an actionable error when unavailable.
 `--help` and local listing MUST NOT require networking or archive tools. Do not
 install missing dependencies automatically. Other archive formats and native
 installers are outside initial scope.
+
+### Native Windows PowerShell implementation
+
+**Requested 2026-11-02:** provide a native `jvm.ps1` implementation compatible
+with Windows PowerShell 5.1. It is a separate entry point; it does not invoke
+Bash, require PowerShell Core, or install packages. It follows the existing
+selectors, configuration precedence, XDG storage layout, cache lifetime,
+manifest format, defaults, and offline-first installation policy. Its `env`
+command emits PowerShell assignments, for example:
+
+```powershell
+Invoke-Expression (& .\jvm.ps1 env temurin-21)
+```
+
+PowerShell-specific boundaries: `exec` launches native `.exe`/`.com` programs;
+it rejects `.bat` and `.cmd` files rather than passing arguments through a
+command shell. ZIP extraction is implemented with .NET and rejects symbolic
+links. A `tar.gz` fallback requires the Windows `tar.exe` utility and rejects
+links and special entries. These archive/link boundaries are intentionally
+conservative and differ from Bash's support for verified internal archive
+links. PowerShell 5.1 compatibility and native junction behavior are covered by the
+isolated test in `tests/powershell.ps1`. Local validation was performed on
+2026-11-02; broader PowerShell platform coverage remains outstanding.
+
+TODO (not yet authorized or implemented): extend `tests/powershell.ps1` with
+offline coverage of the PowerShell network and archive paths, using a local
+`HttpListener` server with checked-in or generated fixtures. It should cover
+index/metadata fetching and conditional 304/cache handling, ZIP and `tar.gz`
+installation, checksum mismatch, archive traversal and link/special-entry
+rejection, and HTTP failures. These paths are currently unverified.
 
 ## Adopted command interface
 
@@ -1655,8 +1688,8 @@ never schema-checked or parsed until the single listing/filtering pass.
   requiring recent curl ETag convenience options. Send conditional headers with
   supported options, normalize response handling in the transfer adapter, and
   fall back to an unconditional GET when conditional transfers are unsupported.
-- Bound transfer retries/timeouts even when falling back to cache. A future
-  PowerShell implementation should retain the same HTTP/cache behavior.
+- Bound transfer retries/timeouts even when falling back to cache. The
+  PowerShell implementation follows the same HTTP/cache behavior.
   Curl uses a 45-second metadata limit and a 30-minute artifact limit; wget
   uses a 15-second connection/read timeout with one attempt in both cases.
 
@@ -1670,8 +1703,8 @@ never schema-checked or parsed until the single listing/filtering pass.
 - Before downloading a JDK, require the expected SHA-256 digest from the index
   and an available verifier. SHA-256 is the single agreed TSV checksum column;
   detect utilities such as `sha256sum`, `shasum -a 256`, or `openssl dgst
-  -sha256` and normalize hexadecimal case for comparison. A future PowerShell
-  port can use `Get-FileHash -Algorithm SHA256` with the same index.
+  -sha256` and normalize hexadecimal case for comparison. The PowerShell
+  implementation uses the built-in .NET SHA-256 provider with the same index.
   Do not silently fall back to MD5/SHA-1 or unverified installation. Reject
   mismatches; validate advertised size when present.
 - Stage downloads and extraction in private temporary locations. Validate archive

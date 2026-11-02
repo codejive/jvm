@@ -80,6 +80,23 @@ jobs:
           fi
           "$TEST_BASH" tests/jdk-smoke.sh
 
+  powershell:
+    name: Windows / PowerShell 5.1
+    runs-on: windows-2025
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Windows PowerShell 5.1 smoke suite
+        run: |
+          $PSVersionTable.PSVersion
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/powershell.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   windows:
     name: Windows / ${{ matrix.environment }} / Bash ${{ matrix.bash }}
     runs-on: windows-2025

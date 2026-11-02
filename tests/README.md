@@ -41,6 +41,26 @@ bash tests/home-env.sh
 bash tests/install.sh --uninstall
 ```
 
+## Native Windows PowerShell implementation
+
+Run the isolated PowerShell 5.1 smoke suite from the repository root:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\powershell.ps1
+```
+
+The suite creates synthetic launchers, manifests, XDG roots, and Windows
+junctions only under a uniquely named temporary directory. It does not access
+the contributor's JDK inventory, default links, configuration, or profile.
+The hosted CI workflow runs it in the `Windows / PowerShell 5.1` job.
+The suite requires Windows PowerShell 5.1 and Windows junction support.
+On 2026-11-02, it passed under Windows PowerShell 5.1.26100.9711, covering
+offline list/home/env, automatic and per-major defaults, junction
+creation/replacement/removal, selected-JDK execution, argument preservation,
+and uninstall.
+Network transfers and archive installation are not exercised by this smoke
+suite.
+
 The offline suite creates temporary working directories, HOME and XDG roots,
 including paths with spaces. It never reads the contributor's `.jvmrc` or user
 configuration. Its isolated PATH supplies ordinary utility wrappers and fake host,

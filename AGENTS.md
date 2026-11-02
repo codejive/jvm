@@ -16,6 +16,8 @@ including Windows junctions, first-install selection and replacement on default
 uninstallation. JDK command execution was authorized on 2026-11-01. The user
 subsequently removed the dedicated `shell`/`s` command while retaining `exec`/`x`.
 Broader parent-shell session switching remains deferred.
+The native Windows PowerShell 5.1 entry point `jvm.ps1` was requested on
+2026-11-02; its documented archive and batch-command boundaries remain in force.
 Uninstallation was authorized on 2026-10-30, with offline
 ID/major/distro-major selection and move-before-delete removal through
 `jvm/tmp/remove-<ID>.XXXXXXXX`. Do not infer further authorization from the
@@ -44,8 +46,10 @@ data as data. Keep installation validation separate from this trusted reader.
 
 ## Implementation discipline
 
-- Ship one Bash file, `jvm`. Keep fixtures, tests, and contributor tooling outside
-  the distributed artifact. Do not add a runtime package installation step.
+- Keep the Bash implementation in one file, `jvm`; the requested native
+  PowerShell implementation is the separate `jvm.ps1` entry point. Keep fixtures,
+  tests, and contributor tooling outside the distributed artifacts. Do not add a
+  runtime package installation step.
 - Follow the spec's Bash baseline and dependency rules. Avoid newer Bash
   features, GNU-only assumptions, hidden language runtimes, and mandatory `jq`.
 - If proposing Java for a feature, first document the guaranteed JDK/preinstall
@@ -76,11 +80,12 @@ When implementation exists:
 
 - Local platform or Bash-version validation requires express user confirmation
   for the proposed local checks before running them. This includes
-  `tests/ci.sh`, native junction and real-JDK smoke tests, WSL/container platform
-  runs, and building or installing alternative shells or platform tooling for
-  validation. A request to create or change CI does not authorize these local
-  runs. Prefer the configured hosted CI jobs; report unverified platforms rather
-  than starting local platform tests without confirmation. This restriction does
+  `tests/ci.sh`, `tests/powershell.ps1`, native junction and real-JDK smoke tests,
+  WSL/container platform runs, and building or installing alternative shells
+  or platform tooling for validation. A request to create or change CI does not
+  authorize these local runs. Prefer the configured hosted CI jobs; report
+  unverified platforms rather than starting local platform tests without
+  confirmation. This restriction does
   not require confirmation for the configured jobs running in hosted CI.
 - Run Bash syntax validation (`bash -n ./jvm`) and relevant behavioral tests.
   Use ShellCheck when available as a development tool, not a runtime dependency.
