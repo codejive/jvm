@@ -4,14 +4,14 @@
 compatible JDK builds, downloads and verifies them, keeps them in user storage
 and lets you pick which one to use, either persistently or per command.
 
-`default set <selector>`, `home`, `env` and `exec` automatically install a JDK when
-no installed JDK matches the selector. Existing local matches work offline.
+`default set <selector>`, `home`, `env` and `exec` automatically install a JDK
+when no installed JDK matches the selector. Existing local matches work offline.
 
 **The scripts are small, have no dependencies and are meant to be copied into
-your Java projects.** `jvm` (Bash), `jvm.ps1` (native Windows PowerShell 5.1) and
-`jvm.cmd` (Windows launcher) need no Java, no package manager and no runtime
-installation step. That gives you a sure-fire way for your users to build and
-run your project, even when they don't have Java installed.
+your Java projects.** `jvm` (Bash), `jvm.ps1` (native Windows PowerShell 5.1)
+and `jvm.cmd` (Windows launcher) need no Java, no package manager and no
+runtime installation step. That gives you a sure-fire way for your users to
+build and run your project, even when they don't have Java installed.
 
 On Linux and macOS, the Bash script supports Bash 3.2 and later. On Windows,
 use current Git Bash, MSYS2 or Cygwin, or Windows PowerShell 5.1.
@@ -19,13 +19,13 @@ use current Git Bash, MSYS2 or Cygwin, or Windows PowerShell 5.1.
 ## Using it in your projects
 
 Copy the three scripts `jvm`, `jvm.cmd` and `jvm.ps1` to the root of your
-project, and add a line like this to the project's README:
+project, and tell your users they can run your application by simply typing:
 
 ```sh
-./jvm x 25+ your_command
+./jvm x 25+ your_app
 ```
 
-This runs `your_command` with a matching JDK (Java 25 or newer), downloading
+This runs `your_app` with a matching JDK (Java 25 or newer), downloading
 and installing Temurin if no installed JDK matches. Use `.\jvm.cmd` on Windows
 outside Bash.
 
