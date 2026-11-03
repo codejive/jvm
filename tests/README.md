@@ -1,5 +1,12 @@
 # Discovery, installation and uninstallation verification
 
+CI wrapper lookup repair (2026-11-03): capture real `tar` and `sha256sum`
+paths before isolating PATH, avoiding cached wrapper targets in Bash 3.2.
+Syntax checks for `jvm` and `tests/install.sh`, all 35 offline installation
+checks under installed Git Bash, and `git diff --check` passed. ShellCheck
+was unavailable. Linux/macOS Bash 3.2 verification remains pending; no CI
+runs, alternative shells or additional platform tests were started.
+
 Install major-default verification (2026-11-03): `install -v` selects the
 resolved JDK's major default in both entry points; `-d -v` selects the major
 then global default, retaining a successful major update if the global update
