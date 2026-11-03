@@ -7,9 +7,11 @@ macOS `/var`). The competing-installation fixture
 publishes with a directory rename instead of copying relative symlinks, which
 can fail on MSYS2. Cygwin CI and the native junction smoke locate System32 with
 `cygpath -u -S` instead of relying on the case of a Windows environment name or
-an inherited `cmd.exe` PATH entry. The private Cygwin Bash 3.2 build retains its
-supporting DLLs beside the executable and checks startup with an empty PATH;
-the offline tests still hide real utilities. Focused inventory, flags/aliases and
+an inherited `cmd.exe` PATH entry. Hosted Cygwin Bash 3.2 uses a run-specific
+executable beside the installed Cygwin DLLs and checks startup with
+`PATH=/nonexistent`; job cleanup removes that executable. No installed shell or
+runtime DLL is replaced, and the offline tests still hide real utilities.
+Focused inventory, flags/aliases and
 execution checks passed under installed Git Bash with an aliased temporary root.
 Bash syntax checks, workflow lint and `git diff --check` passed. These local
 checks do not establish native macOS or Cygwin compatibility.
@@ -171,11 +173,7 @@ Cygwin's runtime, and does not establish 3.2 coverage for those other runtimes.
 The build helper downloads the
 [GNU Bash 3.2.57 release](https://ftp.gnu.org/gnu/bash/bash-3.2.57.tar.gz),
 verifies its pinned SHA-256, builds in a new private directory and copies
-the interpreter into that directory's `bin`. On Cygwin, `cygcheck` identifies
-supporting `cyg*.dll` dependencies to copy beside it for isolated-PATH startup;
-the installed `cygwin1.dll` runtime is retained rather than copied. All builds
-check startup with an empty PATH before running the offline suite.
-GCC with C development headers,
+the interpreter into that directory's `bin`. GCC with C development headers,
 Make, Bison (and its M4 dependency), curl, tar/gzip and sha256sum are
 development/CI tools only. Bison regenerates Bash's parser; it is not needed
 by `jvm` or by the offline tests.
@@ -185,10 +183,15 @@ predating GCC 10. Cygwin additionally needs `patch`: the private source copy use
 the current [path conversion API](https://cygwin.com/cygwin-api/func-cygwin-conv-path.html)
 via `tests/bash32-cygwin.patch`, and includes `io.h` for the current `setmode`
 mapping. These adjustments affect only the test interpreter.
-The dependency and system-directory behavior follows Cygwin's
-[`cygcheck`](https://cygwin.com/cygwin-ug-net/cygcheck.html) and
-[`cygpath`](https://cygwin.com/cygwin-ug-net/cygpath.html) documentation
-(checked 2026-11-03).
+For Cygwin's isolated-PATH tests, the hosted job stages a second copy named
+`/usr/bin/jvm-ci-bash32-<run-id>-<attempt>.exe` next to the installed runtime
+DLLs, leaving `/usr/bin/bash.exe` untouched. It checks startup with
+`PATH=/nonexistent` and removes its copy in an always-run cleanup step.
+Copying supporting DLLs beside the private build was insufficient in hosted
+testing; an empty-PATH check passed while the absent-utilities PATH still failed.
+The setup follows Cygwin's [DLL lookup guidance](https://cygwin.com/cygwin/faq/faq.html#faq.using.dll-not-found)
+and [`cygpath` system-directory documentation](https://cygwin.com/cygwin-ug-net/cygpath.html)
+(checked 2026-11-03); it does not add the real utilities to the isolated PATH.
 Nothing replaces the system shell or adds a runtime installation step.
 The macOS harness needs `sha256sum` for constructing fixture metadata; CI exposes
 only Homebrew's checksum binary under that name, retaining native BSD tar, mv
@@ -199,7 +202,7 @@ Equivalent local commands, with the interpreter to test:
 ```bash
 bash tests/ci.sh current
 /path/to/bash-3.2 tests/ci.sh 3.2
-# Optional private build on Linux/Cygwin with the build tools already available:
+# Optional private build on Linux with the build tools already available:
 bash tests/build-bash32.sh /path/to/new-build-directory
 /path/to/new-build-directory/bin/bash tests/ci.sh 3.2
 ```

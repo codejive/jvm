@@ -41,25 +41,5 @@ make -j1 CFLAGS_FOR_BUILD="$CFLAGS" YACC='bison -y' "$program" > "$BUILD/build.l
 }
 mkdir "$BUILD/bin"
 cp "$program" "$BUILD/bin/$program"
-case "$(uname -s)" in
-    CYGWIN*)
-        # The offline harness intentionally removes /usr/bin from PATH. Keep
-        # Bash's supporting Cygwin DLLs beside the private executable so that
-        # loader lookup does not require exposing real utilities to the tests.
-        # Keep using the installed cygwin1.dll, not a second Cygwin runtime.
-        cygcheck "$BUILD/bin/$program" > "$BUILD/dependencies.log"
-        sed 's/^[[:space:]]*//; s/\r$//' "$BUILD/dependencies.log" > "$BUILD/dependencies.paths"
-        while IFS= read -r dependency; do
-            case "$dependency" in
-                *cygwin1.dll) ;;
-                *cyg*.dll)
-                    dependency=$(cygpath -u "$dependency")
-                    cp "$dependency" "$BUILD/bin/" ;;
-            esac
-        done < "$BUILD/dependencies.paths"
-        ;;
-esac
-# Catch loader failures here rather than at the first isolated test wrapper.
-PATH= "$BUILD/bin/bash" -c '[ "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}" = 3.2 ]'
 "$BUILD/bin/bash" -c '[ "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}" = 3.2 ]'
 "$BUILD/bin/bash" --version
