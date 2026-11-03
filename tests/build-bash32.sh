@@ -42,4 +42,14 @@ make -j1 CFLAGS_FOR_BUILD="$CFLAGS" YACC='bison -y' "$program" > "$BUILD/build.l
 mkdir "$BUILD/bin"
 cp "$program" "$BUILD/bin/$program"
 "$BUILD/bin/bash" -c '[ "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}" = 3.2 ]'
+# Data reads must match packaged Cygwin Bash's default binary behavior, not
+# vanilla 3.2's unconditional CRLF conversion in read and command substitution.
+printf 'data\r\n' > "$BUILD/crlf-data"
+"$BUILD/bin/bash" -c '
+    printf -v expected "data\r"
+    value=$(printf "data\r\n")
+    [ "$value" = "$expected" ] || exit 1
+    IFS= read -r value < "$1"
+    [ "$value" = "$expected" ]
+' bash "$BUILD/crlf-data"
 "$BUILD/bin/bash" --version

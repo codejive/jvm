@@ -13,3 +13,17 @@
 +      if (cygwin_conv_path (CCP_WIN_A_TO_POSIX, string, pathbuf, sizeof (pathbuf)) != 0)
 +        return (savestring (string));
        result = savestring (pathbuf);
+--- a/subst.c
++++ b/subst.c
+@@ -4467,3 +4467,3 @@
+ #ifdef __CYGWIN__
+-  setmode (fd, O_TEXT);		/* we don't want CR/LF, we want Unix-style */
++  setmode (fd, O_BINARY);		/* preserve data, like packaged Cygwin bash */
+ #endif
+--- a/builtins/read.def
++++ b/builtins/read.def
+@@ -389,3 +389,3 @@
+ #if defined (__CYGWIN__) && defined (O_TEXT)
+-  setmode (0, O_TEXT);
++  setmode (0, O_BINARY);
+ #endif

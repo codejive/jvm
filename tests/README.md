@@ -15,6 +15,9 @@ Focused inventory, flags/aliases and
 execution checks passed under installed Git Bash with an aliased temporary root.
 Bash syntax checks, workflow lint and `git diff --check` passed. These local
 checks do not establish native macOS or Cygwin compatibility.
+The newline-path home/env fixture checks the resolved physical path: it rejects
+literal CR/LF, or verifies exact single-line output and evaluated environment
+statements when a Windows runtime remaps those filename characters.
 
 CI repair verification (2026-11-03): updated stale help assertions and restored
 diagnostics/cleanup when the harness deliberately removes utilities from PATH.
@@ -183,6 +186,12 @@ predating GCC 10. Cygwin additionally needs `patch`: the private source copy use
 the current [path conversion API](https://cygwin.com/cygwin-api/func-cygwin-conv-path.html)
 via `tests/bash32-cygwin.patch`, and includes `io.h` for the current `setmode`
 mapping. These adjustments affect only the test interpreter.
+The patch also uses binary mode for `read` and command substitution, preserving
+literal carriage returns in data. Vanilla 3.2 forces text conversion there;
+packaged Cygwin Bash already used byte-preserving defaults in its
+[3.2 release notes](https://sourceware.org/pipermail/cygwin-announce/2007-April/002243.html)
+(checked 2026-11-03). The helper verifies CRLF preservation before running tests;
+it does not add the Cygwin-specific `igncr` shell option to the private build.
 For Cygwin's isolated-PATH tests, the hosted job stages a second copy named
 `/usr/bin/jvm-ci-bash32-<run-id>-<attempt>.exe` next to the installed runtime
 DLLs, leaving `/usr/bin/bash.exe` untouched. It checks startup with

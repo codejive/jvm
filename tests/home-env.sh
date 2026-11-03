@@ -255,13 +255,23 @@ for selector in '' windows-test-25; do
     TEST_PATH="$TEMP/tools:$expected/bin" run 0 env -f ${selector:+"$selector"}
     check_env "C:$expected" "$expected/bin" "-f${selector:+ $selector}"
 done
-# A usable home still cannot be represented in the promised single-line format.
+# A usable home containing literal CR/LF cannot be emitted on one line. Some
+# Windows runtimes map these filename characters when resolving physical paths;
+# in that case the resulting single-line path is valid and must round-trip.
 saved_data=$XDG_DATA_HOME
 export XDG_DATA_HOME="$TEMP/line"$'\n'"break"
 make_jdk 25+1 windows-test windows
-for command in home env; do
-    run 1 "$command" windows-test-25; diagnostic 'single-line path'
-done
+physical_home=$(cd "$XDG_DATA_HOME/jvm/jdks/25+1-windows-test" && pwd -P)
+case "$physical_home" in
+    *[$'\r\n']*)
+        for command in home env; do
+            run 1 "$command" windows-test-25; diagnostic 'single-line path'
+        done ;;
+    *)
+        run 0 home windows-test-25; exact "$physical_home"
+        run 0 env windows-test-25
+        check_env "C:$physical_home" "$physical_home/bin" windows-test-25 ;;
+esac
 export XDG_DATA_HOME=$saved_data
 export TEST_CONVERT_FAIL=1
 run 1 env; diagnostic 'cannot convert JDK home path'
