@@ -1,5 +1,12 @@
 # Discovery, installation and uninstallation verification
 
+Windows Bash baseline (2026-11-03): Windows uses current Git Bash, MSYS2 and
+Cygwin only. The Cygwin Bash 3.2 job, source patch, build dependencies and
+temporary interpreter staging have been removed. The local build helper and
+CI entry point reject Windows Bash 3.2 requests before building or running tests.
+Linux and macOS retain Bash 3.2 coverage. Older verification notes below describe
+historical runs, including the Windows Bash 3.2 coverage that has been retired.
+
 CI fixture repairs (2026-11-03): the installation harness resolves its temporary
 root to a physical path so hand-created references and exact home/exec
 expectations match managed links when temporary paths have aliases (for example
@@ -7,10 +14,7 @@ macOS `/var`). The competing-installation fixture
 publishes with a directory rename instead of copying relative symlinks, which
 can fail on MSYS2. Cygwin CI and the native junction smoke locate System32 with
 `cygpath -u -S` instead of relying on the case of a Windows environment name or
-an inherited `cmd.exe` PATH entry. Hosted Cygwin Bash 3.2 uses a run-specific
-executable beside the installed Cygwin DLLs and checks startup with
-`PATH=/nonexistent`; job cleanup removes that executable. No installed shell or
-runtime DLL is replaced, and the offline tests still hide real utilities.
+an inherited `cmd.exe` PATH entry. The offline tests still hide real utilities.
 Focused inventory, flags/aliases and
 execution checks passed under installed Git Bash with an aliased temporary root.
 Bash syntax checks, workflow lint and `git diff --check` passed. These local
@@ -45,7 +49,7 @@ Bash syntax checks and `git diff --check` passed. Distributed script sizes:
 `jvm` 67,383 bytes; `jvm.ps1` 75,231 bytes. Other platforms and Bash 3.2 were
 not rerun for this change.
 
-Run from the repository root in Bash (3.2 or later):
+Run from the repository root in Bash (3.2 or later on Unix; current Bash on Windows):
 
 ```bash
 bash -n ./jvm
@@ -164,14 +168,14 @@ suite. Windows entries also run the native junction smoke.
 | `macos-15` | Native macOS | `/bin/bash` 3.2; Homebrew Bash |
 | `windows-2025` | Git Bash | Bundled current Bash |
 | `windows-2025` | MSYS2 | Current MSYS Bash |
-| `windows-2025` | Cygwin | Private GNU Bash 3.2.57 build; current Cygwin Bash |
+| `windows-2025` | Cygwin | Current Cygwin Bash |
 
 The Bash 3.2 entries fail if the interpreter is not actually version 3.2.
 `tests/ci.sh` also puts that interpreter first on PATH for bare `bash` calls
 and env-based shebangs. The harness and junction smoke pass the same interpreter
 to child invocations. A newer Bash in compatibility mode is not a substitute.
-Git Bash and MSYS2 use their current native binaries; the Windows 3.2 job uses
-Cygwin's runtime, and does not establish 3.2 coverage for those other runtimes.
+Windows entries use their current native binaries. Bash 3.2 coverage is Unix-only;
+both `tests/build-bash32.sh` and `tests/ci.sh 3.2` reject Windows hosts.
 
 The build helper downloads the
 [GNU Bash 3.2.57 release](https://ftp.gnu.org/gnu/bash/bash-3.2.57.tar.gz),
@@ -182,25 +186,7 @@ development/CI tools only. Bison regenerates Bash's parser; it is not needed
 by `jvm` or by the offline tests.
 The build runs serially because the old readline/history makefiles share object
 files unsafely under parallel make, and uses `-fcommon` for tentative definitions
-predating GCC 10. Cygwin additionally needs `patch`: the private source copy uses
-the current [path conversion API](https://cygwin.com/cygwin-api/func-cygwin-conv-path.html)
-via `tests/bash32-cygwin.patch`, and includes `io.h` for the current `setmode`
-mapping. These adjustments affect only the test interpreter.
-The patch also uses binary mode for `read` and command substitution, preserving
-literal carriage returns in data. Vanilla 3.2 forces text conversion there;
-packaged Cygwin Bash already used byte-preserving defaults in its
-[3.2 release notes](https://sourceware.org/pipermail/cygwin-announce/2007-April/002243.html)
-(checked 2026-11-03). The helper verifies CRLF preservation before running tests;
-it does not add the Cygwin-specific `igncr` shell option to the private build.
-For Cygwin's isolated-PATH tests, the hosted job stages a second copy named
-`/usr/bin/jvm-ci-bash32-<run-id>-<attempt>.exe` next to the installed runtime
-DLLs, leaving `/usr/bin/bash.exe` untouched. It checks startup with
-`PATH=/nonexistent` and removes its copy in an always-run cleanup step.
-Copying supporting DLLs beside the private build was insufficient in hosted
-testing; an empty-PATH check passed while the absent-utilities PATH still failed.
-The setup follows Cygwin's [DLL lookup guidance](https://cygwin.com/cygwin/faq/faq.html#faq.using.dll-not-found)
-and [`cygpath` system-directory documentation](https://cygwin.com/cygwin-ug-net/cygpath.html)
-(checked 2026-11-03); it does not add the real utilities to the isolated PATH.
+predating GCC 10. The helper is for Unix builds only.
 Nothing replaces the system shell or adds a runtime installation step.
 The macOS harness needs `sha256sum` for constructing fixture metadata; CI exposes
 only Homebrew's checksum binary under that name, retaining native BSD tar, mv

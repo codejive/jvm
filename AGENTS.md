@@ -107,7 +107,8 @@ When implementation exists:
   Verify a prior usable installation/default survives failures.
 - Cover paths with spaces, XDG overrides, macOS bundle layout, musl/glibc
   distinctions, and Windows native executable/link behavior.
-- Check Bash 3.2 and current Bash. Before claiming platform support, run native
+- Check Bash 3.2 and current Bash on Unix; use current Bash on Windows only.
+  Do not build or validate Bash 3.2 for Windows. Before claiming platform support, run native
   smoke checks on Linux, macOS, Cygwin, MSYS2, and Git Bash where available.
   Use hosted CI or obtain the express confirmation required above for local runs.
   Distinguish simulated platform tests from native verification and report gaps.

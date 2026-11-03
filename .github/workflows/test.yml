@@ -117,9 +117,6 @@ jobs:
           - environment: Cygwin
             bash: current
             shell: 'D:\cygwin\bin\bash.exe --noprofile --norc -o igncr -e {0}'
-          - environment: Cygwin
-            bash: '3.2'
-            shell: 'D:\cygwin\bin\bash.exe --noprofile --norc -o igncr -e {0}'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -135,37 +132,18 @@ jobs:
         with:
           install-dir: 'D:\cygwin'
           add-to-path: false
-          packages: curl gcc-core make bison patch tar gzip unzip diffutils coreutils gawk sed findutils openssl
-      - name: Build actual Bash 3.2
-        if: matrix.bash == '3.2'
-        run: |
-          export PATH="/usr/bin:$(cygpath -u -S)"
-          bash tests/build-bash32.sh "$(cygpath -u "$RUNNER_TEMP")/bash-3.2"
-          # Keep the executable beside the installed Cygwin runtime DLLs:
-          # isolated PATH tests must not expose the other /usr/bin utilities.
-          # A run-specific name never replaces the runner's installed shell.
-          interpreter="/usr/bin/jvm-ci-bash32-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.exe"
-          [ ! -e "$interpreter" ]
-          cp "$(cygpath -u "$RUNNER_TEMP")/bash-3.2/bin/bash.exe" "$interpreter"
-          printf 'TEST_BASH=%s\n' "$interpreter" >> "$(cygpath -u "$GITHUB_ENV")"
-          PATH=/nonexistent "$interpreter" -c '[ "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}" = 3.2 ]'
+          packages: curl tar gzip unzip diffutils coreutils gawk sed findutils openssl
       - name: Syntax, full offline suite and native junction smoke
         env:
           BASH_TARGET: ${{ matrix.bash }}
           TEST_ENVIRONMENT: ${{ matrix.environment }}
         run: >-
           if [ "$TEST_ENVIRONMENT" = Cygwin ]; then export PATH="/usr/bin:$(cygpath -u -S)"; fi;
-          if [ "$BASH_TARGET" = 3.2 ]; then interpreter="$TEST_BASH"; else interpreter="$BASH"; fi;
-          "$interpreter" tests/ci.sh "$BASH_TARGET"
+          "$BASH" tests/ci.sh "$BASH_TARGET"
       - name: Optional real JDK lifecycle
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.real_jdk }}
         env:
-          BASH_TARGET: ${{ matrix.bash }}
           TEST_ENVIRONMENT: ${{ matrix.environment }}
         run: >-
           if [ "$TEST_ENVIRONMENT" = Cygwin ]; then export PATH="/usr/bin:$(cygpath -u -S)"; fi;
-          if [ "$BASH_TARGET" = 3.2 ]; then interpreter="$TEST_BASH"; else interpreter="$BASH"; fi;
-          "$interpreter" tests/jdk-smoke.sh
-      - name: Remove private Cygwin test interpreter
-        if: ${{ always() && matrix.bash == '3.2' }}
-        run: rm -f -- "/usr/bin/jvm-ci-bash32-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.exe"
+          "$BASH" tests/jdk-smoke.sh

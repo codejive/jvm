@@ -3,7 +3,11 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 case "${1:-}" in
-    3.2) [ "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}" = 3.2 ] ;;
+    3.2)
+        case "$(uname -s)" in
+            CYGWIN*|MSYS*|MINGW*) echo 'Bash 3.2 validation is supported only on Unix.' >&2; exit 1 ;;
+        esac
+        [ "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}" = 3.2 ] ;;
     current) [ "${BASH_VERSINFO[0]}" -ge 4 ] ;;
     *) echo 'Usage: <bash-to-test> tests/ci.sh <3.2|current>' >&2; exit 2 ;;
 esac

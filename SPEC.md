@@ -534,8 +534,10 @@ Last-Modified and last-check metadata.
 ## Implementation constraints
 
 - **Bash `jvm`**: one file, executable and runnable as `bash ./jvm`; LF line
-  endings and a Bash shebang. Supports Bash 3.2 and later (no associative
-  arrays or newer features) on Linux, macOS, Cygwin, MSYS2 and Git Bash. Uses
+  endings and a Bash shebang. Supports Bash 3.2 and later on Linux and macOS
+  (no associative arrays or newer features). Windows support targets current
+  Cygwin, MSYS2 and Git Bash versions; Bash 3.2 on Windows is outside the
+  supported scope and is not built or tested. Uses
   Bash plus ordinary utilities and no Python, Perl, Ruby, Node.js or `jq`;
   no general JSON parser exists. GNU-only behavior is not assumed (`readlink
   -f`, `sort -V`, `stat`, `sed -i`, `mv -T`); capabilities are detected and

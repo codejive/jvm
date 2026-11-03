@@ -13,6 +13,9 @@ your Java projects.** `jvm` (Bash), `jvm.ps1` (native Windows PowerShell 5.1) an
 installation step. That gives you a sure-fire way for your users to build and
 run your project, even when they don't have Java installed.
 
+On Linux and macOS, the Bash script supports Bash 3.2 and later. On Windows,
+use current Git Bash, MSYS2 or Cygwin, or Windows PowerShell 5.1.
+
 ## Using it in your projects
 
 Copy the three scripts `jvm`, `jvm.cmd` and `jvm.ps1` to the root of your
