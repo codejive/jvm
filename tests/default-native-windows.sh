@@ -37,7 +37,7 @@ done
 [ -L "$XDG_DATA_HOME/jvm/jdks/default" ]
 [ -L "$XDG_DATA_HOME/jvm/jdks/21" ]
 "$BASH_BIN" "$ROOT/jvm" install 25+1-test
-"$BASH_BIN" "$ROOT/jvm" d 25
+"$BASH_BIN" "$ROOT/jvm" d set 25
 [ "$XDG_DATA_HOME/jvm/jdks/default" -ef "$XDG_DATA_HOME/jvm/jdks/25+1-test" ]
 [ "$XDG_DATA_HOME/jvm/jdks/21" -ef "$XDG_DATA_HOME/jvm/jdks/21+1-test" ]
 [ "$XDG_DATA_HOME/jvm/jdks/25" -ef "$XDG_DATA_HOME/jvm/jdks/25+1-test" ]

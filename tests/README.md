@@ -1,5 +1,33 @@
 # Discovery, installation and uninstallation verification
 
+Default grammar verification (2026-11-03): `default [<major>]` queries a
+reference offline; `default set [<major>] <selector>` selects a JDK, with the
+same forms for `d`. One argument after `set` is a selector; two are a scope
+major and selector. The default and configuration groups cover numeric
+selectors, explicit scopes, full IDs, distro-major selectors, ranges,
+automatic installation, ambiguity, major mismatch and configuration independence.
+Usage checks cover missing/empty/excess arguments and invalid scopes before
+storage creation and with existing defaults, checking preservation of inventory
+and references. Existing replacement, interruption and concurrency checks remain.
+
+Bash syntax checks for both the entry point and all Bash tests, PowerShell
+syntax checks, `bash tests/run.sh --help-only`, the discovery phase of
+`bash tests/run.sh` (56 checks), standalone `bash tests/install.sh` (34 groups),
+`bash tests/install.sh --defaults`, `bash tests/home-env.sh`, and
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/powershell.ps1`
+(28 checks) passed using installed Windows Bash 5.3.15 and Windows PowerShell
+5.1.26100.9711. The combined Bash run was interrupted by an edit to its running
+test file; the stable standalone installation retry passed. A shared home/env
+flag assertion was corrected for the command-specific default parser before
+that suite passed. Additional isolated PowerShell checks verified that scopes
+ending in a newline exit 2 without creating storage. `git diff --check` passed;
+no stale default grammar references remain. Distributed sizes: `jvm` 68,477
+bytes, `jvm.ps1` 78,178 bytes, `jvm.cmd` 116 bytes; both entry points retain LF
+endings. ShellCheck was unavailable. No live downloads, real-JDK or native
+Windows Bash junction smoke, alternative shells, Bash 3.2, PowerShell 7, or
+additional native platforms were run. The PowerShell network/archive paths
+remain unverified as described in SPEC.
+
 Underscore placeholder verification (2026-11-03): exec/x now use `_` for
 configuration/default/fallback selection in both entry points. Help, examples,
 optional real-JDK smoke calls and native Windows smoke calls agree. The thin
@@ -851,7 +879,8 @@ unverified; no real JDK was downloaded or executed.
 ## Command flags and aliases (2026-10-30)
 
 The full suite includes `tests/install.sh --flags`. It checks every explicit
-alias and both flag positions, invalid/duplicate/unsupported options, missing
+alias, both flag positions for commands accepting flags,
+invalid/duplicate/unsupported options, missing
 selectors without utilities or state changes, local matches without transfers,
 local ambiguity and storage/utility failures without installation, and ordinary
 Temurin fallback after a genuine local miss. It covers new/already-installed
@@ -861,7 +890,7 @@ IDs, and primary stdout versus informational stderr. A competing local match
 introduced during download verifies that continuation uses the exact installed
 ID. Windows output cases are simulated, with spaces in isolated data paths.
 
-The optional native Windows smoke also exercises `i -d`, `d <ID>`, `h <ID>` and
+The optional native Windows smoke also exercises `i -d`, `d set <ID>`, `h <ID>` and
 `e <ID>`, with real junctions and native/Bash path conversion. Its copied
 `cmd.exe` launchers remain inert substitutes for JDKs; it proves no real Java
 runtime behavior.

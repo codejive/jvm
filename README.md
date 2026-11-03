@@ -4,7 +4,7 @@
 compatible JDK builds, downloads and verifies them, keeps them in user storage
 and lets you pick which one to use, either persistently or per command.
 
-`default <selector>`, `home`, `env` and `exec` automatically install a JDK when
+`default set <selector>`, `home`, `env` and `exec` automatically install a JDK when
 no installed JDK matches the selector. Existing local matches work offline.
 
 **The scripts are small, have no dependencies and are meant to be copied into
@@ -117,7 +117,8 @@ jvm <command> [options] [selector]
 | `install`, `i [-d] [selector]` | Download, verify and install a JDK (`-d` makes it the default) |
 | `uninstall`, `u <selector>` | Remove an installed JDK |
 | `list`, `l [selector]` | Show installed JDKs, even offline |
-| `default`, `d [-v <major>] [selector]` | Show or select the persistent default, installing if needed |
+| `default [<major>]`, `d [<major>]` | Query the global or per-major default offline |
+| `default set [<major>] <selector>`, `d set [<major>] <selector>` | Set the global or per-major default, installing if needed |
 | `home`, `h [selector]` | Print the selected JDK home, installing if needed |
 | `env`, `e [-f] [selector]` | Print shell exports for the selected JDK, installing if needed |
 | `exec`, `x <selector> [--] <command> [args...]` | Run a command with the selected JDK, installing if needed |
@@ -128,7 +129,12 @@ configured selections and unusable defaults are errors. The `_` placeholder is
 exclusive to exec; it is not a configuration value. Other commands give it no
 placeholder meaning and retain their existing exact-directory ID rules.
 `home` and `env` use the same precedence when their selector is omitted.
-Selectorless `default` queries never install.
+`jvm default` queries the global default; `jvm default 21` queries Java 21.
+After `set`, one argument is a selector (`jvm default set 21` sets the global
+default using selector `21`); two arguments are a scope major and selector
+(`jvm default set 21 temurin-21` sets the Java 21 default). A scope is a positive
+integer without leading zeros, and the selected JDK must match that major.
+Queries never install. The `d` alias uses the same grammar.
 
 One optional `--` immediately after the exec selector is skipped. The command
 must be nonempty; it and every later argument are forwarded unchanged.
@@ -144,7 +150,7 @@ jvm available temurin              # what can be installed
 jvm install                        # install the default JDK (Temurin 25)
 jvm i -d temurin-21                # install Temurin 21 and make it the default
 jvm list                           # what is installed
-jvm default -v 21 temurin-21       # set the default for Java 21
+jvm default set 21 temurin-21      # set the default for Java 21
 jvm home 21                        # print JDK 21's home, installing if needed
 eval "$(jvm env temurin-21)"       # use Temurin 21 in the current shell
 jvm x 21..26 java -version         # run with the highest matching JDK

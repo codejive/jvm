@@ -65,15 +65,17 @@ Commands:
   install, i [-d] [selector]   Download, verify and install a JDK in user storage.
   uninstall, u <selector>      Remove an installed JDK from user storage.
   list, l [selector]           Show JDK folders and manifest status, even offline.
-  default, d [-v <major>] [selector]  Show or select a persistent JDK default.
+  default, d [<major>]     Query the global or Java-major default.
+  default, d set [<major>] <selector>  Set a persistent JDK default.
   home, h [selector]      Print an installed JDK home or the stable default path.
   env, e [-f] [selector]  Print Bash exports, including GRAALVM_HOME for GraalVM.
   exec, x <selector> [--] <command> [args...]  Run with a selected JDK or default.
   --help                      Show this help.
   --version                   Show the jvm version.
 
-default/home/env/exec install automatically when no installed JDK matches.
-Without a selector, default only queries its reference.
+default set/home/env/exec install automatically when no installed JDK matches.
+default queries are offline. After set: one argument is a selector; two are scope and selector.
+A scope major is a positive integer without leading zeros.
 exec requires a selector; _ uses project java, user java, default, then fallback.
 The _ placeholder is exclusive to exec/x and is not a configuration value.
 One optional -- immediately after the exec selector is skipped.
@@ -94,7 +96,6 @@ Options:
   -t  available: show release type/features in a final TYPE column.
   -d  install: make the installed JDK the persistent default.
   -f  env: always print the PATH export, even when bin is already on PATH.
-  -v  default: query or set the specified Java major's default.
 
 Configuration (optional, literal key=value lines):
   ./.jvmrc, then $XDG_CONFIG_HOME/jvm/config (or ~/.config/jvm/config).
@@ -110,7 +111,7 @@ Examples:
   jvm install
   jvm i -d temurin-21
   jvm uninstall temurin-21
-  jvm default -v 21 temurin-21
+  jvm default set 21 temurin-21
   jvm home 21
   eval "$(jvm env temurin-21)"
   jvm x 21..26 java -version
@@ -785,8 +786,8 @@ initialize_default() {
     # Existing unrelated data is left alone, as it was before defaults existed.
     [ ! -e "$JDKS/$name" ] && [ ! -L "$JDKS/$name" ] || return 0
     set_default "$1" initial "$name" || {
-        if [ "$name" = default ]; then error 'JDK installed, but default selection failed; run jvm default <ID>'
-        else error "JDK installed, but Java $name default selection failed; run jvm default -v $name <ID>"; fi
+        if [ "$name" = default ]; then error 'JDK installed, but default selection failed; run jvm default set <ID>'
+        else error "JDK installed, but Java $name default selection failed; run jvm default set $name <ID>"; fi
         return 1;
     }
 }
@@ -1471,6 +1472,28 @@ ensure_installed() {
     esac
 }
 
+default_usage() {
+    error 'usage: jvm default [<major>] | jvm default set [<major>] <selector>'
+    return 2
+}
+
+parse_default() {
+    [ "$#" -gt 0 ] || return 0
+    if [ "$1" = set ]; then
+        shift
+        case "$#" in
+            1) selector=$1 ;;
+            2) is_major "$1" || { default_usage; return 2; }
+               major_option=$1; selector=$2 ;;
+            *) default_usage; return 2 ;;
+        esac
+        [ -n "$selector" ] || { default_usage; return 2; }
+    else
+        [ "$#" -eq 1 ] && is_major "$1" || { default_usage; return 2; }
+        major_option=$1
+    fi
+}
+
 original_arguments=("$@")
 command=${1:-}
 case "$command" in
@@ -1500,18 +1523,12 @@ if [ "$command" = exec ]; then
         error 'usage: jvm exec <selector> [--] <command> [args...]'; exit 2;
     }
     [ "$selector" != _ ] || selector=
+elif [ "$command" = default ]; then
+    parse_default "$@" || exit 2
 else
     while [ "$#" -gt 0 ]; do
         argument=$1
         shift
-        if [ "$command" = default ] && [ "$argument" = -v ]; then
-            [ -z "$major_option" ] && [ "$#" -gt 0 ] && is_major "$1" || {
-                error '-v requires one positive Java major'; exit 2;
-            }
-            major_option=$1
-            shift
-            continue
-        fi
         case "$command:$argument" in
             available:-t)
                 [ -z "$show_type" ] || { error 'duplicate flag'; exit 2; }
@@ -1538,7 +1555,8 @@ if [ -z "$selector" ]; then
     esac
 fi
 case "$command" in
-    install|home|env|exec|default) installation_selector "$selector" local || exit $? ;;
+    default) installation_selector "$selector" local || { default_usage; exit 2; } ;;
+    install|home|env|exec) installation_selector "$selector" local || exit $? ;;
     uninstall) installation_selector "$selector" local no-range || exit $? ;;
 esac
 case "$command" in

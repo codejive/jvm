@@ -129,6 +129,8 @@ saved_path=$PATH; PATH=/nonexistent
 run 0 --help
 contains 'available, a [-t] [selector]'; contains 'distro-major (temurin-21)'
 contains 'list, l [selector]'
+contains 'default, d [<major>]'
+contains 'default, d set [<major>] <selector>'
 contains '21+, 21..26, temurin-21+'
 contains 'Ranges select the highest major, then its eligible default, then C ID order.'
 contains 'Install ranges reuse local matches first; remote majors/ranges use configured distro or Temurin.'

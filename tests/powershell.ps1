@@ -84,6 +84,26 @@ function Invoke-JvmTest {
     return $output.TrimEnd()
 }
 
+function Assert-DefaultUsage {
+    foreach ($command in @('default', 'd')) {
+        $invalid = @(@('set'), @('set', ''), @('set', '21', ''), @('set', '', '21'),
+            @('set', '21', '21', 'extra'), @('21', 'extra'), @(''), @('set', '25..21'))
+        foreach ($scope in @('0', '01', '-1', ' 21', "21`n")) {
+            $invalid += ,@($scope)
+        }
+        foreach ($scope in @('0', '01', '-1', '21+', '21..25', 'temurin-21', ' 21', "21`n")) {
+            $invalid += ,@('set', $scope, '21')
+        }
+        foreach ($arguments in $invalid) {
+            $streams = Invoke-JvmTest (@($command) + $arguments) -ExpectedExitCode 2 -Redirect -Streams
+            Assert-Equal $streams.Out '' 'Default usage error emitted stdout.'
+            if ($streams.Err -notmatch [regex]::Escape('usage: jvm default [<major>] | jvm default set [<major>] <selector>')) {
+                throw 'Default usage diagnostic omitted the grammar.'
+            }
+        }
+    }
+}
+
 function Invoke-JvmLauncherTest {
     param([string]$ArgumentText, [int]$ExpectedExitCode = 0)
     $stdout = Join-Path $testRoot ([guid]::NewGuid().ToString('N') + '.out')
@@ -117,12 +137,19 @@ try {
     [Environment]::SetEnvironmentVariable('JVM_TEST_ARGS', $argsFile)
     # Ignore configuration in the contributor's working directory.
     Push-Location $testRoot
-    foreach ($arguments in @(@('--version'), @('--help'), @('list'), @('default'), @('default', '-v', '21'))) {
+    foreach ($arguments in @(@('--version'), @('--help'), @('list'), @('default'), @('default', '21'))) {
         $streams = Invoke-JvmTest $arguments -Redirect -Streams
         if (-not $streams.Out) { throw 'Primary result was not captured by >.' }
         Assert-Equal $streams.Err '' 'Primary result leaked to stderr.'
     }
-    Write-TestPass 'help, version, empty inventory and default queries support stdout redirection'
+    foreach ($command in @('default', 'd')) {
+        Assert-Equal (Invoke-JvmTest @($command)) 'No JDK currently set as the default' 'Missing global default mismatch.'
+        Assert-Equal (Invoke-JvmTest @($command, '21')) 'No JDK currently set as the default for version 21' 'Missing major default mismatch.'
+        Invoke-JvmTest @($command, '--help') | Out-Null
+    }
+    Assert-DefaultUsage
+    if (@(Get-ChildItem -LiteralPath $data, $cache -Force).Count) { throw 'Usage errors or queries created storage.' }
+    Write-TestPass 'help, missing default queries, aliases and usage errors without storage mutation'
     $streams = Invoke-JvmTest @('bogus') -ExpectedExitCode 2 -Redirect -Streams
     Assert-Equal $streams.Out '' 'Usage error leaked to stdout.'
     Assert-Equal $streams.Err 'jvm: usage: jvm <command> [selector]; use jvm --help' `
@@ -257,22 +284,36 @@ try {
     if ($streams.Err -notmatch 'Already installed') { throw 'Install confirmation was not captured by 2>.' }
     Invoke-JvmTest @('install', $id) | Out-Null
     Write-TestPass 'exact-ID install reuses the installed JDK and confirms on plain stderr'
-    $defaultResult = Invoke-JvmTest @('default', $id)
+    $defaultResult = Invoke-JvmTest @('default', 'set', $id)
     if ($defaultResult -notmatch [regex]::Escape("Default JDK set to: $id")) {
         throw 'Default selection did not report the selected ID.'
     }
-    $streams = Invoke-JvmTest @('default', $id) -Redirect -Streams
+    $streams = Invoke-JvmTest @('default', 'set', $id) -Redirect -Streams
     Assert-Equal $streams.Out '' 'Default confirmation leaked to stdout.'
     if ($streams.Err -notmatch 'Default JDK set to:') { throw 'Default confirmation was not captured by 2>.' }
     Assert-Equal (Invoke-JvmTest @('default')) $id 'Default query mismatch.'
     Write-TestPass 'global default selection, query and confirmation redirection'
-    Invoke-JvmTest @('default', '-v', '21', $id) | Out-Null
-    Assert-Equal (Invoke-JvmTest @('default', '-v', '21')) $id 'Per-major default query mismatch.'
+    Invoke-JvmTest @('default', 'set', '21', $id) | Out-Null
+    Assert-Equal (Invoke-JvmTest @('default', '21')) $id 'Per-major default query mismatch.'
     Assert-Equal (Invoke-JvmTest @('home', '21')) `
         (Join-Path (Join-Path $data 'jvm\jdks') '21') 'Major home should use its stable link.'
     Assert-Equal (Invoke-JvmTest @('home')) (Join-Path (Join-Path $data 'jvm\jdks') 'default') `
         'Default home should use the stable link.'
-    Write-TestPass 'per-major defaults and stable home junction paths'
+    foreach ($command in @('default', 'd')) {
+        foreach ($selector in @($id, '21', 'temurin-21', '21+', 'temurin-21..21')) {
+            Invoke-JvmTest @($command, 'set', $selector) | Out-Null
+            Invoke-JvmTest @($command, 'set', '21', $selector) | Out-Null
+        }
+        Assert-Equal (Invoke-JvmTest @($command, '21')) $id 'Alias major query mismatch.'
+        $streams = Invoke-JvmTest @($command, 'set', '22', $id) -ExpectedExitCode 1 -Redirect -Streams
+        if ($streams.Err -notmatch 'expected 22') { throw 'Major mismatch omitted expected scope.' }
+    }
+    $beforeUsage = Invoke-JvmTest @('list')
+    Assert-DefaultUsage
+    Assert-Equal (Invoke-JvmTest @('list')) $beforeUsage 'Usage errors changed inventory or defaults.'
+    Assert-Equal (Invoke-JvmTest @('default')) $id 'Usage errors changed global default.'
+    Assert-Equal (Invoke-JvmTest @('default', '21')) $id 'Usage errors changed major default.'
+    Write-TestPass 'default scope/selector grammar, aliases, ranges, mismatch and usage failure preservation'
     $probe = Join-Path (Join-Path $install 'bin') 'probe.exe'
     Copy-Item -LiteralPath (Join-Path $PSHOME 'powershell.exe') -Destination $probe
     $execution = Invoke-JvmTest @('exec', $id, '--', 'probe.exe', '-NoProfile',
@@ -376,17 +417,30 @@ try {
     foreach ($text in @('Multiple JDKs match', 'DEFAULT', $id, $secondId)) {
         if ($streams.Err -notmatch [regex]::Escape($text)) { throw "Ambiguity stderr omitted $text." }
     }
+    $streams = Invoke-JvmTest @('d', 'set', 'temurin-21') -ExpectedExitCode 1 -Redirect -Streams
+    if ($streams.Err -notmatch 'Multiple JDKs match') { throw 'Default setter did not preserve ambiguity.' }
+    Assert-Equal (Invoke-JvmTest @('default')) $id 'Ambiguity changed global default.'
     Write-TestPass 'ambiguous selection reports candidate IDs and defaults on stderr'
     Invoke-JvmTest @('install', $secondId) | Out-Null
-    Invoke-JvmTest @('default', $secondId) | Out-Null
-    Invoke-JvmTest @('default', '-v', '21', $secondId) | Out-Null
+    Invoke-JvmTest @('default', 'set', $secondId) | Out-Null
+    Invoke-JvmTest @('default', 'set', '21', $secondId) | Out-Null
     Assert-Equal (Invoke-JvmTest @('default')) $secondId 'Global default replacement failed.'
-    Assert-Equal (Invoke-JvmTest @('default', '-v', '21')) $secondId `
+    Assert-Equal (Invoke-JvmTest @('default', '21')) $secondId `
         'Per-major default replacement failed.'
     Write-TestPass 'global and per-major default junction replacement'
     $projectConfig = Join-Path $testRoot '.jvmrc'
     $userConfig = Join-Path $config 'jvm\config'
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $userConfig))
+    foreach ($contents in @("unknown=invalid`n", "java=99`ndistro=unavailable`n")) {
+        [IO.File]::WriteAllText($projectConfig, $contents)
+        [IO.File]::WriteAllText($userConfig, $contents)
+        Invoke-JvmTest @('d', 'set', '21', '21') | Out-Null
+        Invoke-JvmTest @('default', 'set', '21') | Out-Null
+        Assert-Equal (Invoke-JvmTest @('d')) $secondId 'Configuration affected global default.'
+        Assert-Equal (Invoke-JvmTest @('d', '21')) $secondId 'Configuration affected major default.'
+    }
+    Remove-Item -LiteralPath $projectConfig, $userConfig
+    Write-TestPass 'default queries and setters ignore malformed and conflicting configuration'
     $homeProbe = @('probe.exe', '-NoProfile', '-NonInteractive', '-Command', '[Console]::Out.Write($env:JAVA_HOME)')
     # The probe is available in the first JDK; use its physical path for either selection.
     $homeProbe[0] = $probe
@@ -410,7 +464,8 @@ try {
     }
     Invoke-JvmTest @('uninstall', $brokenId) | Out-Null
     foreach ($command in @('available', 'list', 'install', 'uninstall', 'default', 'home', 'env')) {
-        Invoke-JvmTest @($command, '_') -Redirect -ExpectedExitCode 2 | Out-Null
+        $arguments = if ($command -eq 'default') { @($command, 'set', '_') } else { @($command, '_') }
+        Invoke-JvmTest $arguments -Redirect -ExpectedExitCode 2 | Out-Null
     }
     # An unusable default must not use the available fallback major.
     $fallbackId = '25.0.1-temurin'
@@ -428,10 +483,13 @@ try {
     $streams = Invoke-JvmTest (@('exec', '_') + $homeProbe) -Redirect -ExpectedExitCode 1 -Streams
     Assert-Equal $streams.Out '' 'Unusable default ran the child.'
     if (-not $streams.Err) { throw 'Unusable default omitted its diagnostic.' }
+    Invoke-JvmTest @('default') -ExpectedExitCode 1 | Out-Null
+    Invoke-JvmTest @('d', 'set', $id) -ExpectedExitCode 1 | Out-Null
+    Assert-Equal ([IO.File]::ReadAllText($defaultLink)) 'unusable default' 'Failed setter replaced unrelated data.'
     Remove-Item -LiteralPath $defaultLink
     Assert-Equal (Invoke-JvmTest (@('exec', '_') + $homeProbe)) $fallbackInstall 'Fallback major was ignored.'
     Invoke-JvmTest @('uninstall', $fallbackId) | Out-Null
-    Invoke-JvmTest @('default', $secondId) | Out-Null
+    Invoke-JvmTest @('default', 'set', $secondId) | Out-Null
     Write-TestPass 'exec placeholder resolves project/user/default/fallback and preserves failures and selector boundaries'
     foreach ($selector in @('21+', 'temurin-21..25')) {
         $streams = Invoke-JvmTest @('install', $selector) -Redirect -Streams
@@ -456,7 +514,7 @@ try {
     Assert-Equal $streams.Out '' 'Uninstall confirmation leaked to stdout.'
     if ($streams.Err -notmatch 'Successfully uninstalled') { throw 'Uninstall confirmation was not captured by 2>.' }
     Assert-Equal (Invoke-JvmTest @('default')) $id 'Global default was not restored after uninstall.'
-    Assert-Equal (Invoke-JvmTest @('default', '-v', '21')) $id `
+    Assert-Equal (Invoke-JvmTest @('default', '21')) $id `
         'Per-major default was not restored after uninstall.'
     Write-TestPass 'uninstall confirms on stderr and restores global and per-major defaults'
     Invoke-JvmTest @('uninstall', $id) | Out-Null

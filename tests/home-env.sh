@@ -99,7 +99,7 @@ make_jdk 17+2 graalvm-community
 make_jdk 1.8.0_482-b08 legacy
 base=$(cd "$XDG_DATA_HOME/jvm" && pwd -P)
 run 0 default; exact 'No JDK currently set as the default'
-run 0 default -v 21; exact 'No JDK currently set as the default for version 21'
+run 0 default 21; exact 'No JDK currently set as the default for version 21'
 for command in home env; do
     run 1 "$command"; diagnostic 'required utility missing: mktemp'
     run 0 "$command" 21
@@ -150,7 +150,7 @@ for args in '-f 21' '21 -f'; do
     TEST_PATH="$TEMP/tools:$bin" run 0 e $args
     check_env "$base/jdks/21" "$bin" "$args" 0 0 e
 done
-for command in available list install uninstall default home a l i u d h; do
+for command in available list install uninstall home a l i u h; do
     run 2 "$command" -f; diagnostic 'unsupported flag'
 done
 run 2 env -f -f; diagnostic 'duplicate flag'

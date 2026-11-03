@@ -184,9 +184,15 @@ run() {
     if [ "$expected" -ne 0 ]; then [ ! -s "$TEMP/out" ] || fail 'partial command output on failure'; fi
     case "$1" in
         install|uninstall) [ ! -s "$TEMP/out" ] || fail 'informational messages leaked to stdout' ;;
-        default) if [ "$#" -gt 1 ] && { [ "${2:-}" != -v ] || [ "$#" -gt 3 ]; }; then
+        default|d) if [ "${2:-}" = set ]; then
             [ ! -s "$TEMP/out" ] || fail 'default selection leaked to stdout'; fi ;;
     esac
+}
+# Invoke commands that select a JDK, keeping default's subcommand explicit.
+run_selection() {
+    local status=$1 cmd=$2
+    shift 2
+    case "$cmd" in default|d) run "$status" "$cmd" set "$@" ;; *) run "$status" "$cmd" "$@" ;; esac
 }
 contains() { [[ $(< "$TEMP/out") = *"$1"* ]] || fail "missing output: $1"; }
 diagnostic() { [[ $(< "$TEMP/err") = *"$1"* ]] || fail "missing diagnostic: $1"; }
@@ -262,14 +268,14 @@ inventory_checks() {
     run 1 home 21; diagnostic 'default JDK for version 21 is unavailable'
     rm "$base/21"
     run 1 home 21; diagnostic 'No JDK found matching:'
-    run 1 default -v 21 21+1-vendor; diagnostic 'cannot determine Java major'
+    run 1 default set 21 21+1-vendor; diagnostic 'cannot determine Java major'
     run 0 home 21+1-vendor; contains '/21+1-vendor'
     run 0 env 21+2-other; contains 'JAVA_HOME='; contains '/21+2-other'
     run 0 exec 21+1-vendor -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
     contains '/21+1-vendor'
-    run 0 default 21+2-other; run 0 default; contains '21+2-other'
+    run 0 default set 21+2-other; run 0 default; contains '21+2-other'
     run 0 home; contains '/jdks/default'
-    run 0 default 21+1-vendor
+    run 0 default set 21+1-vendor
     run 0 home 21+2-other; contains '/21+2-other'
     run 0 install 21+1-vendor; diagnostic 'Already installed'
     [ "$(< "$TEST_LOG")" = "$before" ] || fail 'exact bad-manifest selection accessed the network'
@@ -286,7 +292,7 @@ inventory_checks() {
     run 1 home 23+1-empty; diagnostic 'no usable java/javac launchers'
     mv "$base/21+1-vendor/bin/javac" "$TEMP/saved-javac"
     run 0 list 21+1-vendor; contains '(invalid JDK)'
-    run 1 default 21+1-vendor; diagnostic 'no usable java/javac launchers'
+    run 1 default set 21+1-vendor; diagnostic 'no usable java/javac launchers'
     mv "$TEMP/saved-javac" "$base/21+1-vendor/bin/javac"
     run 0 uninstall .manual
     run 0 uninstall 23+1-empty
@@ -303,7 +309,7 @@ inventory_checks() {
     run 0 uninstall 21+1-vendor
     [ ! -e "$base/21+1-vendor" ] && [ ! -L "$base/21" ] || fail 'bad-manifest uninstall left a directory or major reference'
     run 0 default; contains '25+1-vendor'
-    run 0 default 'custom JDK'
+    run 0 default set 'custom JDK'
     run 0 uninstall 'custom JDK'
     run 0 default; contains '25+1-vendor'
     check 'bad manifests remain visible and selectable by exact directory ID; short selectors and automatic defaults require metadata'
@@ -320,7 +326,7 @@ execution_checks() {
         PATH=/nonexistent run 2 "$cmd" -f 21
     done
     for cmd in available install uninstall default home env; do
-        run 2 "$cmd" _
+        if [ "$cmd" = default ]; then run 2 default set _; else run 2 "$cmd" _; fi
     done
     for cmd in shell s; do
         PATH=/nonexistent run 2 "$cmd" 21
@@ -397,7 +403,7 @@ EOF
     [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'local execution used networking'
     run 0 install 22
     run 0 x _ "$TEMP/child with spaces" global-pin
-    run 0 default 21+1-temurin
+    run 0 default set 21+1-temurin
     run 0 exec 21 -- "$TEMP/child with spaces" pin
     run 0 default; contains '21+1-temurin'
     rm "$XDG_DATA_HOME/jvm/jdks/21"
@@ -467,12 +473,12 @@ flag_alias_checks() {
     before=$(cat "$TEST_LOG")
     rm "$XDG_DATA_HOME/jvm/jdks/22"
     for cmd in home h env e default d; do
-        run 0 "$cmd" 22
+        run_selection 0 "$cmd" 22
         case "$cmd" in
             home|h) [ "$(< "$TEMP/out")" = "$XDG_DATA_HOME/jvm/jdks/22+1-other-vendor" ] || fail 'local home' ;;
             env|e) contains "# Use: eval \"\$('${ROOT}/jvm' $cmd 22)\""; contains 'export JAVA_HOME=' ;;
         esac
-        run 0 "$cmd" 21
+        run_selection 0 "$cmd" 21
     done
     [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'local selection used networking'
     run 0 home 23
@@ -485,7 +491,7 @@ flag_alias_checks() {
     TEST_DEFAULT_FAIL=1 run 1 install -d 24
     diagnostic 'cannot replace the default JDK link'
     [ -f "$XDG_DATA_HOME/jvm/jdks/24+1-temurin/.jvm-manifest" ] || fail 'successful installation lost'
-    TEST_DEFAULT_FAIL=1 run 1 default 24
+    TEST_DEFAULT_FAIL=1 run 1 default set 24
     TEST_DEFAULT_INTERRUPT=1 run 1 i -d 21+1-temurin
     run 0 default; contains '23+1-temurin'
     index; row 25+1 temurin
@@ -498,7 +504,7 @@ flag_alias_checks() {
     run 0 i 21+1-temurin -d
     run 0 h 21+1-temurin
     run 0 e 21+1-temurin
-    run 0 d 21+1-temurin
+    run 0 d set 21+1-temurin
     run 0 u 22+1-other-vendor; diagnostic 'Successfully uninstalled 22+1-other-vendor'
     mv "$TEMP/curl" "$TOOLS/curl"; mv "$TEMP/wget" "$TOOLS/wget"
     # A broad major with multiple local matches must never fall through to install.
@@ -506,31 +512,31 @@ flag_alias_checks() {
     run 0 install 21+2-other-vendor
     before=$(cat "$TEST_LOG")
     for cmd in default home env; do
-        run 0 "$cmd" 21
+        run_selection 0 "$cmd" 21
     done
     rm "$XDG_DATA_HOME/jvm/jdks/21"
     for cmd in default home env; do
-        run 1 "$cmd" 21; diagnostic 'Multiple JDKs match'
-        run 2 "$cmd" ../21
+        run_selection 1 "$cmd" 21; diagnostic 'Multiple JDKs match'
+        run_selection 2 "$cmd" ../21
     done
     [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'ambiguity/validation used networking'
     # Storage and utility failures are not misses.
     saved_data=$XDG_DATA_HOME; XDG_DATA_HOME=$TEMP/invalid-data
     mkdir -p "$XDG_DATA_HOME"; printf 'blocked' > "$XDG_DATA_HOME/jvm"
-    for cmd in default home env; do run 1 "$cmd" 26; done
+    for cmd in default home env; do run_selection 1 "$cmd" 26; done
     XDG_DATA_HOME=$TEMP/invalid-root
     printf 'blocked' > "$XDG_DATA_HOME"
-    for cmd in default home env; do run 1 "$cmd" 26; done
+    for cmd in default home env; do run_selection 1 "$cmd" 26; done
     XDG_DATA_HOME=$saved_data
     mv "$TOOLS/awk" "$TEMP/awk"
     printf '#!%s\nexit 2\n' "$BASH_BIN" > "$TOOLS/awk"
-    for cmd in default home env; do run 1 "$cmd" 26; done
+    for cmd in default home env; do run_selection 1 "$cmd" 26; done
     mv "$TEMP/awk" "$TOOLS/awk"
     [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'operational failure used networking'
     # No existing default: both output commands retain first-install initialization.
     for cmd in home env default; do
         reset; index; row 27+1 temurin; row 27+1 other-vendor
-        run 0 "$cmd" 27
+        run_selection 0 "$cmd" 27
         diagnostic 'Successfully installed 27+1-temurin'
         run 0 default; contains '27+1-temurin'
         [ ! -e "$XDG_DATA_HOME/jvm/jdks/27+1-other-vendor" ] || fail 'bare install fallback changed'
@@ -636,6 +642,28 @@ uninstall_checks() {
 
 if [ "${1:-}" = --uninstall ]; then uninstall_checks; exit 0; fi
 
+default_usage_checks() {
+    local cmd scope
+    for cmd in default d; do
+        PATH=/nonexistent run 2 "$cmd" set
+        PATH=/nonexistent run 2 "$cmd" set ''
+        PATH=/nonexistent run 2 "$cmd" set 21 ''
+        PATH=/nonexistent run 2 "$cmd" set '' 21
+        PATH=/nonexistent run 2 "$cmd" set 21 21 extra
+        PATH=/nonexistent run 2 "$cmd" 21 extra
+        for scope in 0 01 -1 ' 21' $'21\n'; do
+            PATH=/nonexistent run 2 "$cmd" "$scope"
+            diagnostic 'usage: jvm default'
+        done
+        for scope in 0 01 -1 21+ 21..25 temurin-21 ' 21' $'21\n'; do
+            PATH=/nonexistent run 2 "$cmd" set "$scope" 21
+            diagnostic 'usage: jvm default [<major>] | jvm default set [<major>] <selector>'
+        done
+        run 2 "$cmd" set 25..21
+        diagnostic 'usage: jvm default'
+    done
+}
+
 default_checks() {
     # Every existing default lifecycle/flag check must ignore malformed settings,
     # including installs reached through default's shared helper.
@@ -644,7 +672,10 @@ default_checks() {
     printf 'java=invalid\n' > "$XDG_CONFIG_HOME/jvm/config"
     reset; index
     run 0 default; contains 'No JDK currently set as the default'
-    run 2 default ''; run 2 default vendor; run 2 default 21 extra
+    default_usage_checks
+    [ ! -e "$XDG_DATA_HOME/jvm" ] && [ ! -e "$TEST_LOG" ] || fail 'usage created storage or fetched metadata'
+    run 0 d 21; contains 'No JDK currently set as the default for version 21'
+    run 0 d; contains 'No JDK currently set as the default'
     row 21+1 vendor; row 21+2 vendor; row 21+1 other
     row 23+1 vendor; row 25+1 vendor; row 17+1 vendor; row 1.8.0_99 old
     run 0 install 21+1-vendor
@@ -662,27 +693,39 @@ default_checks() {
         run 0 install "$id"
         [[ $(< "$TEMP/err") != *'Default JDK set to:'* ]] || fail 'unchanged default announced'
     done
-    run 0 default -v 21; contains '21+1-vendor'
-    run 0 default -v 23; contains '23+1-vendor'
-    run 0 default -v 21 21+2-vendor
+    run 0 default 21; contains '21+1-vendor'
+    run 0 default 23; contains '23+1-vendor'
+    tar -cf "$TEMP/default-before" -C "$XDG_DATA_HOME" .
+    before=$(cat "$TEST_LOG")
+    default_usage_checks
+    tar -cf "$TEMP/default-after" -C "$XDG_DATA_HOME" .
+    cmp "$TEMP/default-before" "$TEMP/default-after" || fail 'usage mutated defaults or inventory'
+    [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'usage fetched metadata'
+    for cmd in default d; do
+        run 0 "$cmd" set 21
+        diagnostic 'Default JDK set to: 21+1-vendor'
+        run 0 "$cmd" set 21 21
+        diagnostic 'Java 21 default JDK set to: 21+1-vendor'
+        run 0 "$cmd" 21; contains '21+1-vendor'
+    done
+    run 0 default set 21 21+2-vendor
     run 0 default; contains '21+1-vendor'
     run 0 list; contains 'global'; contains '21'
-    run 1 default -v 21 23+1-vendor; diagnostic 'expected 21'
+    run 1 default set 21 23+1-vendor; diagnostic 'expected 21'
     index; row 26+1 temurin
     before=$(count_downloads)
-    run 1 default -v 21 26; diagnostic 'expected 21'
+    run 1 default set 21 26; diagnostic 'expected 21'
     [ "$(count_downloads)" = "$before" ] || fail 'major mismatch downloaded an artifact'
     [ ! -e "$XDG_DATA_HOME/jvm/jdks/26+1-temurin" ] || fail 'major mismatch installed an artifact'
     index
     row 21+1 vendor; row 21+2 vendor; row 21+1 other
     row 23+1 vendor; row 25+1 vendor; row 17+1 vendor; row 1.8.0_99 old
-    run 0 default -v 21; contains '21+2-vendor'
-    run 0 default -v 21 21+2-vendor
+    run 0 default 21; contains '21+2-vendor'
+    run 0 default set 21 21+2-vendor
     run 0 default; contains '21+1-vendor'
-    run 2 default -v; run 2 default -v 0; run 2 default -v 21 -v 21
-    run 0 default -v 21 21+1-vendor
-    TEST_DEFAULT_FAIL=1 run 1 default -v 21 21+2-vendor
-    run 0 default -v 21; contains '21+1-vendor'
+    run 0 default set 21 21+1-vendor
+    TEST_DEFAULT_FAIL=1 run 1 default set 21 21+2-vendor
+    run 0 default 21; contains '21+1-vendor'
     run 0 default; contains '21+1-vendor'
     rm "$XDG_DATA_HOME/jvm/jdks/21"
     TEST_DEFAULT_GATE=$TEMP/major-gate TEST_DEFAULT_LINK=21
@@ -697,7 +740,7 @@ default_checks() {
     : > "$TEST_DEFAULT_GATE/first.release"; wait "$first" || fail 'first major initializer failed'; first=
     : > "$TEST_DEFAULT_GATE/second.release"; wait "$second" || fail 'second major initializer failed'; second=
     TEST_DEFAULT_GATE= TEST_DEFAULT_LINK=default
-    run 0 default -v 21; contains '21+1-vendor'
+    run 0 default 21; contains '21+1-vendor'
     run 0 default; contains '21+1-vendor'
     rm "$XDG_DATA_HOME/jvm/jdks/default"
     TEST_DEFAULT_GATE=$TEMP/default-gate
@@ -721,19 +764,19 @@ default_checks() {
     [[ $(< "$TEMP/second.err") != *'Default JDK set to:'* ]] || fail 'losing initializer announced selection'
     run 0 default; contains '21+1-vendor'
     TEST_DEFAULT_FAIL=1
-    run 1 default 17; diagnostic 'cannot replace'
+    run 1 default set 17; diagnostic 'cannot replace'
     TEST_DEFAULT_FAIL=0
     run 0 default; contains '21+1-vendor'
     TEST_DEFAULT_INTERRUPT=1
-    run 1 default 17
+    run 1 default set 17
     TEST_DEFAULT_INTERRUPT=0
     run 0 default; contains '21+1-vendor'
     TEST_DEFAULT_FAIL=2
-    run 1 default 17
+    run 1 default set 17
     TEST_DEFAULT_FAIL=0
     run 0 default; contains '21+1-vendor'
     TEST_DEFAULT_INTERRUPT=2
-    run 1 default 17
+    run 1 default set 17
     TEST_DEFAULT_INTERRUPT=0
     run 0 default; contains '21+1-vendor'
     mv "$TOOLS/readlink" "$TEMP/readlink"
@@ -743,19 +786,19 @@ default_checks() {
     run 0 default; contains '21+1-vendor'
     mv "$TOOLS/curl" "$TEMP/curl"; mv "$TOOLS/wget" "$TEMP/wget"
     rm -rf -- "$XDG_CACHE_HOME/jvm"
-    run 0 default 21; diagnostic 'Default JDK set to: 21+1-vendor'
+    run 0 default set 21; diagnostic 'Default JDK set to: 21+1-vendor'
     rm "$XDG_DATA_HOME/jvm/jdks/21"
-    run 1 default 21; diagnostic 'Multiple JDKs match'
+    run 1 default set 21; diagnostic 'Multiple JDKs match'
     run 0 install 21+1-vendor
-    run 0 default vendor-17
+    run 0 default set vendor-17
     [ "$(< "$TEMP/err")" = 'Default JDK set to: 17+1-vendor' ] || fail 'wrong default confirmation'
     [ ! -s "$TEMP/out" ] || fail 'default selection wrote to stdout'
     run 0 default; contains '17+1-vendor'
-    run 0 default 21+1-vendor
+    run 0 default set 21+1-vendor
     TEST_DEFAULT_FAIL_MAJOR=1 run 1 uninstall 21+1-vendor
     [ -d "$XDG_DATA_HOME/jvm/jdks/21+1-vendor" ] || fail 'major-link failure removed the JDK'
     run 0 default; contains '21+1-vendor'
-    run 0 default -v 21; contains '21+1-vendor'
+    run 0 default 21; contains '21+1-vendor'
     TEST_REMOVE_FAIL=1
     run 1 uninstall 21+1-vendor
     run 0 default; contains '21+1-vendor'
@@ -763,12 +806,12 @@ default_checks() {
     run 0 uninstall 21+1-vendor
     diagnostic 'Default JDK set to: 21+1-other'
     run 0 default; contains '21+1-other'
-    run 0 default -v 21; contains '21+1-other'
+    run 0 default 21; contains '21+1-other'
     run 0 uninstall 21+1-other
     run 0 default; contains '21+2-vendor'
     run 0 uninstall 21+2-vendor
     run 0 default; contains '23+1-vendor'
-    run 0 default -v 21; contains 'No JDK currently set as the default for version 21'
+    run 0 default 21; contains 'No JDK currently set as the default for version 21'
     run 0 uninstall 23+1-vendor
     run 0 default; contains '25+1-vendor'
     run 0 uninstall 25+1-vendor
@@ -781,7 +824,7 @@ default_checks() {
     [ ! -e "$XDG_DATA_HOME/jvm/jdks/default" ] && [ ! -L "$XDG_DATA_HOME/jvm/jdks/default" ] || fail 'last default link remains'
     [ ! -e "$XDG_CACHE_HOME/jvm" ] || fail 'local default operations accessed cache'
     # A genuine miss attempts installation and fails without a downloader.
-    run 1 default 99; diagnostic 'install curl or wget to fetch metadata'
+    run 1 default set 99; diagnostic 'install curl or wget to fetch metadata'
     run 0 default; contains 'No JDK currently set as the default'
     mv "$TEMP/curl" "$TOOLS/curl"; mv "$TEMP/wget" "$TOOLS/wget"
     mv "$TOOLS/ln" "$TEMP/ln"
@@ -792,7 +835,7 @@ default_checks() {
     run 0 default; contains '17+1-vendor'
     rm "$XDG_DATA_HOME/jvm/jdks/default"
     printf 'unrelated\n' > "$XDG_DATA_HOME/jvm/jdks/default"
-    run 1 default 17; diagnostic 'not a managed link'
+    run 1 default set 17; diagnostic 'not a managed link'
     [ "$(< "$XDG_DATA_HOME/jvm/jdks/default")" = unrelated ] || fail 'default overwrote unrelated data'
     check 'persistent defaults, first install, offline selection, failed/interrupted replacement, failed removal rollback and complete fallback order'
     rm .jvmrc "$XDG_CONFIG_HOME/jvm/config"
@@ -816,7 +859,7 @@ java_major_checks() {
     [ ! -e "$base/22" ] || fail 'vendor-major reference created'
     run 0 install 21; diagnostic 'Successfully installed 21-22.0.2-temurin'
     [ "$base/21" -ef "$base/21-22.0.2-temurin" ] || fail 'bare install used vendor major'
-    run 0 default -v 19 19-22.3.2+java19-graalvm
+    run 0 default set 19 19-22.3.2+java19-graalvm
     [ "$base/19" -ef "$base/19-22.3.2+java19-graalvm" ] || fail 'prefixed version received duplicate prefix'
     before=$(< "$TEST_LOG")
     mv "$TOOLS/curl" "$TEMP/curl"; mv "$TOOLS/wget" "$TEMP/wget"
@@ -826,12 +869,12 @@ java_major_checks() {
     run 1 list 22; diagnostic 'No JDK found matching:'
     run 0 home 19; contains '/jdks/19'
     run 1 home graalvm-19; diagnostic 'Multiple JDKs match'
-    run 0 default -v 19; contains '19-22.3.2+java19-graalvm'
-    run 0 default -v 19 19-22.3.1+java19-graalvm
-    run 1 default -v 22 19-22.3.1+java19-graalvm; diagnostic 'Java major 19, expected 22'
+    run 0 default 19; contains '19-22.3.2+java19-graalvm'
+    run 0 default set 19 19-22.3.1+java19-graalvm
+    run 1 default set 22 19-22.3.1+java19-graalvm; diagnostic 'Java major 19, expected 22'
     run 0 env 19; contains '/jdks/19'
     run 0 exec 19 -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'; contains '/19-22.3.1+java19-graalvm'
-    run 0 default 19-22.3.1+java19-graalvm
+    run 0 default set 19-22.3.1+java19-graalvm
     run 0 uninstall 19-22.3.1+java19-graalvm
     [ "$base/19" -ef "$base/19-22.3.2+java19-graalvm" ] &&
         [ "$base/default" -ef "$base/19-22.3.2+java19-graalvm" ] || fail 'same-Java-major replacement failed'
@@ -855,7 +898,7 @@ ea_checks() {
     awk -F '\t' 'NR==2 && $1!="ea" {exit 1}' "$base/28+1-ea-zulu/.jvm-manifest" || fail 'EA release type not preserved'
     run 0 list zulu-28; contains '28+1-ea-zulu'
     [[ $(< "$TEMP/out") != *'manifest invalid'* ]] || fail 'EA manifest rejected'
-    run 0 default -v 28; contains '28+1-ea-zulu'
+    run 0 default 28; contains '28+1-ea-zulu'
     before=$(< "$TEST_LOG")
     rm -rf -- "$XDG_CACHE_HOME/jvm"
     for selector in 28 zulu-28 28+1-ea-zulu 28+ zulu-28..28; do
@@ -864,8 +907,8 @@ ea_checks() {
         run 0 x "$selector" -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
         contains '/28+1-ea-zulu'
     done
-    run 0 default zulu-28
-    run 0 default -v 28 zulu-28
+    run 0 default set zulu-28
+    run 0 default set 28 zulu-28
     [ "$(< "$TEST_LOG")" = "$before" ] || fail 'installed EA selection used network'
     run 0 install 28+2-ea-zulu
     run 0 uninstall 28+1-ea-zulu
@@ -882,7 +925,7 @@ ea_checks() {
             run 0 exec zulu-28 -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
             contains '/28+1-ea-zulu'
         else
-            run 0 "$command" zulu-28
+            if [ "$command" = default ]; then run 0 default set zulu-28; else run 0 "$command" zulu-28; fi
         fi
         [ -d "$base/28+1-ea-zulu" ] || fail 'EA install-on-demand missing'
         run 0 list zulu-28; contains '28+1-ea-zulu'
@@ -947,7 +990,7 @@ type_checks() {
     run 2 available -a; diagnostic 'unsupported flag'
     for command in list install uninstall default home env; do
         run 2 "$command" -t
-        diagnostic 'unsupported flag'
+        if [ "$command" = default ]; then diagnostic 'usage: jvm default'; else diagnostic 'unsupported flag'; fi
     done
     run 1 install vendor-21
     [[ $(< "$TEMP/err") != *TYPE* ]] || fail 'TYPE in remote ambiguity'
@@ -984,7 +1027,7 @@ range_checks() {
     before=$(< "$TEST_LOG")
     for command in available list install home env default exec uninstall; do
         for selector in 0+ 01+ 21++ 21.. 21..025 25..21 temurin-25..21 '$(exit 99)+'; do
-            if [ "$command" = exec ]; then run 2 "$command" "$selector" -- java; else run 2 "$command" "$selector"; fi
+            if [ "$command" = exec ]; then run 2 "$command" "$selector" -- java; elif [ "$command" = default ]; then run 2 default set "$selector"; else run 2 "$command" "$selector"; fi
         done
     done
     run 2 uninstall 21+
@@ -1011,16 +1054,16 @@ range_checks() {
     check 'remote ranges use highest major, default distro, C ID ties and unchanged artifact checks'
 
     # Limit local range to 25, despite higher installed majors.
-    run 0 default -v 25 25+9-temurin
+    run 0 default set 25 25+9-temurin
     before=$(< "$TEST_LOG")
     for command in home h env e; do
         run 0 "$command" 21..25; contains '/25+9-temurin'
     done
     run 0 x 21..25 -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
     contains '/25+9-temurin'
-    run 0 d 21..25
+    run 0 d set 21..25
     [ "$base/default" -ef "$base/25+9-temurin" ] || fail 'range global default'
-    run 1 default -v 21 21..25; diagnostic 'expected 21'
+    run 1 default set 21 21..25; diagnostic 'expected 21'
     [ ! -L "$base/21" ] || fail 'mismatched range changed default'
     run 0 list 21..25; contains '25+9-temurin'; contains '25+10-temurin'
     [[ $(< "$TEMP/out") != *'26+1-other-vendor'* ]] || fail 'list exceeded upper bound'
@@ -1051,7 +1094,7 @@ range_checks() {
     rmdir "$base/25"
     # An eligible default of another distro must not override the filter.
     index; row 25+1 other-vendor; run 0 install 25+1-other-vendor
-    run 0 default -v 25 25+1-other-vendor
+    run 0 default set 25 25+1-other-vendor
     before=$(< "$TEST_LOG")
     run 0 home 21..25; contains '/25+1-other-vendor'
     run 0 home temurin-21..25; contains '/25+10-temurin'
@@ -1092,7 +1135,7 @@ configuration_checks() {
     run 0 default; contains '25+1-temurin'
     # Neither selectorless install form inherits the installed default.
     run 0 install vendor-22
-    run 0 default vendor-22
+    run 0 default set vendor-22
     run 0 install; diagnostic 'Already installed 25+1-temurin'
     run 0 install -d; run 0 default; contains '25+1-temurin'
     printf 'java=22\ndistro=vendor\n' > "$XDG_CONFIG_HOME/jvm/config"
@@ -1141,7 +1184,7 @@ configuration_checks() {
         contains '/22+1-vendor'
     done
     rm "$XDG_CONFIG_HOME/jvm/config"
-    run 0 default vendor-22
+    run 0 default set vendor-22
     before=$(cat "$TEST_LOG")
     for cmd in home h env e; do
         run 0 "$cmd"; contains '/default'
@@ -1210,19 +1253,19 @@ configuration_checks() {
     run 0 exec --help
     run 0 --help; run 0 --version
     run 0 available; run 0 list
-    run 0 d; run 0 default -v 21
+    run 0 d; run 0 default 21
     run 2 install invalid; diagnostic 'selector must'
     run 2 uninstall; diagnostic 'usage:'
     index; row 23+1 temurin; row 23+1 vendor
-    run 0 d -v 23 23; diagnostic 'Successfully installed 23+1-temurin'
-    run 0 default 22+1-temurin
-    run 0 d -v 22 22+1-temurin
+    run 0 d set 23 23; diagnostic 'Successfully installed 23+1-temurin'
+    run 0 default set 22+1-temurin
+    run 0 d set 22 22+1-temurin
     # Conflicting valid configuration must also leave default's Temurin
     # installation policy and selectorless queries untouched.
     printf 'java=21+1-vendor\ndistro=vendor\n' > .jvmrc
     printf 'java=25\ndistro=vendor\n' > "$XDG_CONFIG_HOME/jvm/config"
     index; row 26+1 temurin; row 26+1 vendor
-    run 0 default 26; diagnostic 'Successfully installed 26+1-temurin'
+    run 0 default set 26; diagnostic 'Successfully installed 26+1-temurin'
     run 0 d; contains '26+1-temurin'
     # Malformed lower priority config is skipped if project supplies the key.
     printf 'bad=config\n' > "$XDG_CONFIG_HOME/jvm/config"

@@ -840,9 +840,9 @@ function Initialize-ManagedDefault {
     try { Set-ManagedDefault $Id $Name -Initial }
     catch {
         if ($Name -eq 'default') {
-            Stop-Jvm 'JDK installed, but default selection failed; run jvm default <ID>'
+            Stop-Jvm 'JDK installed, but default selection failed; run jvm default set <ID>'
         }
-        Stop-Jvm "JDK installed, but Java $Name default selection failed; run jvm default -v $Name <ID>"
+        Stop-Jvm "JDK installed, but Java $Name default selection failed; run jvm default set $Name <ID>"
     }
 }
 
@@ -1636,15 +1636,17 @@ Commands:
   install, i [-d] [selector]        Download, verify and install a JDK.
   uninstall, u <selector>           Remove an installed JDK.
   list, l [selector]                Show JDK folders and manifest status, offline.
-  default, d [-v <major>] [selector]  Show or select a persistent default.
+  default, d [<major>]          Query the global or Java-major default.
+  default, d set [<major>] <selector>  Set a persistent default.
   home, h [selector]           Print an installed JDK home or default path.
   env, e [-f] [selector]       Print PowerShell environment assignments.
   exec, x <selector> [--] <command> [args...]  Run with a selected JDK.
   --help                            Show this help.
   --version                         Show the jvm version.
 
-default/home/env/exec install automatically when no installed JDK matches.
-Without a selector, default only queries its reference.
+default set/home/env/exec install automatically when no installed JDK matches.
+default queries are offline. After set: one argument is a selector; two are scope and selector.
+A scope major is a positive integer without leading zeros.
 exec requires a selector; _ uses project java, user java, default, then fallback.
 The _ placeholder is exclusive to exec/x and is not a configuration value.
 One optional -- immediately after the exec selector is skipped.
@@ -1662,7 +1664,6 @@ Options:
   -t  available: show release type/features in a final TYPE column.
   -d  install: make the installed JDK the persistent default.
   -f  env: always print the PATH assignment.
-  -v  default: query or set the specified Java major's default.
 
 Configuration (optional, literal key=value lines):
   .\.jvmrc, then $XDG_CONFIG_HOME\jvm\config (or ~/.config/jvm/config).
@@ -1674,7 +1675,7 @@ PowerShell examples:
   jvm install
   jvm i -d temurin-21
   jvm uninstall temurin-21
-  jvm default -v 21 temurin-21
+  jvm default set 21 temurin-21
   jvm home 21
   iex (jvm env temurin-21)
   jvm x 21 java.exe -version
@@ -1684,6 +1685,25 @@ Shell setup (once, in your PowerShell profile):
   $env:JAVA_HOME = "$HOME\.local\share\jvm\jdks\default"
   $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
 '@ -f $script:DefaultVersion)
+}
+
+function Get-DefaultArguments {
+    param([string[]]$Arguments)
+    $usage = 'usage: jvm default [<major>] | jvm default set [<major>] <selector>'
+    $selector = ''; $major = ''
+    if ($Arguments.Count) {
+        if ($Arguments[0] -ceq 'set') {
+            if ($Arguments.Count -eq 2) { $selector = $Arguments[1] }
+            elseif ($Arguments.Count -eq 3 -and $Arguments[1] -cmatch '\A[1-9][0-9]*\z') {
+                $major = $Arguments[1]; $selector = $Arguments[2]
+            } else { Stop-Jvm $usage 2 }
+            if (-not $selector) { Stop-Jvm $usage 2 }
+        } else {
+            if ($Arguments.Count -ne 1 -or $Arguments[0] -cnotmatch '\A[1-9][0-9]*\z') { Stop-Jvm $usage 2 }
+            $major = $Arguments[0]
+        }
+    }
+    return [pscustomobject]@{ Selector = $selector; Major = $major }
 }
 
 function Invoke-Jvm {
@@ -1718,16 +1738,12 @@ function Invoke-Jvm {
         }
         $commandArgs = @($remaining | Select-Object -Skip $commandIndex)
         if ($selector -ceq '_') { $selector = '' }
+    } elseif ($command -eq 'default') {
+        $defaultArguments = Get-DefaultArguments $remaining
+        $selector = $defaultArguments.Selector; $majorOption = $defaultArguments.Major
     } else {
         for ($i = 0; $i -lt $remaining.Count; $i++) {
             $argument = [string]$remaining[$i]
-            if ($command -eq 'default' -and $argument -eq '-v') {
-                if ($majorOption -or $i + 1 -ge $remaining.Count -or
-                    -not (Test-Major ([string]$remaining[$i + 1]))) {
-                    Stop-Jvm '-v requires one positive Java major' 2
-                }
-                $majorOption = [string]$remaining[$i + 1]; $i++; continue
-            }
             if (($command -eq 'available' -and $argument -eq '-t') -or
                 ($command -eq 'env' -and $argument -eq '-f')) {
                 if (($command -eq 'available' -and $showType) -or
@@ -1754,9 +1770,17 @@ function Invoke-Jvm {
         $valid = $parsed.Kind -in @('id', 'major', 'distro-major', 'range')
         if ($command -eq 'uninstall' -and $parsed.Kind -eq 'range') { $valid = $false }
         if (-not $valid -and -not (Test-ExistingInstallationDirectory $selector)) {
+            if ($command -eq 'default') {
+                Stop-Jvm 'usage: jvm default [<major>] | jvm default set [<major>] <selector>' 2
+            }
             Stop-Jvm 'selector must be a full ID, major, or distro-major (version ranges allowed except for uninstall)' 2
         }
-        if ($selector.Length -gt 180) { Stop-Jvm 'selector is too long' 2 }
+        if ($selector.Length -gt 180) {
+            if ($command -eq 'default') {
+                Stop-Jvm 'usage: jvm default [<major>] | jvm default set [<major>] <selector>' 2
+            }
+            Stop-Jvm 'selector is too long' 2
+        }
     }
     if ($command -in @('install', 'home', 'env', 'exec') -and -not $selector) {
         $selector = Get-ConfigSetting java

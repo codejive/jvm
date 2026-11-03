@@ -17,7 +17,10 @@ jvm available [-t] [selector]
 jvm list [selector]
 jvm install [-d] [selector]
 jvm uninstall <selector>
-jvm default [-v <major>] [selector]
+jvm default
+jvm default <major>
+jvm default set <selector>
+jvm default set <major> <selector>
 jvm home [selector]
 jvm env [-f] [selector]
 jvm exec <selector> [--] <command> [args...]
@@ -31,10 +34,11 @@ detection, storage, networking or external utilities. Help gives a purpose
 statement, command descriptions, selectors, options, shell setup and examples.
 Help renders the fallback major from the script's default-version constant.
 
-For commands other than `exec`, flags may precede or follow the selector.
+For commands other than `exec` and `default`, flags may precede or follow the
+selector.
 `-t` is accepted only by `available`,
-`-d` only by `install`, `-f` only by `env`, and `-v <major>` only by
-`default`. Repeated or unsupported flags, empty selectors, excess arguments and
+`-d` only by `install`, and `-f` only by `env`.
+Repeated or unsupported flags, empty selectors, excess arguments and
 invalid selector syntax exit 2 before any side effect.
 
 ### Exit codes and streams
@@ -94,12 +98,20 @@ at four stops; longer values stay untruncated with one separating tab.
   the previous default, though the published JDK stays installed. Without a
   selector it uses project `java`, user `java`, then major 25.
 - `uninstall <selector>` is described under [Uninstallation](#uninstallation).
-- `default` without selector prints the current default ID, or `No JDK currently
-  set as the default` (exit 0); `-v N` queries major N, reporting `No JDK
+- `default` prints the current global default ID, or `No JDK currently
+  set as the default` (exit 0); `default N` queries major N, reporting `No JDK
   currently set as the default for version N`. An unusable reference is an
-  error. With a selector it selects a JDK as default, installing it when absent,
-  and prints `Default JDK set to: <ID>` to stderr. Configuration never applies to
-  `default`.
+  error. Queries are offline and never install. `default set <selector>` sets
+  the global default; `default set <major> <selector>` sets that major's default,
+  installing when absent. After `set`, one argument is always a selector; two
+  are a scope major and selector. Thus `default set 21` sets the global default
+  using selector `21`, while `default set 21 21` sets the Java 21 default. A
+  scope major is a positive integer without leading zeros; it is not a selector.
+  Selectors retain full-ID, major, distro-major, range and exact local directory
+  rules. Missing required arguments, empty arguments, invalid scopes and excess
+  arguments exit 2 before installation or mutation, with the command grammar
+  in the diagnostic. Setters report the selected ID on stderr. Configuration
+  never applies to `default`, and `d` uses identical grammar.
 - `home` prints one unquoted absolute path. `env` prints shell statements.
   `exec` runs a command. See below.
 
@@ -154,7 +166,7 @@ may have no suffix or `.exe`, `.bat` or `.cmd`. Diagnostic rows appear only for
 `list <ID>`/`uninstall <ID>` and for unfiltered `list`; major, distro and
 distro-major filters skip them. Layout is checked, not execution.
 
-### Installed selection (`default`, `home`, `env`, `exec`)
+### Installed selection (`default set`, `home`, `env`, `exec`)
 
 With an explicit selector:
 
@@ -177,13 +189,13 @@ Temurin), then continues with the exact installed ID. Ambiguity, invalid
 references and operational failures never install. No remote check is made when
 a usable local match exists.
 
-With an omitted selector (`_` for `exec`) and no configured selector, `default`
-and `default -v N` read their reference; `home`/`env` use the stable
+`default` and `default N` read their reference. With an omitted selector
+(`_` for `exec`) and no configured selector, `home`/`env` use the stable
 `jdks/default` path and `exec` uses its target's physical home. With neither configuration nor a default,
 `home`/`env`/`exec` resolve major 25 using the same local-first rules, installing
 it if needed.
 A dangling or unusable default reports `jvm: default JDK is missing or unusable`
-and is never repaired automatically. Selectorless `default` queries never install.
+and is never repaired automatically. `default` queries never install.
 
 ### Ranges
 
@@ -193,8 +205,8 @@ major's default is used if it selects an eligible candidate; otherwise the
 smallest full ID in C-locale order. Missing, dangling or mismatched references
 fall back silently without repair. Remotely, the explicit or configured
 installation distro is applied, the highest major kept, then the smallest ID in
-C order, independent of row order; artifact collisions still fail. `default -v N`
-still requires the resolved JDK's major to be N. `available` and `list` return
+C order, independent of row order; artifact collisions still fail.
+`default set N <selector>` requires the resolved JDK's major to be N. `available` and `list` return
 all matches in their usual order. Range `home`/`env`/`exec` use the physical
 home. A local match at a lower major wins over remote availability of a higher
 one (`home 21+` or `install 21+` with only Java 21 installed uses it offline).
@@ -429,7 +441,7 @@ Lifecycle:
   message). Later installs never replace references or unrelated data. If link
   creation fails, the JDK stays installed and the command exits 1 with an
   explanation.
-- `default <selector>` replaces the global reference; `default -v N <selector>`
+- `default set <selector>` replaces the global reference; `default set N <selector>`
   replaces major N's reference and requires the selected JDK to be major N.
   Explicit global changes (including `install -d`) leave major references alone
   and vice versa. A mismatch changes nothing.
