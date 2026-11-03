@@ -4,6 +4,12 @@ set -eu
 BASH_BIN=$BASH
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 case "$(uname -s)" in CYGWIN*|MSYS*|MINGW*) ;; *) echo 'Windows Bash required' >&2; exit 1 ;; esac
+system_directory=$(cygpath -u -S)
+native_cmd=$system_directory/cmd.exe
+[ -f "$native_cmd" ] || { echo "Native cmd.exe not found: $native_cmd" >&2; exit 1; }
+# Cygwin need not inherit System32 on PATH. The manager also needs cmd.exe
+# for junction creation; discover it without relying on environment-name case.
+export PATH="$PATH:$system_directory"
 TEMP=$(mktemp -d "${TMPDIR:-/tmp}/jvm-native-default.XXXXXXXX")
 cleanup() {
     for link in default 21 25; do
@@ -23,8 +29,8 @@ for major in 21 25; do
     home=$XDG_DATA_HOME/jvm/jdks/$major+1-test
     mkdir -p "$home/bin"
     # Real native executables prove traversal, without using an actual JDK.
-    cp "$(command -v cmd.exe)" "$home/bin/java.exe"
-    cp "$(command -v cmd.exe)" "$home/bin/javac.exe"
+    cp "$native_cmd" "$home/bin/java.exe"
+    cp "$native_cmd" "$home/bin/javac.exe"
     printf 'jvm-manifest-v1\nga\twindows\t%s\tjdk\thotspot\tvendor\ttest\t%s+99\t%s+1\tzip\thttps://invalid.test/jdk\tjdk.zip\t0\t%064d\t[]\n\n' "$arch" "$major" "$major" 0 > "$home/.jvm-manifest"
 done
 "$BASH_BIN" "$ROOT/jvm" i -d 21+1-test

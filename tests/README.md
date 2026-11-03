@@ -1,5 +1,19 @@
 # Discovery, installation and uninstallation verification
 
+CI fixture repairs (2026-11-03): the installation harness resolves its temporary
+root to a physical path so hand-created references and exact home/exec
+expectations match managed links when temporary paths have aliases (for example
+macOS `/var`). The competing-installation fixture
+publishes with a directory rename instead of copying relative symlinks, which
+can fail on MSYS2. Cygwin CI and the native junction smoke locate System32 with
+`cygpath -u -S` instead of relying on the case of a Windows environment name or
+an inherited `cmd.exe` PATH entry. The private Cygwin Bash 3.2 build retains its
+supporting DLLs beside the executable and checks startup with an empty PATH;
+the offline tests still hide real utilities. Focused inventory, flags/aliases and
+execution checks passed under installed Git Bash with an aliased temporary root.
+Bash syntax checks, workflow lint and `git diff --check` passed. These local
+checks do not establish native macOS or Cygwin compatibility.
+
 CI repair verification (2026-11-03): updated stale help assertions and restored
 diagnostics/cleanup when the harness deliberately removes utilities from PATH.
 Syntax checks for `jvm` and all Bash test scripts, the complete offline suite
@@ -156,8 +170,12 @@ Cygwin's runtime, and does not establish 3.2 coverage for those other runtimes.
 
 The build helper downloads the
 [GNU Bash 3.2.57 release](https://ftp.gnu.org/gnu/bash/bash-3.2.57.tar.gz),
-verifies its pinned SHA-256, builds in a new private directory and copies only
-the interpreter into that directory's `bin`. GCC with C development headers,
+verifies its pinned SHA-256, builds in a new private directory and copies
+the interpreter into that directory's `bin`. On Cygwin, `cygcheck` identifies
+supporting `cyg*.dll` dependencies to copy beside it for isolated-PATH startup;
+the installed `cygwin1.dll` runtime is retained rather than copied. All builds
+check startup with an empty PATH before running the offline suite.
+GCC with C development headers,
 Make, Bison (and its M4 dependency), curl, tar/gzip and sha256sum are
 development/CI tools only. Bison regenerates Bash's parser; it is not needed
 by `jvm` or by the offline tests.
@@ -167,6 +185,10 @@ predating GCC 10. Cygwin additionally needs `patch`: the private source copy use
 the current [path conversion API](https://cygwin.com/cygwin-api/func-cygwin-conv-path.html)
 via `tests/bash32-cygwin.patch`, and includes `io.h` for the current `setmode`
 mapping. These adjustments affect only the test interpreter.
+The dependency and system-directory behavior follows Cygwin's
+[`cygcheck`](https://cygwin.com/cygwin-ug-net/cygcheck.html) and
+[`cygpath`](https://cygwin.com/cygwin-ug-net/cygpath.html) documentation
+(checked 2026-11-03).
 Nothing replaces the system shell or adds a runtime installation step.
 The macOS harness needs `sha256sum` for constructing fixture metadata; CI exposes
 only Homebrew's checksum binary under that name, retaining native BSD tar, mv
@@ -192,10 +214,12 @@ CI configuration sources checked on 2026-11-02: the
 [macOS image inventory](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-arm64-Readme.md),
 [MSYS2 setup action](https://github.com/msys2/setup-msys2) and
 [Cygwin install action](https://github.com/cygwin/cygwin-install-action).
-The workflow pins actions to immutable Git object IDs. Hosted execution remains
-unverified until this repository is pushed to GitHub and its workflow runs;
-this checkout currently has no configured remote. Historical verification notes
-below describe the checks performed at those dates.
+The workflow pins actions to immutable Git object IDs. The
+[hosted run for `53b9eaf`](https://github.com/codejive/jvm/actions/runs/41547286511)
+passed both Ubuntu jobs and PowerShell 5.1, but failed both macOS jobs and all
+four Windows Bash jobs. The fixture and CI repairs above were prepared from
+those logs; that historical run does not validate the repairs. Historical
+verification notes below describe the checks performed at those dates.
 
 The dangling-reference fixtures create a native directory symlink while its
 temporary target exists, then remove that target. This preserves the same

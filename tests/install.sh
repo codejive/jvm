@@ -5,6 +5,9 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BASH_BIN=${BASH:-bash}
 ORIGINAL_PATH=$PATH
 TEMP=$(mktemp -d "${TMPDIR:-/tmp}/jvm-install-tests.XXXXXXXX") || exit 1
+# Fixtures and exact home/exec expectations share the manager's physical paths.
+# TMPDIR can name an alias such as /var on macOS or a Windows runner mount.
+TEMP=$(cd "$TEMP" && pwd -P) || exit 1
 cleanup() {
     if [ -n "${TEST_PUBLISH_GATE:-}" ]; then
         : > "$TEST_PUBLISH_GATE/first.release"
@@ -133,7 +136,9 @@ case "$url" in
     https://artifacts.invalid/*)
         body=$TEST_ARCHIVE; status=$TEST_ARTIFACT_STATUS
         if [ -n "${TEST_EXTRA_LOCAL:-}" ]; then
-            cp -R "$TEST_EXTRA_LOCAL" "$XDG_DATA_HOME/jvm/jdks/" || exit 99
+            # Publish the competing installation as a directory rename. Copying
+            # its relative links can fail on MSYS2 before their targets exist.
+            mv "$TEST_EXTRA_LOCAL" "$XDG_DATA_HOME/jvm/jdks/" || exit 99
         fi
         if [ "$TEST_DELAY" != 0 ]; then
             : > "$TEST_LOG.started"
@@ -294,7 +299,7 @@ inventory_checks() {
     run 0 list 25+1-vendor; contains '(invalid JDK)'
     run 1 list 25; diagnostic 'No JDK found matching:'
     mv "$TEMP/saved-javac" "$base/25+1-vendor/bin/javac"
-    ln -s "$base/21+1-vendor" "$base/21"
+    ln -s "$base/21+1-vendor" "$base/21" || fail 'cannot prepare manifestless major reference'
     run 0 uninstall 21+1-vendor
     [ ! -e "$base/21+1-vendor" ] && [ ! -L "$base/21" ] || fail 'bad-manifest uninstall left a directory or major reference'
     run 0 default; contains '25+1-vendor'

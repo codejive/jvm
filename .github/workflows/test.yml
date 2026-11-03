@@ -139,14 +139,14 @@ jobs:
       - name: Build actual Bash 3.2
         if: matrix.bash == '3.2'
         run: >-
-          export PATH="/usr/bin:$(cygpath -u "$SYSTEMROOT")/system32";
+          export PATH="/usr/bin:$(cygpath -u -S)";
           bash tests/build-bash32.sh "$(cygpath -u "$RUNNER_TEMP")/bash-3.2"
       - name: Syntax, full offline suite and native junction smoke
         env:
           BASH_TARGET: ${{ matrix.bash }}
           TEST_ENVIRONMENT: ${{ matrix.environment }}
         run: >-
-          if [ "$TEST_ENVIRONMENT" = Cygwin ]; then export PATH="/usr/bin:$(cygpath -u "$SYSTEMROOT")/system32"; fi;
+          if [ "$TEST_ENVIRONMENT" = Cygwin ]; then export PATH="/usr/bin:$(cygpath -u -S)"; fi;
           if [ "$BASH_TARGET" = 3.2 ]; then interpreter="$(cygpath -u "$RUNNER_TEMP")/bash-3.2/bin/bash"; else interpreter="$BASH"; fi;
           "$interpreter" tests/ci.sh "$BASH_TARGET"
       - name: Optional real JDK lifecycle
@@ -155,6 +155,6 @@ jobs:
           BASH_TARGET: ${{ matrix.bash }}
           TEST_ENVIRONMENT: ${{ matrix.environment }}
         run: >-
-          if [ "$TEST_ENVIRONMENT" = Cygwin ]; then export PATH="/usr/bin:$(cygpath -u "$SYSTEMROOT")/system32"; fi;
+          if [ "$TEST_ENVIRONMENT" = Cygwin ]; then export PATH="/usr/bin:$(cygpath -u -S)"; fi;
           if [ "$BASH_TARGET" = 3.2 ]; then interpreter="$(cygpath -u "$RUNNER_TEMP")/bash-3.2/bin/bash"; else interpreter="$BASH"; fi;
           "$interpreter" tests/jdk-smoke.sh
