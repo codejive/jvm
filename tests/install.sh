@@ -50,6 +50,10 @@ export TEST_DEFAULT_GATE= TEST_DEFAULT_LINK=default TEST_REAL_LN
 TEST_REAL_LN=$(command -v ln)
 TEST_REAL_MV=$(command -v mv)
 TEST_REAL_RM=$(command -v rm)
+# Resolve wrapper targets before isolating PATH. Bash 3.2 can retain a cached
+# wrapper path even with a temporary PATH assignment on `command -v`.
+TEST_REAL_TAR=$(command -v tar)
+TEST_REAL_SHA256SUM=$(command -v sha256sum)
 for tool in uname ldd curl wget mv rm; do
     printf '#!%s\n' "$BASH_BIN" > "$TOOLS/$tool"
     case "$tool" in
@@ -1576,7 +1580,7 @@ mv "$TOOLS/sha256sum" "$TEMP/sha256sum"; mv "$TOOLS/openssl" "$TEMP/openssl"
 before=$(count_downloads); run 1 install vendor-21; diagnostic 'install sha256sum'
 [ "$(count_downloads)" = "$before" ] || fail 'missing verifier downloaded artifact'
 # Exercise shasum-compatible and openssl adapters without a hidden runtime.
-printf '#!%s\n[ "$1" = -a ] && shift 2\nexec "%s" "$@"\n' "$BASH_BIN" "$(PATH=$ORIGINAL_PATH command -v sha256sum)" > "$TOOLS/shasum"
+printf '#!%s\n[ "$1" = -a ] && shift 2\nexec "%s" "$@"\n' "$BASH_BIN" "$TEST_REAL_SHA256SUM" > "$TOOLS/shasum"
 PATH=$ORIGINAL_PATH chmod +x "$TOOLS/shasum"
 run 0 install vendor-21
 rm -f "$TOOLS/shasum"; mv "$TEMP/openssl" "$TOOLS/openssl"
@@ -1606,7 +1610,7 @@ TEST_ARCHIVE=$ROOT/tests/fixtures/archives/jdk.tar.gz
 reset; index; row 21+1 vendor
 mv "$TOOLS/tar" "$TEMP/tar"
 run 1 install vendor-21; diagnostic 'required utility missing: tar'
-printf '#!%s\ncase "$1" in -x*) exit 1 ;; esac\nexec "%s" "$@"\n' "$BASH_BIN" "$(PATH=$ORIGINAL_PATH command -v tar)" > "$TOOLS/tar"
+printf '#!%s\ncase "$1" in -x*) exit 1 ;; esac\nexec "%s" "$@"\n' "$BASH_BIN" "$TEST_REAL_TAR" > "$TOOLS/tar"
 PATH=$ORIGINAL_PATH chmod +x "$TOOLS/tar"
 run 1 install vendor-21; diagnostic 'extraction failed'
 mv "$TEMP/tar" "$TOOLS/tar"
