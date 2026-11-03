@@ -68,12 +68,16 @@ Commands:
   default, d [-v <major>] [selector]  Show or select a persistent JDK default.
   home, h [selector]      Print an installed JDK home or the stable default path.
   env, e [-f] [selector]  Print Bash exports, including GRAALVM_HOME for GraalVM.
-  exec, x [selector] -- <command> [args...]  Run with a selected JDK or default.
+  exec, x <selector> [--] <command> [args...]  Run with a selected JDK or default.
   --help                      Show this help.
   --version                   Show the jvm version.
 
 default/home/env/exec install automatically when no installed JDK matches.
 Without a selector, default only queries its reference.
+exec requires a selector; _ uses project java, user java, default, then fallback.
+The _ placeholder is exclusive to exec/x and is not a configuration value.
+One optional -- immediately after the exec selector is skipped.
+The command and all later arguments are forwarded unchanged.
 
 Selectors:
   available/list: major (21), distro (temurin), or distro-major (temurin-21).
@@ -97,7 +101,7 @@ Configuration (optional, literal key=value lines):
   Keys: java=21+ and distro=graalvm-community. No parent-directory lookup.
 EOF
     printf '  CLI selector > project java > user java. Install falls back to major %s.\n' "$DEFAULT_VERSION"
-    printf '  home/env/exec then use the installed default, falling back to major %s if it is absent.\n' "$DEFAULT_VERSION"
+    printf '  Omitted home/env selectors and exec _ then use the installed default, falling back to major %s if it is absent.\n' "$DEFAULT_VERSION"
     while IFS= read -r line; do printf '%s\n' "$line"; done <<'EOF'
   Installation distro: explicit selector > project distro > user distro > temurin.
   Configuration does not affect default, available, list, uninstall or help.
@@ -109,7 +113,8 @@ Examples:
   jvm default -v 21 temurin-21
   jvm home 21
   eval "$(jvm env temurin-21)"
-  jvm x 21..26 -- java -version
+  jvm x 21..26 java -version
+  jvm x _ -- java -version
 
 Shell setup (once, in your shell profile):
   Unix:
@@ -1483,37 +1488,46 @@ case "$command" in
 esac
 shift
 if [ "$#" -eq 1 ] && [ "$1" = --help ]; then help_text; exit 0; fi
-selector= option= major_option= force_env= separator= show_type=
-while [ "$#" -gt 0 ]; do
-    argument=$1
+selector= option= major_option= force_env= show_type=
+if [ "$command" = exec ]; then
+    [ "$#" -gt 0 ] && [ -n "$1" ] || {
+        error 'usage: jvm exec <selector> [--] <command> [args...]'; exit 2;
+    }
+    selector=$1
     shift
-    if [ "$command" = exec ] && { [ "$argument" = -- ] || [ "$argument" = --- ]; }; then separator=1; break; fi
-    if [ "$command" = default ] && [ "$argument" = -v ]; then
-        [ -z "$major_option" ] && [ "$#" -gt 0 ] && is_major "$1" || {
-            error '-v requires one positive Java major'; exit 2;
-        }
-        major_option=$1
+    if [ "${1:-}" = -- ]; then shift; fi
+    [ "$#" -gt 0 ] && [ -n "$1" ] || {
+        error 'usage: jvm exec <selector> [--] <command> [args...]'; exit 2;
+    }
+    [ "$selector" != _ ] || selector=
+else
+    while [ "$#" -gt 0 ]; do
+        argument=$1
         shift
-        continue
-    fi
-    case "$command:$argument" in
-        available:-t)
-            [ -z "$show_type" ] || { error 'duplicate flag'; exit 2; }
-            show_type=1 ;;
-        env:-f)
-            [ -z "$force_env" ] || { error 'duplicate flag'; exit 2; }
-            force_env=1 ;;
-        install:-d)
-            [ -z "$option" ] || { error 'duplicate flag'; exit 2; }
-            option=$argument ;;
-        *:-*) error "unsupported flag: $argument"; exit 2 ;;
-        *)
-            [ -n "$argument" ] && [ -z "$selector" ] || { error 'expected one nonempty selector'; exit 2; }
-            selector=$argument ;;
-    esac
-done
-if [ "$command" = exec ] && { [ -z "$separator" ] || [ "$#" -eq 0 ] || [ -z "$1" ]; }; then
-    error 'usage: jvm exec [selector] -- <command> [args...]'; exit 2
+        if [ "$command" = default ] && [ "$argument" = -v ]; then
+            [ -z "$major_option" ] && [ "$#" -gt 0 ] && is_major "$1" || {
+                error '-v requires one positive Java major'; exit 2;
+            }
+            major_option=$1
+            shift
+            continue
+        fi
+        case "$command:$argument" in
+            available:-t)
+                [ -z "$show_type" ] || { error 'duplicate flag'; exit 2; }
+                show_type=1 ;;
+            env:-f)
+                [ -z "$force_env" ] || { error 'duplicate flag'; exit 2; }
+                force_env=1 ;;
+            install:-d)
+                [ -z "$option" ] || { error 'duplicate flag'; exit 2; }
+                option=$argument ;;
+            *:-*) error "unsupported flag: $argument"; exit 2 ;;
+            *)
+                [ -n "$argument" ] && [ -z "$selector" ] || { error 'expected one nonempty selector'; exit 2; }
+                selector=$argument ;;
+        esac
+    done
 fi
 if [ -z "$selector" ]; then
     case "$command" in

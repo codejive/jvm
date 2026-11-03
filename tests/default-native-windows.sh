@@ -69,7 +69,7 @@ done
 # physical installation. Selectorless selection also preserves the existing default.
 printf 'java=21\ndistro=unused\n' > .jvmrc
 [ "$("$BASH_BIN" "$ROOT/jvm" h)" = "$base/jdks/21" ]
-[ "$("$BASH_BIN" "$ROOT/jvm" x -- "$BASH_BIN" -c 'printf "%s" "$JAVA_HOME"')" = "$(cygpath -m "$base/jdks/21+1-test")" ]
+[ "$("$BASH_BIN" "$ROOT/jvm" x _ "$BASH_BIN" -c 'printf "%s" "$JAVA_HOME"')" = "$(cygpath -m "$base/jdks/21+1-test")" ]
 rm .jvmrc
 [ "$("$BASH_BIN" "$ROOT/jvm" h)" = "$base/jdks/default" ]
 "$BASH_BIN" "$ROOT/jvm" uninstall 25

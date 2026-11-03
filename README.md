@@ -22,7 +22,7 @@ Copy the three scripts `jvm`, `jvm.cmd` and `jvm.ps1` to the root of your
 project, and add a line like this to the project's README:
 
 ```sh
-./jvm x 25+ -- your_command
+./jvm x 25+ your_command
 ```
 
 This runs `your_command` with a matching JDK (Java 25 or newer), downloading
@@ -59,7 +59,7 @@ Take a look at the [hello.java](./hello.java) file, it has this strange line at
 the top of the file which, on Linux and Mac, tells your shell how to run the code.
 
 ```java
-///usr/bin/env ./jvm x 25+ -- java "$0" "$@" ; exit $?
+///usr/bin/env ./jvm x 25+ java "$0" "$@" ; exit $?
 void main() {
     IO.println("Hello, World!");
 }
@@ -120,11 +120,18 @@ jvm <command> [options] [selector]
 | `default`, `d [-v <major>] [selector]` | Show or select the persistent default, installing if needed |
 | `home`, `h [selector]` | Print the selected JDK home, installing if needed |
 | `env`, `e [-f] [selector]` | Print shell exports for the selected JDK, installing if needed |
-| `exec`, `x [selector] -- <command> [args...]` | Run a command with the selected JDK, installing if needed |
+| `exec`, `x <selector> [--] <command> [args...]` | Run a command with the selected JDK, installing if needed |
 
-With no selector or configuration,
-`home`, `env` and `exec` use the global default, then resolve Java 25 if no
-default exists. Selectorless `default` queries never install.
+`exec` and `x` require a selector. Use `_` to resolve project `java`, then user
+`java`, then the global default, then Java 25. Configuration errors, failed
+configured selections and unusable defaults are errors. The `_` placeholder is
+exclusive to exec; it is not a configuration value. Other commands give it no
+placeholder meaning and retain their existing exact-directory ID rules.
+`home` and `env` use the same precedence when their selector is omitted.
+Selectorless `default` queries never install.
+
+One optional `--` immediately after the exec selector is skipped. The command
+must be nonempty; it and every later argument are forwarded unchanged.
 
 Selectors are a major (`21`), a distro (`temurin`, for `available`/`list`), a
 distro-major (`temurin-21`) or a full installed ID. Ranges such as `21+`,
@@ -140,7 +147,8 @@ jvm list                           # what is installed
 jvm default -v 21 temurin-21       # set the default for Java 21
 jvm home 21                        # print JDK 21's home, installing if needed
 eval "$(jvm env temurin-21)"       # use Temurin 21 in the current shell
-jvm x 21..26 -- java -version      # run with the highest matching JDK
+jvm x 21..26 java -version         # run with the highest matching JDK
+jvm x _ java -version              # use configuration/default selection
 jvm uninstall temurin-21
 ```
 

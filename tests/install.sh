@@ -316,19 +316,27 @@ execution_checks() {
     for cmd in exec x; do
         PATH=/nonexistent run 0 "$cmd" --help
         PATH=/nonexistent run 2 "$cmd"
-        [ "$(< "$TEMP/err")" = 'jvm: usage: jvm exec [selector] -- <command> [args...]' ] || fail 'incomplete exec usage'
+        [ "$(< "$TEMP/err")" = 'jvm: usage: jvm exec <selector> [--] <command> [args...]' ] || fail 'incomplete exec usage'
         PATH=/nonexistent run 2 "$cmd" -f 21
-        PATH=/nonexistent run 2 "$cmd" 21 extra
+    done
+    for cmd in available install uninstall default home env; do
+        run 2 "$cmd" _
     done
     for cmd in shell s; do
         PATH=/nonexistent run 2 "$cmd" 21
         PATH=/nonexistent run 2 "$cmd" --help
     done
-    for args in '21' '21 --' '--'; do
+    for args in '21' '21 --' '_'; do
         PATH=/nonexistent run 2 exec $args
-        [ "$(< "$TEMP/err")" = 'jvm: usage: jvm exec [selector] -- <command> [args...]' ] || fail 'incomplete exec usage'
+        [ "$(< "$TEMP/err")" = 'jvm: usage: jvm exec <selector> [--] <command> [args...]' ] || fail 'incomplete exec usage'
     done
-    PATH=/nonexistent run 2 exec 21 -- ''
+    for cmd in exec x; do
+        PATH=/nonexistent run 2 "$cmd" '' java
+        PATH=/nonexistent run 2 "$cmd" 21 ''
+        PATH=/nonexistent run 2 "$cmd" 21 -- ''
+        PATH=/nonexistent run 2 "$cmd" _ --
+        PATH=/nonexistent run 2 "$cmd" _ ''
+    done
     [ ! -e "$TEST_LOG" ] && [ ! -e "$XDG_DATA_HOME/jvm" ] || fail 'execution usage had side effects'
     printf '#!%s\n' "$BASH_BIN" > "$TEMP/child with spaces"
     cat >> "$TEMP/child with spaces" <<'EOF'
@@ -364,22 +372,23 @@ EOF
     [ "$(< "$TEMP/out")" = 'child output' ] || fail 'exec child stdout'
     diagnostic 'child diagnostic'; diagnostic 'Successfully installed 21+1-temurin'
     [ ! -e "$HOME/should-not-exist" ] || fail 'command data evaluated'
+    run 127 exec 21 -- -- "$TEMP/child with spaces"
     before=$(cat "$TEST_LOG")
-    for cmd in exec x; do run 0 "$cmd" -- "$TEMP/child with spaces" status-check; done
-    run 37 x -- "$TEMP/child with spaces" status
+    for cmd in exec x; do run 0 "$cmd" _ -- "$TEMP/child with spaces" status-check; done
+    run 37 x _ "$TEMP/child with spaces" status
     mv "$XDG_DATA_HOME/jvm/jdks/default" "$TEMP/saved-default"
-    run 1 exec -- "$TEMP/child with spaces" status-check
+    run 1 exec _ "$TEMP/child with spaces" status-check
     diagnostic 'No JDK found matching: 25'
     dangling_link "$XDG_DATA_HOME/jvm/jdks/missing" "$XDG_DATA_HOME/jvm/jdks/default"
-    run 1 x -- "$TEMP/child with spaces" status-check
+    run 1 x _ "$TEMP/child with spaces" status-check
     diagnostic 'default JDK is missing or unusable'
     rm "$XDG_DATA_HOME/jvm/jdks/default"
     ln -s "$HOME" "$XDG_DATA_HOME/jvm/jdks/default"
-    run 1 exec -- "$TEMP/child with spaces" status-check
+    run 1 exec _ "$TEMP/child with spaces" status-check
     diagnostic 'default JDK is missing or unusable'
     rm "$XDG_DATA_HOME/jvm/jdks/default"
     mv "$TEMP/saved-default" "$XDG_DATA_HOME/jvm/jdks/default"
-    run 37 exec 21 -- "$TEMP/child with spaces" status
+    run 37 exec 21 "$TEMP/child with spaces" status
     [ ! -s "$TEMP/err" ] || fail 'exec status stderr'
     run 127 exec 21 -- nonexistent-jvm-test-command
     mkdir "$TEMP/not-executable"
@@ -387,14 +396,12 @@ EOF
     "$BASH_BIN" -c 'export TEST_EXPECT_PID=$$; exec "$@"' bash "$BASH_BIN" "$ROOT/jvm" x 21 -- "$TEMP/child with spaces" pid || fail 'exec did not replace JVM process'
     [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'local execution used networking'
     run 0 install 22
-    run 0 x -- "$TEMP/child with spaces" global-pin
+    run 0 x _ "$TEMP/child with spaces" global-pin
     run 0 default 21+1-temurin
     run 0 exec 21 -- "$TEMP/child with spaces" pin
-    run 0 default -v 21 21+1-temurin
-    run 0 exec 21 --- "$TEMP/child with spaces" pin
     run 0 default; contains '21+1-temurin'
     rm "$XDG_DATA_HOME/jvm/jdks/21"
-    run 0 exec temurin-21 -- "$TEMP/child with spaces" status-check
+    run 0 exec temurin-21 "$TEMP/child with spaces" status-check
     index; row 21+2 other
     run 0 install other-21
     rm "$XDG_DATA_HOME/jvm/jdks/21"
@@ -413,7 +420,7 @@ EOF
     export TEST_EXPECT_HOME="C:$XDG_DATA_HOME/jvm/jdks/25+1-temurin"
     export TEST_EXPECT_BIN="$XDG_DATA_HOME/jvm/jdks/25+1-temurin/bin"
     run 0 x 25 -- "$TEMP/child with spaces" status-check
-    run 0 exec -- "$TEMP/child with spaces" status-check
+    run 0 exec _ "$TEMP/child with spaces" status-check
     mv "$TEMP/cygpath" "$TOOLS/cygpath"
     TEST_SYSTEM=Linux; TEST_OS=linux; TEST_ARCHIVE=$saved_archive
     reset; index; row 26+1 temurin
@@ -938,8 +945,8 @@ type_checks() {
     run 2 available -t 25..21
     run 1 available -t 22; diagnostic 'No JDK found matching'
     run 2 available -a; diagnostic 'unsupported flag'
-    for command in list install uninstall default home env exec; do
-        if [ "$command" = exec ]; then run 2 "$command" -t -- java; else run 2 "$command" -t; fi
+    for command in list install uninstall default home env; do
+        run 2 "$command" -t
         diagnostic 'unsupported flag'
     done
     run 1 install vendor-21
@@ -1116,7 +1123,7 @@ configuration_checks() {
         run 0 "$cmd" 21+1-vendor; contains '/21+1-vendor'
     done
     for cmd in exec x; do
-        run 0 "$cmd" -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
+        run 0 "$cmd" _ "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
         contains '/22+1-vendor'
     done
     [ "$(cat "$TEST_LOG")" = "$before" ] || fail 'local configured resolution fetched metadata'
@@ -1124,11 +1131,15 @@ configuration_checks() {
     for cmd in home env; do
         run 1 "$cmd"; diagnostic 'No JDK found matching'
     done
-    run 1 exec -- cat; diagnostic 'No JDK found matching'
+    run 1 exec _ cat; diagnostic 'No JDK found matching'
     # A project miss cannot use global java or the global installed default.
     rm .jvmrc
     printf 'java=vendor-22\n' > "$XDG_CONFIG_HOME/jvm/config"
     run 0 home; contains '/22+1-vendor'
+    for cmd in exec x; do
+        run 0 "$cmd" _ -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
+        contains '/22+1-vendor'
+    done
     rm "$XDG_CONFIG_HOME/jvm/config"
     run 0 default vendor-22
     before=$(cat "$TEST_LOG")
@@ -1136,7 +1147,7 @@ configuration_checks() {
         run 0 "$cmd"; contains '/default'
     done
     for cmd in exec x; do
-        run 0 "$cmd" -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
+        run 0 "$cmd" _ "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
         contains '/22+1-vendor'
         [[ $(< "$TEMP/out") != */default* ]] || fail 'exec used mutable default'
     done
@@ -1145,7 +1156,7 @@ configuration_checks() {
     for cmd in home env; do
         run 1 "$cmd"; diagnostic 'default JDK is missing or unusable'
     done
-    run 1 exec -- cat; diagnostic 'default JDK is missing or unusable'
+    run 1 exec _ cat; diagnostic 'default JDK is missing or unusable'
     rm "$XDG_DATA_HOME/jvm/jdks/default"
     printf 'unmanaged\n' > "$XDG_DATA_HOME/jvm/jdks/default"
     run 1 home; diagnostic 'default JDK is missing or unusable'
@@ -1156,7 +1167,7 @@ configuration_checks() {
     for cmd in home h env e exec x; do
         reset
         case "$cmd" in
-            exec|x) run 0 "$cmd" -- "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"' ;;
+            exec|x) run 0 "$cmd" _ "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"' ;;
             *) run 0 "$cmd" ;;
         esac
         diagnostic 'Successfully installed 25+1-temurin'
@@ -1183,15 +1194,19 @@ configuration_checks() {
     run 0 e; diagnostic 'Successfully installed 22+1-temurin'
     check 'selectorless fallback installation, local distro independence and failures'
 
-    for args in 'java=' 'java=0' 'java=21 # inline' 'java="21"' 'java=$HOME' 'java=$(touch sentinel)' 'java=`touch sentinel`' 'distro=bad/name' 'unknown=21' 'java=21\njava=22' 'distro=vendor\ndistro=temurin' 'invalid'; do
+    for args in 'java=' 'java=_' 'java=0' 'java=21 # inline' 'java="21"' 'java=$HOME' 'java=$(touch sentinel)' 'java=`touch sentinel`' 'distro=bad/name' 'unknown=21' 'java=21\njava=22' 'distro=vendor\ndistro=temurin' 'invalid'; do
         printf '%b\n' "$args" > .jvmrc
         run 1 home; [ -s "$TEMP/err" ] || fail 'missing configuration diagnostic'
+        run 1 exec _ "$BASH_BIN" -c 'exit 99'
+        [ -s "$TEMP/err" ] || fail 'missing exec configuration diagnostic'
     done
     [ ! -e sentinel ] || fail 'executed configuration data'
     printf 'bad=config\n' > .jvmrc
     printf 'unknown=global\n' > "$XDG_CONFIG_HOME/jvm/config"
     # Explicit local selection and unaffected commands never consult configuration.
     for cmd in home env; do run 0 "$cmd" 22+1-temurin; done
+    run 0 exec 22+1-temurin "$BASH_BIN" -c 'printf "%s\n" "$JAVA_HOME"'
+    contains '/22+1-temurin'
     run 0 exec --help
     run 0 --help; run 0 --version
     run 0 available; run 0 list

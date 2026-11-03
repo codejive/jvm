@@ -99,7 +99,7 @@ function Initialize-CachePath {
 function Initialize-Host {
     if ($script:HostReady) { return }
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
-        Stop-Jvm 'jvm.ps1 requires Windows'
+        Stop-Jvm 'jvm requires Windows'
     }
     $machine = [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITEW6432')
     if ([string]::IsNullOrWhiteSpace($machine)) {
@@ -840,9 +840,9 @@ function Initialize-ManagedDefault {
     try { Set-ManagedDefault $Id $Name -Initial }
     catch {
         if ($Name -eq 'default') {
-            Stop-Jvm 'JDK installed, but default selection failed; run jvm.ps1 default <ID>'
+            Stop-Jvm 'JDK installed, but default selection failed; run jvm default <ID>'
         }
-        Stop-Jvm "JDK installed, but Java $Name default selection failed; run jvm.ps1 default -v $Name <ID>"
+        Stop-Jvm "JDK installed, but Java $Name default selection failed; run jvm default -v $Name <ID>"
     }
 }
 
@@ -1417,7 +1417,7 @@ function Invoke-HomeOrEnvironment {
     if (-not $alreadyPresent) {
         $lines += '$env:PATH = ' + (ConvertTo-PowerShellLiteral ($bin + ';')) + ' + $env:PATH'
     }
-    # One complete string also supports Invoke-Expression (& .\jvm.ps1 env ...).
+    # One complete string also supports Invoke-Expression (& .\jvm env ...).
     Write-Output ($lines -join "`n")
 }
 
@@ -1627,9 +1627,9 @@ function Invoke-Uninstall {
 
 function Show-Help {
     Write-Output (@'
-jvm.ps1 finds and installs Java Development Kits for this computer.
+jvm finds and installs Java Development Kits for this computer.
 
-Usage: .\jvm.ps1 <command> [options] [selector]
+Usage: .\jvm <command> [options] [selector]
 
 Commands:
   available, a [-t] [selector]      Show compatible JDKs available to download.
@@ -1639,12 +1639,16 @@ Commands:
   default, d [-v <major>] [selector]  Show or select a persistent default.
   home, h [selector]           Print an installed JDK home or default path.
   env, e [-f] [selector]       Print PowerShell environment assignments.
-  exec, x [selector] --- <command> [args...]  Run with a selected JDK.
+  exec, x <selector> [--] <command> [args...]  Run with a selected JDK.
   --help                            Show this help.
   --version                         Show the jvm version.
 
 default/home/env/exec install automatically when no installed JDK matches.
 Without a selector, default only queries its reference.
+exec requires a selector; _ uses project java, user java, default, then fallback.
+The _ placeholder is exclusive to exec/x and is not a configuration value.
+One optional -- immediately after the exec selector is skipped.
+The command and all later arguments are forwarded unchanged.
 
 Selectors:
   available/list: major (21), distro (temurin), or distro-major (temurin-21).
@@ -1664,7 +1668,7 @@ Configuration (optional, literal key=value lines):
   .\.jvmrc, then $XDG_CONFIG_HOME\jvm\config (or ~/.config/jvm/config).
   Keys: java=21+ and distro=graalvm-community. No parent-directory lookup.
   CLI selector > project java > user java. Install falls back to major {0}.
-  home/env/exec then use the installed default, or major {0} if it is absent.
+  Omitted home/env selectors and exec _ then use the installed default, or major {0} if it is absent.
 
 PowerShell examples:
   jvm install
@@ -1673,7 +1677,8 @@ PowerShell examples:
   jvm default -v 21 temurin-21
   jvm home 21
   iex (jvm env temurin-21)
-  jvm x 21 --- java.exe -version
+  jvm x 21 java.exe -version
+  jvm x _ -- java.exe -version
 
 Shell setup (once, in your PowerShell profile):
   $env:JAVA_HOME = "$HOME\.local\share\jvm\jdks\default"
@@ -1693,48 +1698,55 @@ function Invoke-Jvm {
         return
     }
     if ($command -notin @('available', 'install', 'uninstall', 'list', 'default', 'home', 'env', 'exec')) {
-        Stop-Jvm 'usage: jvm.ps1 <command> [selector]; use jvm.ps1 --help' 2
+        Stop-Jvm 'usage: jvm <command> [selector]; use jvm --help' 2
     }
     $remaining = @($Arguments | Select-Object -Skip 1)
     if ($remaining.Count -eq 1 -and $remaining[0] -eq '--help') { Show-Help; return }
     $selector = ''; $option = ''; $majorOption = ''; $forcePath = $false; $showType = $false
-    $commandArgs = @(); $separator = $false
-    for ($i = 0; $i -lt $remaining.Count; $i++) {
-        $argument = [string]$remaining[$i]
-        if ($command -eq 'exec' -and ($argument -eq '--' -or $argument -eq '---')) {
-            $separator = $true
-            if ($i + 1 -lt $remaining.Count) { $commandArgs = @($remaining | Select-Object -Skip ($i + 1)) }
-            break
+    $commandArgs = @()
+    if ($command -eq 'exec') {
+        if (-not $remaining.Count -or -not $remaining[0]) {
+            Stop-Jvm 'usage: jvm exec <selector> [--] <command> [args...]' 2
         }
-        if ($command -eq 'default' -and $argument -eq '-v') {
-            if ($majorOption -or $i + 1 -ge $remaining.Count -or
-                -not (Test-Major ([string]$remaining[$i + 1]))) {
-                Stop-Jvm '-v requires one positive Java major' 2
+        $selector = $remaining[0]
+        $commandIndex = 1
+        if ($remaining.Count -gt $commandIndex -and $remaining[$commandIndex] -ceq '--') {
+            $commandIndex++
+        }
+        if ($remaining.Count -le $commandIndex -or -not $remaining[$commandIndex]) {
+            Stop-Jvm 'usage: jvm exec <selector> [--] <command> [args...]' 2
+        }
+        $commandArgs = @($remaining | Select-Object -Skip $commandIndex)
+        if ($selector -ceq '_') { $selector = '' }
+    } else {
+        for ($i = 0; $i -lt $remaining.Count; $i++) {
+            $argument = [string]$remaining[$i]
+            if ($command -eq 'default' -and $argument -eq '-v') {
+                if ($majorOption -or $i + 1 -ge $remaining.Count -or
+                    -not (Test-Major ([string]$remaining[$i + 1]))) {
+                    Stop-Jvm '-v requires one positive Java major' 2
+                }
+                $majorOption = [string]$remaining[$i + 1]; $i++; continue
             }
-            $majorOption = [string]$remaining[$i + 1]; $i++; continue
+            if (($command -eq 'available' -and $argument -eq '-t') -or
+                ($command -eq 'env' -and $argument -eq '-f')) {
+                if (($command -eq 'available' -and $showType) -or
+                    ($command -eq 'env' -and $forcePath)) { Stop-Jvm 'duplicate flag' 2 }
+                if ($command -eq 'available') { $showType = $true } else { $forcePath = $true }
+                continue
+            }
+            if ($argument -eq '-d' -and $command -eq 'install') {
+                if ($option) { Stop-Jvm 'duplicate flag' 2 }
+                $option = $argument; continue
+            }
+            if ($argument.StartsWith('-')) { Stop-Jvm "unsupported flag: $argument" 2 }
+            if (-not $argument -or $selector) { Stop-Jvm 'expected one nonempty selector' 2 }
+            $selector = $argument
         }
-        if (($command -eq 'available' -and $argument -eq '-t') -or
-            ($command -eq 'env' -and $argument -eq '-f')) {
-            if (($command -eq 'available' -and $showType) -or
-                ($command -eq 'env' -and $forcePath)) { Stop-Jvm 'duplicate flag' 2 }
-            if ($command -eq 'available') { $showType = $true } else { $forcePath = $true }
-            continue
-        }
-        if ($argument -eq '-d' -and $command -eq 'install') {
-            if ($option) { Stop-Jvm 'duplicate flag' 2 }
-            $option = $argument; continue
-        }
-        if ($argument.StartsWith('-')) { Stop-Jvm "unsupported flag: $argument" 2 }
-        if (-not $argument -or $selector) { Stop-Jvm 'expected one nonempty selector' 2 }
-        $selector = $argument
-    }
-    if ($command -eq 'exec' -and (-not $separator -or -not $commandArgs.Count -or
-        -not $commandArgs[0])) {
-        Stop-Jvm 'usage: jvm exec [selector] --- <command> [args...]' 2
     }
     if (-not $selector) {
         if ($command -eq 'uninstall') {
-            Stop-Jvm 'usage: jvm.ps1 uninstall <selector>' 2
+            Stop-Jvm 'usage: jvm uninstall <selector>' 2
         }
     }
     if ($command -in @('install', 'home', 'env', 'exec', 'default', 'uninstall') -and $selector) {

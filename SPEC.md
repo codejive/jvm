@@ -20,7 +20,7 @@ jvm uninstall <selector>
 jvm default [-v <major>] [selector]
 jvm home [selector]
 jvm env [-f] [selector]
-jvm exec [selector] -- <command> [args...]
+jvm exec <selector> [--] <command> [args...]
 ```
 
 Single-letter aliases behave exactly like their commands: `a` available, `l`
@@ -31,7 +31,8 @@ detection, storage, networking or external utilities. Help gives a purpose
 statement, command descriptions, selectors, options, shell setup and examples.
 Help renders the fallback major from the script's default-version constant.
 
-Flags may precede or follow the selector. `-t` is accepted only by `available`,
+For commands other than `exec`, flags may precede or follow the selector.
+`-t` is accepted only by `available`,
 `-d` only by `install`, `-f` only by `env`, and `-v <major>` only by
 `default`. Repeated or unsupported flags, empty selectors, excess arguments and
 invalid selector syntax exit 2 before any side effect.
@@ -176,9 +177,9 @@ Temurin), then continues with the exact installed ID. Ambiguity, invalid
 references and operational failures never install. No remote check is made when
 a usable local match exists.
 
-Without an explicit or configured selector, `default` and `default -v N` read
-their reference; `home`/`env` use the stable `jdks/default` path and `exec` uses
-its target's physical home. With neither configuration nor a default,
+With an omitted selector (`_` for `exec`) and no configured selector, `default`
+and `default -v N` read their reference; `home`/`env` use the stable
+`jdks/default` path and `exec` uses its target's physical home. With neither configuration nor a default,
 `home`/`env`/`exec` resolve major 25 using the same local-first rules, installing
 it if needed.
 A dangling or unusable default reports `jvm: default JDK is missing or unusable`
@@ -227,9 +228,9 @@ once the project file supplies the needed key.
   (then `temurin`). It does not filter local selection. A distro inside a
   configured `java` is retained.
 - `install` without selector: `java`, then major 25.
-- `home`/`env`/`exec` without selector: configured `java`, then the global
-  default, then major 25 when both are absent. A configured selector that fails
-  does not fall through.
+- `home`/`env` without selector, or `exec` with `_`: configured `java`, then
+  the global default, then major 25 when both are absent. A configured selector
+  that fails does not fall through.
 - `available`, `list`, `default` and `uninstall` ignore configuration.
 
 ## `home`, `env` and `exec`
@@ -271,11 +272,28 @@ emits equivalent PowerShell `$env:` assignments, for example
 `exec` runs `<command>` with `JAVA_HOME` set and the selected JDK's `bin` first
 on `PATH` (always prepended). It uses the physical home, never a mutable link,
 and does not change the parent shell. Automatic installation initializes missing
-defaults using the normal installation rules. Syntax errors (no `--`, empty
-command) exit 2 before host detection or storage access with `jvm: usage: jvm exec [selector] --
-<command> [args...]`. The separator is `--` or `---`, both accepted by both
-implementations; Bash usage and help show `--`, PowerShell shows `---`. Only
-the first separator counts; everything after is passed to the child unchanged.
+defaults using the normal installation rules. The selector is required. A literal
+`_` in that position resolves as an omitted selector: project `java`, then user
+`java`, then the global default, then major 25. Configuration errors and failed
+configured selection do not fall through; an unusable default is an error.
+`_` is an `exec`/`x`-only placeholder, outside the shared selector grammar and
+configuration values. Other commands give it no placeholder meaning; their
+existing exact-directory ID rules still apply. Exec reserves `_` even if an
+installation directory has that name.
+
+After consuming the selector, exactly one argument is skipped if it is literally
+`--`. The remaining command must be nonempty. The command and every subsequent
+argument (including empty strings, flags and literal `--`) are forwarded unchanged;
+no later separators or manager flags are parsed. Missing or empty selectors or
+commands exit 2 before host detection, storage, networking or installation, with
+`jvm: usage: jvm exec <selector> [--] <command> [args...]`. Ordinary explicit
+selectors retain their existing validation and bypass configured Java selection.
+`exec --help` and `x --help` retain the command-only help exception.
+
+Examples: `jvm x 21 java -version`, `jvm x 21 -- java -version`,
+`jvm x temurin-21 javac Example.java`, `jvm x 21+ java Example.java`,
+`jvm x _ java -version`, and `jvm x _ -- java -version`.
+
 Bash replaces itself with the child (`exec "$@"`), restoring umask and cleaning
 private staging first.
 
@@ -557,15 +575,18 @@ Last-Modified and last-check metadata.
 - **`jvm.cmd`**: a thin launcher for `cmd.exe` and double-click use. It runs
   the `jvm.ps1` beside it with `powershell.exe -NoProfile -ExecutionPolicy
   Bypass -File`, forwards all arguments and returns its exit code. It contains
-  no logic. Because `cmd.exe` has no `---` problem, `--` and `---` both work.
+  no parsing logic.
 - Fixtures, tests and contributor tooling stay outside the shipped scripts and
   are never runtime dependencies. No runtime dependency on Java.
 
 ### PowerShell boundaries
 
-- The parser removes an unquoted `--` at a prompt, so use `---` there (`--`
-  still works with `-File` and `cmd.exe`). A later unquoted `--` meant for the
-  child must be quoted.
+- PowerShell can consume an unquoted `--` at a prompt. Separator-free exec
+  invocation and a literal optional separator both work with the argument vector
+  received by the script. A literal `--` intended for the child must be quoted.
+- The `_` placeholder works through `-File` and `jvm.cmd`. Windows PowerShell
+  5.1 rejects a standalone `-` among child arguments to `-File` before script
+  entry; direct script invocation at a PowerShell prompt accepts that argument.
 - `exec` starts `.exe`/`.com` directly. `.bat`/`.cmd` run through `cmd.exe`,
   which re-parses their arguments as it would without `jvm`. `.ps1` scripts run
   with `powershell.exe -NoProfile -NonInteractive -File` (Windows PowerShell

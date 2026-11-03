@@ -1,5 +1,33 @@
 # Discovery, installation and uninstallation verification
 
+Underscore placeholder verification (2026-11-03): exec/x now use `_` for
+configuration/default/fallback selection in both entry points. Help, examples,
+optional real-JDK smoke calls and native Windows smoke calls agree. The thin
+`jvm.cmd` uses `-File`; no argument encoding is needed. Bash syntax checks for
+`jvm` and all Bash tests, PowerShell syntax checks, focused Bash `--execution`,
+`--config` (five groups), and `--help-only` checks, and all 27 Windows PowerShell
+5.1 smoke checks passed. New launcher tests verify `_` with both aliases and
+optional separator forms, spaced launcher paths, empty/spaced arguments, literal
+expressions and child separators, and child/usage exit codes. `git diff --check`
+passed. Distributed sizes: `jvm` 67,937 bytes; `jvm.ps1` 77,120 bytes; `jvm.cmd`
+116 bytes. ShellCheck was unavailable. No live downloads, additional platforms,
+alternative shells, or full Bash suite rerun were performed for this follow-up.
+
+Initial exec syntax verification (2026-11-03): both entry points require
+`exec <selector> [--] <command> [args...]` (also `x`), with an explicit placeholder for
+configuration/default/fallback selection. Obsolete exec separator branches and
+dedicated tests were removed. Bash syntax checks for `jvm` and all Bash test
+scripts, PowerShell syntax checks, the discovery phase of `tests/run.sh`
+(56 checks), `tests/install.sh` (34 groups), focused `--execution` and `--config`
+checks, `tests/home-env.sh`, and the Windows PowerShell 5.1 smoke suite (26 checks)
+passed using installed Windows Bash 5.3.15 and PowerShell 5.1.26100.9711.
+An initial broad installation run encountered a permission-denied rename in
+private temporary storage; a complete standalone retry passed. `git diff --check`
+passed. Distributed sizes: `jvm` 67,937 bytes, `jvm.ps1` 77,156 bytes, `jvm.cmd`
+116 bytes; both entry points retain LF endings. ShellCheck was unavailable.
+No live downloads, real-JDK smoke, native junction smoke, alternative shells,
+Bash 3.2, PowerShell 7, or additional native platforms were run for this change.
+
 Windows Bash baseline (2026-11-03): Windows uses current Git Bash, MSYS2 and
 Cygwin only. The Cygwin Bash 3.2 job, source patch, build dependencies and
 temporary interpreter staging have been removed. The local build helper and
@@ -235,7 +263,7 @@ Cygwin, including Cygwin's Bash 3.2 build, remain unverified locally.
 
 Configuration defaults (2026-11-02): `bash tests/install.sh --config` covers
 independent project/global Java and distro inheritance, explicit selectors,
-full IDs and ranges, selectorless install/`-d`, selectorless home/env/exec,
+full IDs and ranges, selectorless install/`-d`, selectorless home/env and exec with `_`,
 aliases, installed defaults versus major 25, broken references,
 configured misses, local ambiguity and operational failures without installation.
 It also checks literal parsing, duplicate/unknown/empty/invalid settings,
@@ -333,15 +361,17 @@ checks, 19 installation checks and the home/env suite) before shell removal.
 After removal, Bash syntax checks, `bash tests/run.sh --help-only` and
 `bash tests/install.sh --execution` passed under native Git Bash; the full suite
 was not rerun. Script size: 53,499 bytes.
-Optional exec selector (2026-11-01): execution checks also cover the full usage
-diagnostic, no-selector execution through the global default for both `exec`
-and `x`, child status propagation, missing/dangling/unrelated defaults, retaining
-the physical home when the global reference changes, simulated Windows default
-conversion, and selectorless installation fallback. The focused execution checks,
-help checks, `bash tests/home-env.sh` and Bash syntax validation passed under native Git Bash. Script
-size: 53,685 bytes.
-Native Linux/macOS/Cygwin/standalone MSYS2, Bash 3.2 and real-JDK
-execution remain unverified; ShellCheck was unavailable.
+Exec selection coverage uses the required selector, with `_` for implicit
+resolution through configuration, the global default or fallback major. Both
+separator-free invocation and one optional `--` are exercised. Argument fidelity
+includes empty strings, child flags and later literal `--` arguments. Malformed
+usage checks run without manager state changes. The PowerShell suite covers
+project/user/default/fallback resolution and configuration/selection failures
+through `_`, plus its lack of placeholder meaning in other commands and its
+rejection as a configuration value.
+Placeholder tests cover both prompt syntax and the `-File` launcher. The
+`jvm.cmd` tests also check spaces, empty arguments, literal expressions and child
+separators, launcher paths containing spaces, and exit status preservation.
 
 Version ranges (2026-11-02): `bash tests/install.sh --ranges` covers open and
 inclusive major bounds, equal bounds, malformed/reversed bounds, hyphenated

@@ -70,8 +70,8 @@ jvm install "$id"
 [ "$(jvm home "$id")" = "$home" ] || fail 'reinstall changed the physical home'
 
 step 'real java/javac execution and compilation through jvm exec'
-jvm exec -- java -version
-jvm exec "$id" -- javac -version
+jvm exec _ java -version
+jvm exec "$id" javac -version
 cat > JvmSmoke.java <<'EOF'
 import java.io.File;
 
@@ -90,9 +90,9 @@ public class JvmSmoke {
     }
 }
 EOF
-jvm exec "$id" -- javac JvmSmoke.java
+jvm exec "$id" javac JvmSmoke.java
 [ -f JvmSmoke.class ] || fail 'javac did not produce a class file'
-output=$(jvm exec -- java -cp . JvmSmoke 'argument with spaces')
+output=$(jvm exec _ java -cp . JvmSmoke 'argument with spaces')
 # Native Windows Java emits CRLF; command substitution removes only LF.
 output=${output%$'\r'}
 [ "$output" = 'jvm real JDK smoke passed' ] || fail "unexpected program output: $output"
