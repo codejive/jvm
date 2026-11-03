@@ -1184,8 +1184,13 @@ function Write-InstallationManifest {
 
 function Initialize-InstalledDefaults {
     param([string]$Id, [string]$Major, [string]$MakeDefault)
-    if ($Major) { Initialize-ManagedDefault $Id $Major }
-    if ($MakeDefault -eq '-d') { Set-ManagedDefault $Id; Write-DefaultReport $Id 'default' }
+    $options = $MakeDefault -split ' '
+    if ($options -contains '-v') {
+        if (-not $Major) { Stop-Jvm 'cannot select a per-major default: selected JDK has no valid Java major' }
+        Set-ManagedDefault $Id $Major
+        Write-DefaultReport $Id $Major
+    } elseif ($Major) { Initialize-ManagedDefault $Id $Major }
+    if ($options -contains '-d') { Set-ManagedDefault $Id; Write-DefaultReport $Id 'default' }
     else { Initialize-ManagedDefault $Id 'default' }
 }
 
@@ -1633,7 +1638,7 @@ Usage: .\jvm <command> [options] [selector]
 
 Commands:
   available, a [-t] [selector]      Show compatible JDKs available to download.
-  install, i [-d] [selector]        Download, verify and install a JDK.
+  install, i [-d] [-v] [selector]   Download, verify and install a JDK.
   uninstall, u <selector>           Remove an installed JDK.
   list, l [selector]                Show JDK folders and manifest status, offline.
   default, d [<major>]          Query the global or Java-major default.
@@ -1663,6 +1668,8 @@ Selectors:
 Options:
   -t  available: show release type/features in a final TYPE column.
   -d  install: make the installed JDK the persistent default.
+  -v  install: make the installed JDK the default for its Java major.
+      Combine -d and -v to select both defaults (major first, then global).
   -f  env: always print the PATH assignment.
 
 Configuration (optional, literal key=value lines):
@@ -1678,8 +1685,7 @@ PowerShell examples:
   jvm default set 21 temurin-21
   jvm home 21
   iex (jvm env temurin-21)
-  jvm x 21 java.exe -version
-  jvm x _ -- java.exe -version
+  jvm x _ java.exe -version
 
 Shell setup (once, in your PowerShell profile):
   $env:JAVA_HOME = "$HOME\.local\share\jvm\jdks\default"
@@ -1751,9 +1757,9 @@ function Invoke-Jvm {
                 if ($command -eq 'available') { $showType = $true } else { $forcePath = $true }
                 continue
             }
-            if ($argument -eq '-d' -and $command -eq 'install') {
-                if ($option) { Stop-Jvm 'duplicate flag' 2 }
-                $option = $argument; continue
+            if ($argument -in @('-d', '-v') -and $command -eq 'install') {
+                if (($option -split ' ') -contains $argument) { Stop-Jvm 'duplicate flag' 2 }
+                $option = ($option + ' ' + $argument).Trim(); continue
             }
             if ($argument.StartsWith('-')) { Stop-Jvm "unsupported flag: $argument" 2 }
             if (-not $argument -or $selector) { Stop-Jvm 'expected one nonempty selector' 2 }

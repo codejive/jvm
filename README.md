@@ -114,7 +114,7 @@ jvm <command> [options] [selector]
 | Command | Purpose |
 | --- | --- |
 | `available`, `a [-t] [selector]` | Show compatible JDKs available to download |
-| `install`, `i [-d] [selector]` | Download, verify and install a JDK (`-d` makes it the default) |
+| `install`, `i [-d] [-v] [selector]` | Download, verify and install a JDK (`-d` selects the global default; `-v` selects its major default) |
 | `uninstall`, `u <selector>` | Remove an installed JDK |
 | `list`, `l [selector]` | Show installed JDKs, even offline |
 | `default [<major>]`, `d [<major>]` | Query the global or per-major default offline |
@@ -149,6 +149,8 @@ Examples:
 jvm available temurin              # what can be installed
 jvm install                        # install the default JDK (Temurin 25)
 jvm i -d temurin-21                # install Temurin 21 and make it the default
+jvm i -v temurin-25                # install Temurin 25 and select its major default
+jvm i -d -v temurin-25             # select both defaults (major first, then global)
 jvm list                           # what is installed
 jvm default set 21 temurin-21      # set the default for Java 21
 jvm home 21                        # print JDK 21's home, installing if needed

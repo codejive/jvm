@@ -422,6 +422,40 @@ try {
     Assert-Equal (Invoke-JvmTest @('default')) $id 'Ambiguity changed global default.'
     Write-TestPass 'ambiguous selection reports candidate IDs and defaults on stderr'
     Invoke-JvmTest @('install', $secondId) | Out-Null
+    foreach ($arguments in @(@('install', '-v', '-v', $id), @('i', '-d', '-v', $id, '-d'),
+            @('home', '-v', $id), @('install', '-v', '21', '25'))) {
+        [void](Invoke-JvmTest $arguments -ExpectedExitCode 2)
+    }
+    $streams = Invoke-JvmTest @('install', $secondId, '-v') -Redirect -Streams
+    Assert-Equal $streams.Out '' 'install -v wrote to stdout.'
+    Assert-Equal ($streams.Err -replace "`r`n", "`n") "Java 21 default JDK set to: $secondId`nAlready installed $secondId" `
+        'install -v confirmation mismatch.'
+    Assert-Equal (Invoke-JvmTest @('default', '21')) $secondId 'install -v did not replace major default.'
+    Assert-Equal (Invoke-JvmTest @('default')) $id 'install -v replaced global default.'
+    foreach ($arguments in @(@('i', '-v', $id, '-d'), @('install', '-d', '-v', $secondId))) {
+        [void](Invoke-JvmTest $arguments)
+        $expectedId = if ($arguments -contains $secondId) { $secondId } else { $id }
+        Assert-Equal (Invoke-JvmTest @('default')) $expectedId 'Combined flags lost global selection.'
+        Assert-Equal (Invoke-JvmTest @('default', '21')) $expectedId 'Combined flags lost major selection.'
+    }
+    # A blocked major update stops before global selection; a blocked global
+    # update retains the major selection that has already succeeded.
+    $majorLink = Join-Path $data 'jvm\jdks\21'
+    $globalLink = Join-Path $data 'jvm\jdks\default'
+    [IO.Directory]::Delete($majorLink)
+    [IO.File]::WriteAllText($majorLink, 'keep')
+    [void](Invoke-JvmTest @('install', '-d', '-v', $id) -ExpectedExitCode 1)
+    Assert-Equal (Invoke-JvmTest @('default')) $secondId 'Failed major update changed global default.'
+    [IO.File]::Delete($majorLink)
+    [IO.Directory]::Delete($globalLink)
+    [IO.File]::WriteAllText($globalLink, 'keep')
+    $streams = Invoke-JvmTest @('install', '-v', $id, '-d') -ExpectedExitCode 1 -Redirect -Streams
+    Assert-Equal $streams.Out '' 'Failed combined selection wrote to stdout.'
+    Assert-Equal (Invoke-JvmTest @('default', '21')) $id 'Failed global update rolled back major selection.'
+    Assert-Equal ([IO.File]::ReadAllText($globalLink)) 'keep' 'Combined flags replaced unrelated data.'
+    [IO.File]::Delete($globalLink)
+    [void](Invoke-JvmTest @('install', '-v', '-d', $secondId))
+    Write-TestPass 'install -v replaces the major default, combines with -d and preserves partial successes'
     Invoke-JvmTest @('default', 'set', $secondId) | Out-Null
     Invoke-JvmTest @('default', 'set', '21', $secondId) | Out-Null
     Assert-Equal (Invoke-JvmTest @('default')) $secondId 'Global default replacement failed.'

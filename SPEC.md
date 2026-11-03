@@ -15,7 +15,7 @@ jvm --help
 jvm --version
 jvm available [-t] [selector]
 jvm list [selector]
-jvm install [-d] [selector]
+jvm install [-d] [-v] [selector]
 jvm uninstall <selector>
 jvm default
 jvm default <major>
@@ -37,7 +37,7 @@ Help renders the fallback major from the script's default-version constant.
 For commands other than `exec` and `default`, flags may precede or follow the
 selector.
 `-t` is accepted only by `available`,
-`-d` only by `install`, and `-f` only by `env`.
+`-d` and `-v` only by `install`, and `-f` only by `env`.
 Repeated or unsupported flags, empty selectors, excess arguments and
 invalid selector syntax exit 2 before any side effect.
 
@@ -86,7 +86,7 @@ at four stops; longer values stay untruncated with one separating tab.
   filters it, returning every match without ambiguity errors. With no
   installations it prints `No JDKs are installed. Use 'install' to install one`
   and exits 0. A selector that matches nothing in a nonempty inventory exits 1.
-- `install [-d] [selector]` first resolves range selectors against installed
+- `install [-d] [-v] [selector]` first resolves range selectors against installed
   JDKs, reporting `Already installed <ID>` when a match exists, using the same
   local selection rules as `home`, `env` and `exec`. Only a genuine local miss
   resolves a remote artifact for a range. Other selectors resolve one remote
@@ -94,8 +94,16 @@ at four stops; longer values stay untruncated with one separating tab.
   idempotent (an existing complete installation reports `Already installed`
   without downloading). A first install initializes a missing default and
   per-major default but never replaces existing ones; `-d` installs and selects
-  the global default, even when already installed. A failed selection preserves
-  the previous default, though the published JDK stays installed. Without a
+  the global default, even when already installed. `-v` selects the default for
+  the resolved JDK's own Java major, replacing an existing selection for that
+  major, including when reusing an installation. It is boolean and takes no
+  version argument. `-d` and `-v` may be combined as separate flags in either
+  order, before or after the selector; duplicate flags are invalid. A failed
+  reference update preserves that reference's previous default, though the
+  published JDK stays installed. Major selection or initialization runs first,
+  then global selection or initialization. The two updates are not a transaction:
+  a later failure exits 1 and retains the earlier successful update. With `-v`,
+  an unknown Java major fails before either update. Without a
   selector it uses project `java`, user `java`, then major 25.
 - `uninstall <selector>` is described under [Uninstallation](#uninstallation).
 - `default` prints the current global default ID, or `No JDK currently
@@ -213,7 +221,7 @@ one (`home 21+` or `install 21+` with only Java 21 installed uses it offline).
 This local-first policy applies to explicit and configured install ranges;
 the configured installation distro does not filter local matches. Local
 resolution failures never trigger a remote installation. Reused range matches
-follow the normal install default initialization and `-d` rules.
+follow the normal install default initialization and `-d`/`-v` rules.
 
 ### Project and user configuration
 
@@ -438,13 +446,18 @@ Lifecycle:
 - A successful first install, including an idempotent one, creates a missing
   global default and a missing major default (the first creator wins under
   concurrency, announcing `Default JDK set to: <ID>` before the install
-  message). Later installs never replace references or unrelated data. If link
+  message). Later installs preserve existing references unless explicitly
+  selecting them with `-d` or `-v`; unrelated data is never replaced. If link
   creation fails, the JDK stays installed and the command exits 1 with an
   explanation.
 - `default set <selector>` replaces the global reference; `default set N <selector>`
   replaces major N's reference and requires the selected JDK to be major N.
   Explicit global changes (including `install -d`) leave major references alone
-  and vice versa. A mismatch changes nothing.
+  and vice versa, apart from normal missing-reference initialization during
+  installation. `install -v` explicitly selects the resolved JDK's major default;
+  `install -d -v` explicitly selects both, major first. Each successful explicit
+  selection is announced on stderr (`Java N default JDK set to: <ID>` for a
+  major). A mismatch changes nothing.
 - Replacement stages a verified link in `jvm/tmp/default.XXXXXXXX`, then swaps
   it with `mv -fT` (GNU) or `mv -fh` (BSD) without following the destination.
   Unrelated files, directories or links outside the managed inventory are never
@@ -614,6 +627,49 @@ Last-Modified and last-check metadata.
 
 ## Open items
 
+- **Roadmap idea: installer for the `jvm` tool.** Provide a hosted bootstrap
+  installer for Bash and Windows PowerShell, plus an invocation from CMD.
+  Proposed commands (endpoints are not yet provided or verified):
+
+  ```bash
+  curl -fsSL https://getjvm.dev/sh | bash
+  ```
+
+  ```powershell
+  iex (irm 'https://getjvm.dev/ps1')
+  ```
+
+  CMD could invoke the PowerShell installer through Windows PowerShell:
+
+  ```cmd
+  powershell.exe -NoProfile -Command "iex (irm 'https://getjvm.dev/ps1')"
+  ```
+
+  These examples use the project's existing `getjvm.dev` domain. The installer
+  would install the tool itself, distinct from `jvm install` downloading a JDK.
+  Investigate project-local versus user-wide placement, PATH setup and the
+  existing manual shell-setup policy, installing `jvm.ps1` together with
+  `jvm.cmd` on Windows, release/version selection, updates and removal, and
+  download verification and interrupted-install recovery. Validate quoting and
+  bootstrap behavior on supported shells, including Windows PowerShell 5.1 and
+  CMD. This is a roadmap proposal, not an available installer or a change to
+  current installation and shell-setup behavior.
+- **Roadmap investigation: minimum-major selectors by default.** Consider
+  changing `25` from exactly major 25 to major 25 or higher (currently `25+`),
+  with `25!` expressing exactly major 25. The motivation is that a requested
+  Java major more often means a minimum requirement than an exact requirement.
+  Backward compatibility is not a goal. This is an investigation idea, not an
+  adopted selector change; the selector rules above remain current behavior.
+  Investigate parsing ambiguity and whether the overall syntax becomes worse:
+  distro-qualified forms such as `temurin-25!` and `temurin-25`, bounded ranges,
+  full-ID precedence and manually named directories, and the fate of `25+`.
+  Assess `!` quoting and argument handling in supported shells and launchers
+  (including interactive Bash history expansion and cmd.exe delayed expansion),
+  configuration and generated `env` usage comments. Evaluate effects on
+  per-major references, fallback selection, local-first range resolution,
+  `default set N <selector>`, and `uninstall`'s exclusion of ranges. Compare
+  representative command and configuration examples for clarity and convenience before
+  deciding whether to adopt the change in both implementations.
 - **TODO:** extend `tests/powershell.ps1` with offline coverage of the
   PowerShell network and archive paths: a local `HttpListener` server, index
   fetching and 304/cache handling, ZIP and `tar.gz` installation, checksum

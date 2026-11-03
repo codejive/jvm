@@ -1,5 +1,25 @@
 # Discovery, installation and uninstallation verification
 
+Install major-default verification (2026-11-03): `install -v` selects the
+resolved JDK's major default in both entry points; `-d -v` selects the major
+then global default, retaining a successful major update if the global update
+fails. The Bash flags group covers new installs, offline exact IDs and ranges,
+configured selectors, legacy Java versions, duplicate/unsupported flags before
+side effects, unknown majors, failed/interrupted major replacement and partial
+success. The PowerShell suite covers per-major replacement, both flag orders,
+plain stderr, usage errors and failures at either reference update.
+
+Bash syntax validation, focused `--flags`, `--defaults`, `--ranges` and
+`--help-only` checks passed under installed Git Bash 5.3.15. All 29 isolated
+Windows PowerShell 5.1.26100.9711 smoke checks passed. An initial run exposed
+a CRLF-versus-LF assertion mismatch in the new multiline confirmation check;
+normalizing the assertion's line endings fixed it. PowerShell syntax parsing
+and `git diff --check` passed. Distributed sizes: `jvm` 69,032 bytes,
+`jvm.ps1` 78,684 bytes, `jvm.cmd` 116 bytes; both entry points retain LF endings.
+ShellCheck was unavailable. No live downloads, real-JDK execution, additional
+platforms, alternative shells or Bash 3.2 checks were run. PowerShell
+network/archive paths retain their existing verification gaps.
+
 Default grammar verification (2026-11-03): `default [<major>]` queries a
 reference offline; `default set [<major>] <selector>` selects a JDK, with the
 same forms for `d`. One argument after `set` is a selector; two are a scope

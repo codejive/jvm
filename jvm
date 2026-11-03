@@ -62,7 +62,7 @@ Usage: jvm <command> [options] [selector]
 
 Commands:
   available, a [-t] [selector]      Show compatible JDKs available to download.
-  install, i [-d] [selector]   Download, verify and install a JDK in user storage.
+  install, i [-d] [-v] [selector] Download, verify and install a JDK in user storage.
   uninstall, u <selector>      Remove an installed JDK from user storage.
   list, l [selector]           Show JDK folders and manifest status, even offline.
   default, d [<major>]     Query the global or Java-major default.
@@ -95,6 +95,8 @@ Selectors:
 Options:
   -t  available: show release type/features in a final TYPE column.
   -d  install: make the installed JDK the persistent default.
+  -v  install: make the installed JDK the default for its Java major.
+      Combine -d and -v to select both defaults (major first, then global).
   -f  env: always print the PATH export, even when bin is already on PATH.
 
 Configuration (optional, literal key=value lines):
@@ -114,8 +116,7 @@ Examples:
   jvm default set 21 temurin-21
   jvm home 21
   eval "$(jvm env temurin-21)"
-  jvm x 21..26 java -version
-  jvm x _ -- java -version
+  jvm x _ java -version
 
 Shell setup (once, in your shell profile):
   Unix:
@@ -1290,10 +1291,16 @@ extract_jdk() {
 }
 
 install_default() {
-    local major=
+    local major= options=" ${1:-} "
     installation_major "$INSTALLED_ID" && major=$REPLY
-    [ -z "$major" ] || initialize_default "$INSTALLED_ID" "$major" || return 1
-    if [ "${1:-}" = -d ]; then
+    case "$options" in
+        *' -v '*)
+            [ -n "$major" ] || { error 'cannot select a per-major default: selected JDK has no valid Java major'; return 1; }
+            set_default "$INSTALLED_ID" '' "$major" || return 1
+            report_default "$INSTALLED_ID" "$major" ;;
+        *) [ -z "$major" ] || initialize_default "$INSTALLED_ID" "$major" || return 1 ;;
+    esac
+    if [[ $options = *' -d '* ]]; then
         set_default "$INSTALLED_ID" || return 1
         report_default "$INSTALLED_ID"
     else initialize_default "$INSTALLED_ID" || return 1; fi
@@ -1536,9 +1543,9 @@ else
             env:-f)
                 [ -z "$force_env" ] || { error 'duplicate flag'; exit 2; }
                 force_env=1 ;;
-            install:-d)
-                [ -z "$option" ] || { error 'duplicate flag'; exit 2; }
-                option=$argument ;;
+            install:-d|install:-v)
+                case " $option " in *" $argument "*) error 'duplicate flag'; exit 2 ;; esac
+                option="${option:+$option }$argument" ;;
             *:-*) error "unsupported flag: $argument"; exit 2 ;;
             *)
                 [ -n "$argument" ] && [ -z "$selector" ] || { error 'expected one nonempty selector'; exit 2; }

@@ -445,6 +445,7 @@ EOF
 
 flag_alias_checks() {
     local cmd args before saved_data saved_archive
+    install_major_checks
     reset; index; row 21+1 temurin; row 22+1 other-vendor; row 23+1 temurin
     # All parsing failures precede even host detection, with no utilities on PATH.
     for cmd in available list install uninstall default home env a l i u d h e; do
@@ -566,6 +567,68 @@ flag_alias_checks() {
     TEST_SYSTEM=Linux; TEST_OS=linux; TEST_ARCHIVE=$saved_archive
     reset
     check 'flags, aliases, offline-first resolution, exact IDs, failure preservation and output streams'
+}
+
+install_major_checks() {
+    local cmd before
+    reset; index; row 21+1 temurin; row 21+2 temurin; row 1.8.0_99 old
+    for cmd in install i; do
+        PATH=/nonexistent run 2 "$cmd" -v -v 21
+        PATH=/nonexistent run 2 "$cmd" -d -v 21 -d
+        PATH=/nonexistent run 2 "$cmd" -v 21 -d -v
+        PATH=/nonexistent run 2 "$cmd" -v 21 25
+    done
+    for cmd in available list uninstall default home env a l u d h e; do
+        PATH=/nonexistent run 2 "$cmd" -v 21
+    done
+    [ ! -e "$TEST_LOG" ] && [ ! -e "$XDG_DATA_HOME/jvm" ] || fail '-v usage had side effects'
+    run 0 install -v 21+1-temurin
+    diagnostic 'Java 21 default JDK set to: 21+1-temurin'
+    run 0 default; contains '21+1-temurin'
+    run 0 install 21+2-temurin -v
+    run 0 default 21; contains '21+2-temurin'
+    run 0 default; contains '21+1-temurin'
+    run 0 install -v old-8
+    diagnostic 'Java 8 default JDK set to: 8-1.8.0_99-old'
+    # Reuse exact IDs and ranges without metadata or downloaders.
+    before=$(cat "$TEST_LOG")
+    rm -rf -- "$XDG_CACHE_HOME/jvm"
+    mv "$TOOLS/curl" "$TEMP/curl"; mv "$TOOLS/wget" "$TEMP/wget"
+    run 0 i -v 21+1-temurin -d
+    diagnostic 'Already installed 21+1-temurin'
+    run 0 default; contains '21+1-temurin'
+    run 0 default 21; contains '21+1-temurin'
+    run 0 install -d 21+2-temurin -v
+    run 0 default; contains '21+2-temurin'
+    run 0 default 21; contains '21+2-temurin'
+    printf 'java=21+\ndistro=unavailable\n' > .jvmrc
+    run 0 i -v
+    diagnostic 'Already installed 21+2-temurin'
+    rm .jvmrc
+    run 0 i 21..25 -v
+    diagnostic 'Already installed 21+2-temurin'
+    [ "$(cat "$TEST_LOG")" = "$before" ] || fail '-v reuse accessed metadata'
+    TEST_DEFAULT_FAIL_MAJOR=1 run 1 install -d -v 21+1-temurin
+    run 0 default 21; contains '21+2-temurin'
+    run 0 default; contains '21+2-temurin'
+    TEST_DEFAULT_INTERRUPT=1 run 1 install -v 21+1-temurin
+    run 0 default 21; contains '21+2-temurin'
+    # A successful major update is retained if the later global update fails.
+    rm "$XDG_DATA_HOME/jvm/jdks/default"
+    printf 'keep\n' > "$XDG_DATA_HOME/jvm/jdks/default"
+    run 1 install -d -v 21+1-temurin
+    diagnostic 'Java 21 default JDK set to: 21+1-temurin'
+    run 0 default 21; contains '21+1-temurin'
+    [ "$(< "$XDG_DATA_HOME/jvm/jdks/default")" = keep ] || fail '-v replaced unrelated global data'
+    [ -f "$XDG_DATA_HOME/jvm/jdks/21+1-temurin/.jvm-manifest" ] || fail '-v failure removed JDK'
+    rm "$XDG_DATA_HOME/jvm/jdks/default"
+    rm "$XDG_DATA_HOME/jvm/jdks/21+2-temurin/.jvm-manifest"
+    run 1 install -v 21+2-temurin
+    diagnostic 'selected JDK has no valid Java major'
+    [ ! -e "$XDG_DATA_HOME/jvm/jdks/default" ] || fail 'unknown major initialized global default'
+    mv "$TEMP/curl" "$TOOLS/curl"; mv "$TEMP/wget" "$TOOLS/wget"
+    reset
+    check 'install -v major selection, combined defaults, offline reuse, legacy major, usage and partial failure'
 }
 
 uninstall_checks() {
