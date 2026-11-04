@@ -761,6 +761,13 @@ network requests, JDK execution or inventory scans occur at startup.
   `setenv` syntax handle initially unset variables. Literal paths use single
   quotes with explicit apostrophe/history escaping; PATH-list comparisons use
   quote-protected (`:q`) shell-variable expansions to preserve metacharacters.
+  Legacy BSD csh expands inherited HOME before processing options or profiles;
+  HOME values containing backticks/glob syntax can execute text or crash that
+  shell before setup is read. Use tcsh for such homes. Generated setup still
+  treats metacharacters in tool/data paths literally. This upstream boundary
+  was inspected on 2026-11-04 in
+  [`csh.c`](https://github.com/openbsd/src/blob/master/bin/csh/csh.c) and
+  [`set.c`](https://github.com/openbsd/src/blob/master/bin/csh/set.c).
 
 Profile contents outside managed blocks and permissions are preserved where
 practical (a missing trailing newline is normalized); exact original bytes are

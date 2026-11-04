@@ -18,6 +18,15 @@ this correction belongs to hosted CI; no local shells/platforms were added.
 The [C-shell manual](https://man.openbsd.org/csh.1) documents single-quote
 literals and `:q` preventing subsequent substitutions.
 
+Hosted follow-up isolated an upstream BSD csh initialization issue: `csh.c`
+sets `home` from unquoted HOME before option processing, and `set.c` applies
+glob/command substitution. BSD csh tests therefore use a separate safe
+bootstrap HOME, while sourcing and starting up with the exact generated
+profiles containing the original metacharacter-rich tool/data paths. The
+execution sentinel, exact JAVA_HOME checks and repeated sourcing remain.
+Zsh/Fish/tcsh retain the original hostile HOME. This compatibility boundary is
+documented in SPEC/README; native-shell reruns verify the remaining behavior.
+
 ## Installer CI repair (2026-11-04)
 
 The [installer branch run](https://github.com/codejive/jvm/actions/runs/41808043776)

@@ -125,6 +125,10 @@ manual setup. Exact profile backups are reported. Windows persists only
 current-user environment values, with raw value/type backups; machine PATH
 can still take precedence over user Java. No PowerShell profiles are edited.
 
+Legacy BSD csh expands `HOME` before reading profiles and can crash on homes
+containing backticks or glob syntax; use tcsh for those homes. Generated setup
+keeps tool/data paths literal, but cannot change the shell's own initialization.
+
 Open a **fresh terminal application or IDE**, since a new tab in an old host
 may inherit stale values. Later startup statements can override setup. This
 does not configure all GUI or noninteractive programs. Then install Java:

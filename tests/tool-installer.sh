@@ -266,6 +266,10 @@ cat "$INSTALLER" | HOME="$TEMP/piped-home" XDG_DATA_HOME="$TEMP/piped-data" bash
 ok 'piped bootstrap skips unspecified setup without consuming script stdin'
 if [ "${1:-}" = --native-shells ]; then
     # Hosted Unix only: use actual shells, including paths with apostrophes/spaces.
+    # BSD csh expands its inherited HOME before even parsing -f (csh.c/set.c).
+    # Keep its bootstrap HOME safe; sourced tool/data paths remain hostile.
+    csh_bootstrap_home=$TEMP/csh-bootstrap-home
+    mkdir "$csh_bootstrap_home"
     native_shells='zsh fish csh tcsh'
     if [ -n "${2:-}" ]; then
         case $2 in zsh|fish|csh|tcsh) native_shells=$2 ;; *) echo 'Unsupported native test shell' >&2; exit 2 ;; esac
@@ -291,7 +295,11 @@ set test_home = "$JAVA_HOME"
 set test_expected = "$XDG_DATA_HOME/jvm/jdks/default"
 if ( $test_home:q != $test_expected:q ) exit 1
 EOF
-            "$shell" -f "$TEMP/check-native.csh" "$profile" || native_status=$?
+            if [ "$shell" = csh ]; then
+                HOME="$csh_bootstrap_home" "$shell" -f "$TEMP/check-native.csh" "$profile" || native_status=$?
+            else
+                "$shell" -f "$TEMP/check-native.csh" "$profile" || native_status=$?
+            fi
         fi
         [ ! -e "$TEST_EVAL_MARKER" ] || native_status=1
         if [ "$native_status" != 0 ]; then
@@ -306,6 +314,7 @@ EOF
     run --shell csh --path --java --non-interactive
     printf '# tcsh startup\n' > "$HOME/.tcshrc"
     run --shell tcsh --path --java --non-interactive
+    cp "$HOME/.cshrc" "$csh_bootstrap_home/.cshrc"
     bash --noprofile --rcfile "$HOME/.bashrc" -i -c '[ "$JAVA_HOME" = "$XDG_DATA_HOME/jvm/jdks/default" ]' > "$TEMP/startup-out" 2> "$TEMP/startup-err"
     [ ! -s "$TEMP/startup-out" ]
     for shell in $native_shells; do
@@ -314,7 +323,8 @@ EOF
         case $shell in
             zsh) zsh -d -i -c '[ "$JAVA_HOME" = "$XDG_DATA_HOME/jvm/jdks/default" ]' > "$TEMP/startup-out" ;;
             fish) fish --private -c 'test "$JAVA_HOME" = "$XDG_DATA_HOME/jvm/jdks/default"' > "$TEMP/startup-out" ;;
-            csh|tcsh) "$shell" -c 'set test_home = "$JAVA_HOME"; set test_expected = "$XDG_DATA_HOME/jvm/jdks/default"; if ( $test_home:q != $test_expected:q ) exit 1' > "$TEMP/startup-out" ;;
+            csh) HOME="$csh_bootstrap_home" "$shell" -c 'set test_home = "$JAVA_HOME"; set test_expected = "$XDG_DATA_HOME/jvm/jdks/default"; if ( $test_home:q != $test_expected:q ) exit 1' > "$TEMP/startup-out" ;;
+            tcsh) "$shell" -c 'set test_home = "$JAVA_HOME"; set test_expected = "$XDG_DATA_HOME/jvm/jdks/default"; if ( $test_home:q != $test_expected:q ) exit 1' > "$TEMP/startup-out" ;;
         esac || native_status=$?
         [ ! -s "$TEMP/startup-out" ] && [ ! -e "$TEST_EVAL_MARKER" ] || native_status=1
         if [ "$native_status" != 0 ]; then
