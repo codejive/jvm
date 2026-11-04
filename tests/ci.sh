@@ -23,8 +23,12 @@ export PATH="$TEMP/bin:$PATH"
 bash -c '[ "$BASH_VERSION" = "$1" ]' bash "$BASH_VERSION"
 cd "$ROOT"
 "$BASH_BIN" -n ./jvm
+"$BASH_BIN" -n web/install.sh
 for script in tests/*.sh; do "$BASH_BIN" -n "$script"; done
 "$BASH_BIN" tests/run.sh
+"$BASH_BIN" tests/tool-installer.sh
 case "$(uname -s)" in
-    CYGWIN*|MSYS*|MINGW*) "$BASH_BIN" tests/default-native-windows.sh ;;
+    CYGWIN*|MSYS*|MINGW*)
+        "$BASH_BIN" tests/default-native-windows.sh
+        JVM_TEST_BASH="$(cygpath -aw "$BASH_BIN")" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -aw "$ROOT/tests/tool-installer.ps1")" ;;
 esac

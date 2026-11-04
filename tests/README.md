@@ -1,5 +1,86 @@
 # Discovery, installation and uninstallation verification
 
+## Tool installer verification (2026-11-04)
+
+The new tests are distinct from `tests/install.sh`, which installs synthetic
+JDKs. Installer tests download only local fixtures through fake transfers and
+use temporary HOME/XDG roots, destinations and profiles. Native registry tests
+replace `Open-EnvironmentKey` with a disposable key beneath
+`HKCU\Software\Codejive\InstallerTests\<GUID>` and delete only that key.
+They never change the contributor's real user environment, profile or JDKs.
+Mocks are supplied by the harness in memory or in private script copies;
+shipped installers have no alternate URL/registry backend or evaluation hook.
+
+```sh
+bash -n ./jvm
+bash -n web/install.sh
+bash tests/tool-installer.sh
+python tests/release-tooling.py
+```
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/tool-installer.ps1
+# Also test native Bash-to-PowerShell delegation with an already installed Bash:
+$env:JVM_TEST_BASH = 'C:\Program Files\Git\bin\bash.exe'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/tool-installer.ps1
+Remove-Item Env:JVM_TEST_BASH
+```
+
+`tests/ci.sh` includes installer syntax and offline tests. Hosted Windows jobs
+also run the delegation test through the actual current Git Bash/MSYS2/Cygwin
+interpreter. The hosted Linux shell job installs Zsh/Fish/csh/tcsh and runs:
+
+```sh
+shellcheck -S warning web/install.sh
+bash tests/tool-installer.sh --native-shells
+```
+
+Do not run this shell/platform tooling locally without the express confirmation
+required by AGENTS.md. The native-shell option starts actual fresh shells and
+checks both explicit sourcing (twice) and normal startup files. Ordinary tests
+simulate Unix host detection on Windows; that is not native Unix verification.
+Git Bash's `ln -s` can make a copy, so its symlink-profile assertion is explicitly
+skipped when no real link exists. Hosted Unix exercises the actual link case.
+
+Checks cover latest/pinned releases, exact-byte payloads, curl/wget paths,
+available checksum alternatives, HTTPS redirect/downgrade policy for wget,
+malformed/missing/checksum-failing downloads, usage without side effects,
+matching reinstall, updates, modified/unowned conflicts, lock contention,
+publication error/interruption rollback, interrupted-run recovery and retention
+of unknown journal material. Setup checks cover separate consent, literal
+metacharacter/spaced paths, native non-ASCII Windows homes, XDG fallback,
+relative HOME rejection, Bash login precedence, ZDOTDIR/Fish roots, profile
+backups/rollback, all shell formats, registry raw values/types, missing PATH,
+failed setup rollback, CMD bootstrap quoting and Windows Bash delegation.
+
+Local results: 23 Bash installer groups passed under installed Git Bash 5.3.15
+(Unix host simulated); 15 installer groups passed under Windows PowerShell 5.1
+including native Git Bash delegation and CMD. Exact-byte packaging, checksum
+generation, embedded-source equality and public-file staging checks passed.
+All workflow YAML parsed, Bash/PowerShell syntax checks and `git diff --check`
+passed. Existing regressions passed: 56 Bash discovery groups, 35 installation
+groups, home/env suite and 29 PowerShell smoke groups. The runtime manager
+scripts are unchanged. ShellCheck is unavailable locally.
+Measured sizes: `web/install.sh` 43,147 bytes (including the generated Windows
+source), `web/install.ps1` 21,023 bytes; unchanged `jvm` 68,978 bytes,
+`jvm.ps1` 78,630 bytes and `jvm.cmd` 116 bytes. New installer sources use LF.
+
+Hosted Linux/macOS Bash 3.2/current, real Zsh/Fish/csh/tcsh startup and MSYS2/
+Cygwin delegation remain unverified here. No alternative shells, WSL or
+containers were installed/run, and no hosted jobs, releases, deployment or
+GitHub/Cloudflare settings were changed. An early CMD fixture mistakenly let
+the built-in `irm` alias make a failed public installer request; the corrected
+fixture removes that alias with `-Force` and fails closed before execution if
+mock setup fails. Final installer tests are offline; no live JDK installation
+or bootstrap installation against a published release was performed.
+
+Release/Pages files are locally reviewed and YAML-parsed, not verified hosted
+runs. `tools/pages-preflight.py` intentionally needs the public release and is
+not part of offline tests. Follow [RELEASING.md](../RELEASING.md) for the first
+release sequence and public download/metadata-route smoke checks afterwards.
+
+## Earlier manager verification
+
 CI wrapper lookup repair (2026-11-03): capture real `tar` and `sha256sum`
 paths before isolating PATH, avoiding cached wrapper targets in Bash 3.2.
 Syntax checks for `jvm` and `tests/install.sh`, all 35 offline installation

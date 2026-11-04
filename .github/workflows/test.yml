@@ -3,6 +3,14 @@ name: Bash portability
 on:
   push:
   pull_request:
+  workflow_call:
+    inputs:
+      revision:
+        type: string
+        default: ''
+      real_jdk:
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       real_jdk:
@@ -13,11 +21,32 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: bash-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
+  packaging:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - run: python3 tests/release-tooling.py
+
+  shells:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y zsh fish csh tcsh shellcheck
+          csh_bin=$(dpkg -L csh | awk '/\/bsd-csh$/ {print; exit}')
+          test -x "$csh_bin"
+          sudo update-alternatives --set csh "$csh_bin"
+          shellcheck -S warning web/install.sh
+          bash tests/tool-installer.sh --native-shells
+
   unix:
     name: ${{ matrix.os }} / Bash ${{ matrix.bash }}
     runs-on: ${{ matrix.os }}
@@ -34,6 +63,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          ref: ${{ inputs.revision || github.sha }}
       - name: Bash 3.2 build dependencies
         if: runner.os == 'Linux' && matrix.bash == '3.2'
         run: |
@@ -91,10 +121,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          ref: ${{ inputs.revision || github.sha }}
       - name: Windows PowerShell 5.1 smoke suite
         run: |
           $PSVersionTable.PSVersion
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/powershell.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/tool-installer.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   windows:
@@ -121,6 +154,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          ref: ${{ inputs.revision || github.sha }}
       - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
         if: matrix.environment == 'MSYS2'
         with:
