@@ -253,7 +253,10 @@ block() {
             printf 'if not contains -- %s $PATH\n    set -gx PATH %s $PATH\nend\n' "$q" "$q" ;;
         csh|tcsh)
             [ "$kind" != java ] || printf 'setenv JAVA_HOME %s\n' "$(quote "$JAVA_HOME_TARGET")"
-            printf 'if ( ! $?path ) set path = ()\nset jvm_present = 0\nforeach jvm_entry ( $path:q )\n    if ( $jvm_entry:q == %s ) set jvm_present = 1\nend\nif ( $jvm_present == 0 ) set path = ( %s $path:q )\nunset jvm_present jvm_entry\n' "$q" "$q" ;;
+            # BSD csh's foreach stores each item with set(), which re-expands
+            # backticks after the list's quote flags have been stripped. Read
+            # existing entries by index instead, preserving :q through comparison.
+            printf 'if ( ! $?path ) then\n    set path = ()\nendif\nset jvm_present = 0\n@ jvm_index = 1\nwhile ( $jvm_index <= $#path )\n    if ( $path[$jvm_index]:q == %s ) then\n        set jvm_present = 1\n    endif\n    @ jvm_index++\nend\nif ( $jvm_present == 0 ) then\n    set path = ( %s $path:q )\nendif\nunset jvm_present jvm_index\n' "$q" "$q" ;;
     esac
     printf '# <<< jvm %s <<<\n' "$kind"
 }

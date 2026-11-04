@@ -27,6 +27,12 @@ execution sentinel, exact JAVA_HOME checks and repeated sourcing remain.
 Zsh/Fish/tcsh retain the original hostile HOME. This compatibility boundary is
 documented in SPEC/README; native-shell reruns verify the remaining behavior.
 
+The next hosted result exposed a separate BSD csh `foreach` behavior: its
+internal loop-variable assignment applies `set()` expansion after stripping
+quote protection. Setup now checks PATH entries by indexed `:q` expansion
+inside a `while` loop, avoiding that implicit reassignment. Multiline `if`
+blocks keep literal path assignments separate from expression reexecution.
+
 ## Installer CI repair (2026-11-04)
 
 The [installer branch run](https://github.com/codejive/jvm/actions/runs/41808043776)

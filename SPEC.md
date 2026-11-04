@@ -761,6 +761,8 @@ network requests, JDK execution or inventory scans occur at startup.
   `setenv` syntax handle initially unset variables. Literal paths use single
   quotes with explicit apostrophe/history escaping; PATH-list comparisons use
   quote-protected (`:q`) shell-variable expansions to preserve metacharacters.
+  Iterate PATH entries by index: legacy BSD csh's `foreach` re-expands its
+  loop-variable values, so it cannot safely carry literal backticked entries.
   Legacy BSD csh expands inherited HOME before processing options or profiles;
   HOME values containing backticks/glob syntax can execute text or crash that
   shell before setup is read. Use tcsh for such homes. Generated setup still
