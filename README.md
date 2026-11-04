@@ -1,4 +1,4 @@
-# jvm
+# jvm - Java Version Manager
 
 `jvm` installs, manages and runs different JDKs on a user's system. It finds
 compatible JDK builds, downloads and verifies them, keeps them in user storage
