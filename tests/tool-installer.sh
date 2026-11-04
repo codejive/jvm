@@ -294,11 +294,15 @@ source $argv[1]:q
 set test_home = "$JAVA_HOME"
 set test_expected = "$XDG_DATA_HOME/jvm/jdks/default"
 if ( $test_home:q != $test_expected:q ) exit 1
+if ( $#path != 2 ) exit 1
+set test_java_bin = "$XDG_DATA_HOME/jvm/jdks/default/bin"
+if ( $path[1]:q != $test_java_bin:q ) exit 1
+if ( $path[2]:q != $argv[2]:q ) exit 1
 EOF
             if [ "$shell" = csh ]; then
-                HOME="$csh_bootstrap_home" "$shell" -f "$TEMP/check-native.csh" "$profile" || native_status=$?
+                HOME="$csh_bootstrap_home" "$shell" -f "$TEMP/check-native.csh" "$profile" "$DEST" || native_status=$?
             else
-                "$shell" -f "$TEMP/check-native.csh" "$profile" || native_status=$?
+                "$shell" -f "$TEMP/check-native.csh" "$profile" "$DEST" || native_status=$?
             fi
         fi
         [ ! -e "$TEST_EVAL_MARKER" ] || native_status=1

@@ -113,7 +113,7 @@ All workflow YAML parsed, Bash/PowerShell syntax checks and `git diff --check`
 passed. Existing regressions passed: 56 Bash discovery groups, 35 installation
 groups, home/env suite and 29 PowerShell smoke groups. The runtime manager
 scripts are unchanged. ShellCheck is unavailable locally.
-Measured sizes after the C-shell repair: `web/install.sh` 43,726 bytes (including the
+Measured sizes after the C-shell repair: `web/install.sh` 44,068 bytes (including the
 generated Windows source), `web/install.ps1` 21,023 bytes; unchanged `jvm` 68,978 bytes,
 `jvm.ps1` 78,630 bytes and `jvm.cmd` 116 bytes. New installer sources use LF.
 
