@@ -214,6 +214,20 @@ function Get-Download([string]$Url, [string]$File) { [IO.File]::Copy((Join-Path 
         foreach ($name in @('jvm', 'jvm.ps1', 'jvm.cmd')) {
             Assert ((Get-ToolHash (Join-Path $env:HOME ".local\bin\$name")) -ceq $hashes[$name]) 'Bash payload differs'
         }
+        # Exercise the installed-system fallback without changing native tools
+        # or depending on a particular Windows Bash implementation's PATH.
+        $restrictedPath = Join-Path $temp 'restricted-path.sh'
+        $restrictedSource = @'
+#!/usr/bin/env bash
+set -eu
+PATH="$(dirname "$(command -v cygpath)"):$(cygpath -u -S)"
+export PATH
+if command -v powershell.exe >/dev/null; then exit 99; fi
+source "$1" --version 0.2.0 --no-path --no-java --non-interactive
+'@
+        [IO.File]::WriteAllText($restrictedPath, $restrictedSource.Replace("`r`n", "`n"), (New-Object Text.UTF8Encoding $false))
+        & $env:JVM_TEST_BASH $restrictedPath $bootstrapPath
+        Assert ($LASTEXITCODE -eq 0) 'Windows Bash could not locate system PowerShell outside PATH'
         $previousPreference = $ErrorActionPreference
         try {
             $ErrorActionPreference = 'Continue'

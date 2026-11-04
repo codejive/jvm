@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Standalone bootstrap. The Windows section is generated from install.ps1.
 set -eu
-VERSION= PATH_CHOICE= JAVA_CHOICE= SHELL_CHOICE= PROFILE= NONINTERACTIVE=0
-WORK= LOCKED=0 PUBLISHED=0 STATE= DEST= DATA= TX=
+VERSION='' PATH_CHOICE='' JAVA_CHOICE='' SHELL_CHOICE='' PROFILE='' NONINTERACTIVE=0
+WORK='' LOCKED=0 PUBLISHED=0 STATE='' DEST='' DATA='' TX=''
 SETUP_FILES=() SETUP_BACKUPS=() SETUP_EXISTED=()
 say() { printf '%s\n' "jvm installer: $*" >&2; }
 die() { say "$*"; exit 1; }
@@ -349,7 +349,7 @@ setup() {
     done
 }
 main() {
-    local original host name converted
+    local original host name converted powershell_bin system_directory
     # Preserve the original arguments for the embedded Windows entry point.
     original=("$@")
     parse "$@"
@@ -357,7 +357,12 @@ main() {
     case $host in
         CYGWIN*|MSYS*|MINGW*)
             [ -z "$SHELL_CHOICE$PROFILE" ] || usage_error '--shell/--profile are Unix-only'
-            command -v cygpath >/dev/null && command -v powershell.exe >/dev/null || die 'Windows Bash needs cygpath and Windows PowerShell'
+            command -v cygpath >/dev/null || die 'Windows Bash needs cygpath'
+            if ! powershell_bin=$(command -v powershell.exe); then
+                system_directory=$(cygpath -u -S) || die 'could not locate the Windows system directory'
+                powershell_bin=$system_directory/WindowsPowerShell/v1.0/powershell.exe
+            fi
+            [ -f "$powershell_bin" ] || die 'Windows Bash needs Windows PowerShell'
             case ${HOME:-} in
                 '') ;;
                 /*|[A-Za-z]:[\\/]*|\\\\*)
@@ -381,7 +386,7 @@ main() {
             for arg in "${original[@]}"; do
                 case $arg in --version) args+=( -Version ) ;; --path) args+=( -Path ) ;; --no-path) args+=( -NoPath ) ;; --java) args+=( -Java ) ;; --no-java) args+=( -NoJava ) ;; --non-interactive) args+=( -NonInteractive ) ;; *) args+=( "$arg" ) ;; esac
             done
-            MSYS2_ARG_CONV_EXCL='*' powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -aw "$WORK/install.ps1")" "${args[@]}"
+            MSYS2_ARG_CONV_EXCL='*' "$powershell_bin" -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -aw "$WORK/install.ps1")" "${args[@]}"
             return ;;
         Linux|Darwin) ;; *) die "unsupported host: $host" ;;
     esac
@@ -393,7 +398,7 @@ main() {
     DEST=$HOME/.local/bin STATE=$DATA/jvm/tool-install TX=$DATA/jvm/tool-install/transaction
     JAVA_HOME_TARGET=$DATA/jvm/jdks/default
     [ -z "$PROFILE" ] || safe_path "$PROFILE"
-    DOWNLOADER= HASHER=
+    DOWNLOADER='' HASHER=''
     for name in curl wget; do if command -v "$name" >/dev/null 2>&1; then DOWNLOADER=$name; break; fi; done
     for name in sha256sum shasum openssl; do if command -v "$name" >/dev/null 2>&1; then HASHER=$name; break; fi; done
     [ -n "$DOWNLOADER" ] && [ -n "$HASHER" ] || die 'need curl or HTTPS-capable wget and a SHA-256 utility'

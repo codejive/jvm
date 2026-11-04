@@ -1,5 +1,24 @@
 # Discovery, installation and uninstallation verification
 
+## Installer CI repair (2026-11-04)
+
+The [installer branch run](https://github.com/codejive/jvm/actions/runs/41808043776)
+passed packaging, native PowerShell, Git Bash, MSYS2, and Linux/macOS with both
+Bash 3.2 and current Bash. Cygwin passed the existing manager suites, all 23
+installer groups and native junction smoke, then failed to locate PowerShell
+for delegation. The shell job stopped at ShellCheck SC1007 warnings before
+running its native startup tests.
+
+The bootstrap now uses explicit empty-string assignments and locates native
+PowerShell under the system directory when it is absent from PATH. The CI
+wrapper includes the PowerShell directory for the suite's nested native calls.
+The delegation regression also removes PowerShell from its Bash PATH and
+requires successful fallback. Local Windows PowerShell/Git Bash checks passed
+(15 groups), as did the 23 Bash installer groups, packaging, syntax and
+`git diff --check`. Native Cygwin rerun and the previously blocked ShellCheck/
+Zsh/Fish/csh/tcsh job still require hosted CI; no local alternative platforms
+or shells were installed or run for this repair.
+
 ## Tool installer verification (2026-11-04)
 
 The new tests are distinct from `tests/install.sh`, which installs synthetic
@@ -61,12 +80,13 @@ All workflow YAML parsed, Bash/PowerShell syntax checks and `git diff --check`
 passed. Existing regressions passed: 56 Bash discovery groups, 35 installation
 groups, home/env suite and 29 PowerShell smoke groups. The runtime manager
 scripts are unchanged. ShellCheck is unavailable locally.
-Measured sizes: `web/install.sh` 43,147 bytes (including the generated Windows
-source), `web/install.ps1` 21,023 bytes; unchanged `jvm` 68,978 bytes,
+Measured sizes after the CI repair: `web/install.sh` 43,501 bytes (including the
+generated Windows source), `web/install.ps1` 21,023 bytes; unchanged `jvm` 68,978 bytes,
 `jvm.ps1` 78,630 bytes and `jvm.cmd` 116 bytes. New installer sources use LF.
 
-Hosted Linux/macOS Bash 3.2/current, real Zsh/Fish/csh/tcsh startup and MSYS2/
-Cygwin delegation remain unverified here. No alternative shells, WSL or
+At initial delivery, hosted Linux/macOS Bash 3.2/current, real Zsh/Fish/csh/tcsh
+startup and MSYS2/Cygwin delegation were unverified; see the CI repair results
+above for subsequent hosted evidence. No alternative shells, WSL or
 containers were installed/run, and no hosted jobs, releases, deployment or
 GitHub/Cloudflare settings were changed. An early CMD fixture mistakenly let
 the built-in `irm` alias make a failed public installer request; the corrected

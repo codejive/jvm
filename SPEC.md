@@ -683,7 +683,9 @@ fallback policy. Newline, CR, tab and PATH-separator paths are rejected before
 mutation (Unix also rejects semicolons for Windows interoperability). Unix
 ships only `jvm` with executable permissions; Windows ships all three exact-byte
 scripts. Windows Bash requires cygpath and Windows PowerShell and converts
-paths before delegating to the embedded PowerShell installer. Its embedded
+paths before delegating to the embedded PowerShell installer. The Bash
+bootstrap locates PowerShell on PATH or under the Windows system directory's
+`WindowsPowerShell/v1.0`, allowing a restricted Cygwin PATH. The embedded
 source is generated from `web/install.ps1`, not downloaded or separately
 maintained registry code. No private command-evaluation interface exists.
 
