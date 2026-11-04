@@ -223,7 +223,11 @@ publish() {
 quote() {
     case ${SHELL_CHOICE:-} in
         fish) printf "'%s'" "$(printf '%s' "$1" | sed "s/\\\\/\\\\\\\\/g; s/'/\\\\'/g")" ;;
-        csh|tcsh) printf '%s' "$(printf '%s' "$1" | LC_ALL=C sed 's/[^a-zA-Z0-9_./-]/\\&/g')" ;;
+        csh|tcsh)
+            # Keep command/variable metacharacters inside single quotes. Use a
+            # double-quoted apostrophe between segments; history needs \! even
+            # inside single quotes in interactive C shells.
+            printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\"'\"'/g; s/!/\\\\!/g")" ;;
         *) printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")" ;;
     esac
 }
@@ -249,7 +253,7 @@ block() {
             printf 'if not contains -- %s $PATH\n    set -gx PATH %s $PATH\nend\n' "$q" "$q" ;;
         csh|tcsh)
             [ "$kind" != java ] || printf 'setenv JAVA_HOME %s\n' "$(quote "$JAVA_HOME_TARGET")"
-            printf 'if ( ! $?path ) set path = ()\nset jvm_present = 0\nforeach jvm_entry ( $path:q )\n    if ( "$jvm_entry" == %s ) set jvm_present = 1\nend\nif ( $jvm_present == 0 ) set path = ( %s $path:q )\nunset jvm_present jvm_entry\n' "$q" "$q" ;;
+            printf 'if ( ! $?path ) set path = ()\nset jvm_present = 0\nforeach jvm_entry ( $path:q )\n    if ( $jvm_entry:q == %s ) set jvm_present = 1\nend\nif ( $jvm_present == 0 ) set path = ( %s $path:q )\nunset jvm_present jvm_entry\n' "$q" "$q" ;;
     esac
     printf '# <<< jvm %s <<<\n' "$kind"
 }

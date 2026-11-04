@@ -1,5 +1,23 @@
 # Discovery, installation and uninstallation verification
 
+## Native C-shell repair (2026-11-04)
+
+The [follow-up run](https://github.com/codejive/jvm/actions/runs/41812403128)
+passed every platform job, including Cygwin, and passed ShellCheck. The native
+shell test then attempted to execute backticked fixture path text (`data`)
+before BSD csh crashed. Native C-shell paths now use single-quoted literals;
+list comparisons and the test's `source` arguments use `:q` protection. The
+harness includes a command-execution sentinel and reports sourcing/startup
+results for Zsh, Fish, BSD csh and tcsh before failing the hosted job, so one
+failure cannot hide later shells.
+
+Hosted checks can select one shell with
+`bash tests/tool-installer.sh --native-shells csh` (or `zsh`, `fish`, `tcsh`);
+omitting the last argument still checks all four. Actual native validation for
+this correction belongs to hosted CI; no local shells/platforms were added.
+The [C-shell manual](https://man.openbsd.org/csh.1) documents single-quote
+literals and `:q` preventing subsequent substitutions.
+
 ## Installer CI repair (2026-11-04)
 
 The [installer branch run](https://github.com/codejive/jvm/actions/runs/41808043776)
@@ -80,7 +98,7 @@ All workflow YAML parsed, Bash/PowerShell syntax checks and `git diff --check`
 passed. Existing regressions passed: 56 Bash discovery groups, 35 installation
 groups, home/env suite and 29 PowerShell smoke groups. The runtime manager
 scripts are unchanged. ShellCheck is unavailable locally.
-Measured sizes after the CI repair: `web/install.sh` 43,501 bytes (including the
+Measured sizes after the C-shell repair: `web/install.sh` 43,726 bytes (including the
 generated Windows source), `web/install.ps1` 21,023 bytes; unchanged `jvm` 68,978 bytes,
 `jvm.ps1` 78,630 bytes and `jvm.cmd` 116 bytes. New installer sources use LF.
 

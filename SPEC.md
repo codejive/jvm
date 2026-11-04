@@ -758,7 +758,9 @@ network requests, JDK execution or inventory scans occur at startup.
 - Fish: XDG_CONFIG_HOME (fallback HOME/.config) `fish/conf.d/jvm.fish`;
   unowned existing files conflict. Explicit profile overrides are supported.
 - Csh/tcsh: `.cshrc`, or existing `.tcshrc` for tcsh; native `path` list and
-  `setenv` syntax handle initially unset variables.
+  `setenv` syntax handle initially unset variables. Literal paths use single
+  quotes with explicit apostrophe/history escaping; PATH-list comparisons use
+  quote-protected (`:q`) shell-variable expansions to preserve metacharacters.
 
 Profile contents outside managed blocks and permissions are preserved where
 practical (a missing trailing newline is normalized); exact original bytes are

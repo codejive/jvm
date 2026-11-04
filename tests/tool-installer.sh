@@ -15,6 +15,11 @@ printf '0.2.0\n' > "$TEMP/fixtures/latest.txt"
 REAL_HASH=$(command -v sha256sum)
 (cd "$TEMP/fixtures"; "$REAL_HASH" -t jvm jvm.ps1 jvm.cmd > SHA256SUMS)
 export FIXTURES="$TEMP/fixtures" LOG="$TEMP/requests"
+export TEST_EVAL_MARKER="$TEMP/unexpected-command"
+cat > "$TEMP/bin/data" <<'EOF'
+#!/usr/bin/env bash
+printf 'unexpected command execution\n' > "$TEST_EVAL_MARKER"
+EOF
 cat > "$TEMP/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -eu
@@ -261,19 +266,41 @@ cat "$INSTALLER" | HOME="$TEMP/piped-home" XDG_DATA_HOME="$TEMP/piped-data" bash
 ok 'piped bootstrap skips unspecified setup without consuming script stdin'
 if [ "${1:-}" = --native-shells ]; then
     # Hosted Unix only: use actual shells, including paths with apostrophes/spaces.
-    for shell in zsh fish csh tcsh; do
+    native_shells='zsh fish csh tcsh'
+    if [ -n "${2:-}" ]; then
+        case $2 in zsh|fish|csh|tcsh) native_shells=$2 ;; *) echo 'Unsupported native test shell' >&2; exit 2 ;; esac
+    fi
+    native_failures=0
+    for shell in $native_shells; do
         command -v "$shell" >/dev/null
         profile="$HOME/$shell-profile"
+        printf 'Checking native %s explicit sourcing\n' "$shell"
+        native_status=0
         if [ "$shell" = fish ]; then
-            "$shell" --no-config -c 'source "$argv[1]"; source "$argv[1]"; test "$JAVA_HOME" = "$XDG_DATA_HOME/jvm/jdks/default"' "$profile"
+            "$shell" --no-config -c 'source "$argv[1]"; source "$argv[1]"; test "$JAVA_HOME" = "$XDG_DATA_HOME/jvm/jdks/default"' "$profile" || native_status=$?
         elif [ "$shell" = zsh ]; then
-            "$shell" -f -c '. "$1"; . "$1"; [ "$JAVA_HOME" = "$XDG_DATA_HOME/jvm/jdks/default" ]' test "$profile"
+            "$shell" -f -c '. "$1"; . "$1"; [ "$JAVA_HOME" = "$XDG_DATA_HOME/jvm/jdks/default" ]' test "$profile" || native_status=$?
         else
-            # csh needs :q for argument paths, and unset-path behavior is intentional.
-            "$shell" -f -c 'unset path; source "$argv[1]"; source "$argv[1]"; if ( "$JAVA_HOME" != "$XDG_DATA_HOME/jvm/jdks/default" ) exit 1' "$profile"
+            # Preserve literal words through C-shell substitution phases. The
+            # script path itself is simple; the sourced fixture path is not.
+            cat > "$TEMP/check-native.csh" <<'EOF'
+unset path
+source $argv[1]:q
+source $argv[1]:q
+set test_home = "$JAVA_HOME"
+set test_expected = "$XDG_DATA_HOME/jvm/jdks/default"
+if ( $test_home:q != $test_expected:q ) exit 1
+EOF
+            "$shell" -f "$TEMP/check-native.csh" "$profile" || native_status=$?
+        fi
+        [ ! -e "$TEST_EVAL_MARKER" ] || native_status=1
+        if [ "$native_status" != 0 ]; then
+            printf 'FAIL: native %s sourcing (status %s); generated profile follows\n' "$shell" "$native_status" >&2
+            cat "$profile" >&2
+            native_failures=$((native_failures+1))
         fi
     done
-    ok 'actual Zsh/Fish/csh/tcsh source managed setup twice'
+    if [ "$native_failures" = 0 ]; then ok 'actual native shells source managed setup twice'; fi
     # Also launch normal startup paths, not just explicit source commands.
     run --shell zsh --path --java --non-interactive
     run --shell csh --path --java --non-interactive
@@ -281,14 +308,22 @@ if [ "${1:-}" = --native-shells ]; then
     run --shell tcsh --path --java --non-interactive
     bash --noprofile --rcfile "$HOME/.bashrc" -i -c '[ "$JAVA_HOME" = "$XDG_DATA_HOME/jvm/jdks/default" ]' > "$TEMP/startup-out" 2> "$TEMP/startup-err"
     [ ! -s "$TEMP/startup-out" ]
-    zsh -d -i -c '[ "$JAVA_HOME" = "$XDG_DATA_HOME/jvm/jdks/default" ]' > "$TEMP/startup-out"
-    [ ! -s "$TEMP/startup-out" ]
-    fish --private -c 'test "$JAVA_HOME" = "$XDG_DATA_HOME/jvm/jdks/default"' > "$TEMP/startup-out"
-    [ ! -s "$TEMP/startup-out" ]
-    for shell in csh tcsh; do
-        "$shell" -c 'if ( "$JAVA_HOME" != "$XDG_DATA_HOME/jvm/jdks/default" ) exit 1' > "$TEMP/startup-out"
-        [ ! -s "$TEMP/startup-out" ]
+    for shell in $native_shells; do
+        printf 'Checking native %s startup\n' "$shell"
+        native_status=0
+        case $shell in
+            zsh) zsh -d -i -c '[ "$JAVA_HOME" = "$XDG_DATA_HOME/jvm/jdks/default" ]' > "$TEMP/startup-out" ;;
+            fish) fish --private -c 'test "$JAVA_HOME" = "$XDG_DATA_HOME/jvm/jdks/default"' > "$TEMP/startup-out" ;;
+            csh|tcsh) "$shell" -c 'set test_home = "$JAVA_HOME"; set test_expected = "$XDG_DATA_HOME/jvm/jdks/default"; if ( $test_home:q != $test_expected:q ) exit 1' > "$TEMP/startup-out" ;;
+        esac || native_status=$?
+        [ ! -s "$TEMP/startup-out" ] && [ ! -e "$TEST_EVAL_MARKER" ] || native_status=1
+        if [ "$native_status" != 0 ]; then
+            printf 'FAIL: native %s startup (status %s)\n' "$shell" "$native_status" >&2
+            cat "$TEMP/startup-out" >&2
+            native_failures=$((native_failures+1))
+        fi
     done
+    [ "$native_failures" = 0 ] || { printf '%s native shell checks failed\n' "$native_failures" >&2; exit 1; }
     ok 'fresh shells load native startup files silently'
 fi
 printf '%s installer checks passed\n' "$count"
