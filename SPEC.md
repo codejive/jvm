@@ -803,14 +803,19 @@ constants before tagging. Individual payload assets and the old `SHA256SUMS`
 manifest are no longer published. New installers require the archive assets;
 releases containing only individual payloads are not compatible with them.
 
-Pages must ultimately publish the installers and pointer from the latest
-release, with `index.html` allowed to come from the default branch; that workflow
-change is pending. Currently Pages runs installer checks for the same revision
-and verifies the referenced public release pointer, archive checksum and contents
-before staging the public-file allowlist. It uses the `github-pages` environment
-and refuses stale queued
-revisions. The site root has no `/web/` prefix. See RELEASING.md for first-release
-ordering, settings, action documentation and post-deployment checks.
+Pages stages the current default branch's `web/` directory, downloads
+`jvm.tar.gz` from GitHub's latest release and extracts it over those files.
+Release files take precedence on collisions, including `latest.txt`; web files
+absent from the archive remain. The workflow uploads that merged directory and
+deploys it to GitHub Pages. It does not run the test matrix or release preflight;
+release validation remains in the release workflow. Pushes affecting `web/` or
+`pages.yml`, and manual dispatch, trigger Pages. It uses the `github-pages`
+environment and refuses stale queued revisions. The site root has no `/web/`
+prefix. See RELEASING.md for publication ordering and settings.
+
+Latest-release download behavior was verified on 2026-11-05 against the
+[GitHub CLI manual](https://cli.github.com/manual/gh_release_download): omitting
+the tag selects the latest release, using `--pattern jvm.tar.gz` for the asset.
 
 Hosting status (2026-11-03): the user reports `https://getjvm.dev/` now
 points to this repository's GitHub Pages site. An HTTP check reached a

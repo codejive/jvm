@@ -11,8 +11,7 @@ origin when inspected on 2026-11-04. The installer defaults from
 1. Review and merge the implementation onto the default branch. Require the
    Bash portability checks to pass: Linux/macOS Bash 3.2/current, Windows Git
    Bash/MSYS2/Cygwin, Windows PowerShell 5.1, shell startup and packaging checks.
-   The initial automatic Pages preflight will refuse deployment until the
-   release exists. Do not bypass this check or publish a placeholder pointer.
+   Pages needs a published release containing `jvm.tar.gz` before it can deploy.
 2. In repository Settings → Pages, select **GitHub Actions** as the build source.
    Verify the `github-pages` environment permits only the default branch and
    configure any required reviewers. Ensure Actions policy permits the pinned
@@ -20,9 +19,9 @@ origin when inspected on 2026-11-04. The installer defaults from
    maintainer actions; the workflows do not change repository settings.
 3. Confirm the two runtime version constants and `web/latest.txt` are `0.2.0`.
    Tag the reviewed commit `v0.2.0` and push that tag. Do not reuse an existing
-   version. For later versions, update both constants, and regenerate the
-   embedded installer only if `web/install.ps1` changed. A version is exactly
-   three numeric components with no leading zeros, except the component `0`.
+   version. For later versions, update both constants and `web/latest.txt`. A
+   version is exactly three numeric components with no leading zeros, except
+   the component `0`.
 4. Dispatch **Publish versioned tool** with `tag=v0.2.0` from the reviewed
    default-branch workflow. It checks out and tests that tag, validates the
    version constants and `web/latest.txt`, builds `jvm.tar.gz`,
@@ -34,12 +33,12 @@ origin when inspected on 2026-11-04. The installer defaults from
    site** on the current default branch. For later releases, update
    `web/latest.txt` alongside the runtime version constants before tagging;
    packaging requires it to match the release version with one final LF.
-   The current Pages workflow still reads the pointer and installers from the
-   default branch; switching those files to the latest release is pending.
-   The preflight verifies the release pointer, archive checksum and contents before
-   uploading the allowlisted public files. A queued old revision cannot deploy
-   over a newer default-branch revision. If an unrelated commit makes a run
-   stale, dispatch a fresh run at the current default-branch head.
+   Pages copies the current `web/` directory and extracts the latest release's
+   `jvm.tar.gz` over it before uploading the result. The release's `latest.txt`
+   overrides the branch copy. Pages does not rerun tests or a release preflight;
+   the release workflow already runs the test matrix. A queued old revision
+   cannot deploy over a newer default-branch revision. If a run becomes stale,
+   dispatch a fresh run at the current default-branch head.
 6. Verify the existing custom-domain/proxy configuration rather than replacing
    it. The user reported GitHub Pages behind Cloudflare on 2026-11-03; at that
    time `/` returned 404 and the concrete metadata route redirected upstream.
@@ -73,7 +72,6 @@ they have not been executed as part of implementation.
 ```sh
 python tests/release-tooling.py
 python tools/package-release.py 0.2.0 /absolute/new/assets
-python tools/package-release.py 0.2.0 /absolute/new/site --site
 ```
 
 These commands do not publish anything. Destination directories must not exist.
@@ -85,11 +83,12 @@ individual script assets cannot be installed by the new installers.
 The Bash and PowerShell installers are independent entry points. Run their
 respective offline suites after editing them; there is no embedding step.
 
-The site staging allowlist is `install.sh`, `install.ps1`, `latest.txt`,
-`index.html`, `.nojekyll`; no source tree, test fixtures or site generator is
-uploaded. The Pages preflight is intentionally online and is separate from the
-offline suite. Release checksums use the same HTTPS trust channel as payloads;
-there is no independent signature verification or automatic updater.
+Pages publishes all files from `web/`, overlaid by all files in the latest
+release archive. Files with matching names come from the release archive.
+Downloads use `gh release download --pattern jvm.tar.gz` without a tag, selecting
+GitHub's latest release. The downloaded tarball stays outside the uploaded site.
+Release checksums use the same HTTPS trust channel as payloads; there is no
+independent signature verification or automatic updater.
 
 Action documentation consulted on 2026-11-04:
 [custom Pages workflows](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages),

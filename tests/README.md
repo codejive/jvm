@@ -1,5 +1,22 @@
 # Discovery, installation and uninstallation verification
 
+## Pages release overlay (2026-11-05)
+
+Pages no longer invokes the test matrix or a public-release preflight. It copies
+all current web files, downloads the latest release tarball and extracts it over
+the staged site. The preflight helper, packaging `--site` mode and their tests
+were removed. Release packaging checks remain in the normal test/release jobs.
+
+Local verification passed YAML parsing, staging-step Bash syntax, release
+packaging checks and `git diff --check`. A temporary offline smoke check ran the
+workflow's staging commands under installed Git Bash with a fake gh downloader:
+release latest.txt replaced a deliberately different web pointer, all three
+scripts matched the release bytes, and web installers, index.html, .nojekyll and
+a nested extra web file survived. No workflow, deployment or live release
+download was triggered. Actionlint was unavailable locally; hosted execution
+remains unverified for this change. Historical preflight results below describe
+the former workflow.
+
 ## Malformed tar fixtures removed (2026-11-05)
 
 Removed the 21 malformed `.tar.gz` fixtures, their generator definitions and
