@@ -1,5 +1,81 @@
 # Discovery, installation and uninstallation verification
 
+## Executable test wrapper repair (2026-11-06)
+
+The first hosted run of the performance changes passed PowerShell, Git Bash
+and MSYS2 but failed both Bash versions on Linux/macOS and current Cygwin
+when creating the first installation's default link. Removing `ln` from the
+ordinary utility wrapper loop also removed its initial `chmod +x`; rewriting
+the failure-injection wrapper later did not set that permission. The harness
+now explicitly makes the completed `ln` wrapper executable before isolating
+PATH. Runtime code and test coverage are unchanged.
+
+The [hosted run](https://github.com/codejive/jvm/actions/runs/42131463064)
+completed its passing Windows jobs in 3:27 (PowerShell), 3:22 (Git Bash) and
+4:48 (MSYS2), including setup/checkout. Those results precede this permission
+repair; Linux, macOS and Cygwin still require a hosted rerun.
+
+Local Git Bash passed `bash tests/install.sh --defaults` (47 seconds), covering
+default creation, replacement, interrupted updates and removal rollback with
+simulated host layouts. Bash syntax checks and `git diff --check` passed.
+ShellCheck is unavailable. No local Unix/Cygwin runs, commit, push or hosted
+rerun were performed for the repair.
+
+## CI harness performance (2026-11-06)
+
+The PowerShell smoke harness now launches its ordinary script and CMD checks
+with `Diagnostics.Process`, drains stdout and stderr concurrently, and waits
+on the process directly. It preserves the PowerShell working directory,
+argument quoting, fresh-process isolation, stream assertions and exit-code
+checks. The three CMD paste checks retain file-backed `Start-Process` input.
+The suite reports elapsed time and the number of processes launched by the
+new helper. On the same local Windows machine, all 30 smoke groups passed in
+297.37 seconds before the change and 145.52 seconds afterwards (about 51%
+less elapsed time). These are local measurements, not hosted CI results.
+
+Discovery and installation link ordinary utilities into their isolated PATH
+instead of launching an extra Bash wrapper for every utility call. On MSYS,
+shortcut links avoid elevation and preserve the executable's DLL location.
+Installation retains scripts for failure injection and for utilities moved
+or replaced during capability tests; renaming MSYS shortcut links can lose
+their link identity. All 56 discovery groups passed locally in 52.97 seconds
+with the original wrappers and about 35 seconds with links. Runs overlapped
+other verification work, so these timings are indicative rather than a
+controlled benchmark.
+
+`tests/ci.sh` reports per-suite and total timings. Windows runs three installation
+partitions concurrently, each with independent temporary HOME/XDG roots,
+fixtures, logs and cleanup. A fourth worker runs discovery, home/env and the
+Bash installer suite in sequence while those partitions run. The harness waits
+for every partition and propagates any failure. Unix retains the full serial
+installation suite. The partition commands are also usable individually with
+the interpreter being tested:
+
+```sh
+bash tests/install.sh --contracts
+bash tests/install.sh --selection
+bash tests/install.sh --archives
+```
+
+Contracts cover metadata, ranges, manifests, inventory and uninstall selectors;
+selection covers defaults, flags, execution and configuration; archives cover
+the remaining installation, extraction and concurrent-publication checks.
+`bash tests/install.sh` and `bash tests/run.sh` retain their full serial behavior.
+Runtime scripts and product requirements are unchanged.
+
+The complete local Git Bash CI harness passed in 192.56 seconds (about 3:13),
+including all 56 discovery groups, the original 35 installation groups split
+12/9/14 across the partitions, home/env checks, all 19 Bash installer groups,
+native junction smoke and all 14 PowerShell installer groups. Comparing the
+installation group descriptions with the preceding hosted run found no missing
+or additional groups. Overlapping the other suites reduced the local harness
+from the first optimized schedule's 331.10 seconds (5:31). The PowerShell
+process helper also captured simultaneous 128 KiB stdout/stderr output and exit
+37 without blocking. Bash syntax, PowerShell parsing, LF endings and
+`git diff --check` passed. ShellCheck is unavailable. Linux, macOS, Bash 3.2,
+MSYS2 and Cygwin validation and same-runner hosted performance measurements
+remain pending; no commit, push or workflow dispatch was performed.
+
 ## Patch release preparation: 0.2.1 (2026-11-05)
 
 The runtime version constants, PowerShell HTTP User-Agent, version-output

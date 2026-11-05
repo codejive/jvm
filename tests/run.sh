@@ -16,8 +16,9 @@ mkdir -p "$HOME" "$TEMP/bin"
 TOOLS="$TEMP/bin"
 for tool in mkdir mktemp rm sed awk cat mv date cp; do
     path=$(command -v "$tool") || exit 1
-    printf '#!%s\nexec "%s" "$@"\n' "$BASH_BIN" "$path" > "$TOOLS/$tool"
-    chmod +x "$TOOLS/$tool" || exit 1
+    # MSYS shortcut links work without elevation and retain the executable's
+    # original DLL location. Do not add an interpreter to every utility call.
+    MSYS=winsymlinks ln -s "$path" "$TOOLS/$tool" || exit 1
 done
 export PATH=$TOOLS
 export TEST_SYSTEM=Linux TEST_MACHINE=x86_64 TEST_LIBC=glibc

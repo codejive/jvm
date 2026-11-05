@@ -8,6 +8,8 @@ TEMP=$(mktemp -d "${TMPDIR:-/tmp}/jvm-install-tests.XXXXXXXX") || exit 1
 # Fixtures and exact home/exec expectations share the manager's physical paths.
 # TMPDIR can name an alias such as /var on macOS or a Windows runner mount.
 TEMP=$(cd "$TEMP" && pwd -P) || exit 1
+SUITE_NAME=${1:-all}
+SUITE_STARTED=$SECONDS
 cleanup() {
     if [ -n "${TEST_PUBLISH_GATE:-}" ]; then
         : > "$TEST_PUBLISH_GATE/first.release"
@@ -22,7 +24,7 @@ cleanup() {
     done
     rm -rf -- "$TEMP"
 }
-trap cleanup EXIT
+trap 'status=$?; cleanup; printf "TIMING: installation %s: %ss (exit %s)\n" "$SUITE_NAME" "$((SECONDS-SUITE_STARTED))" "$status"; exit "$status"' EXIT
 trap 'exit 1' HUP INT TERM
 mkdir -p "$TEMP/project with spaces"
 cd "$TEMP/project with spaces" || exit 1
@@ -31,10 +33,18 @@ export XDG_CACHE_HOME="$TEMP/cache with spaces" XDG_CONFIG_HOME="$TEMP/config" X
 mkdir -p "$HOME" "$TEMP/bin"
 TOOLS=$TEMP/bin
 export MSYS=winsymlinks:nativestrict
-for tool in ln readlink mkdir mktemp rm rmdir sed awk cat cmp mv date cp sleep wc find tar gzip unzip sha256sum openssl; do
+for tool in readlink mkdir mktemp rmdir sed awk cat cmp date cp sleep wc find tar gzip unzip sha256sum openssl; do
     path=$(command -v "$tool") || continue
-    printf '#!%s\nexec "%s" "$@"\n' "$BASH_BIN" "$path" > "$TOOLS/$tool"
-    chmod +x "$TOOLS/$tool" || exit 1
+    case "$tool" in
+        readlink|awk|tar|unzip|sha256sum|openssl)
+            # These entries are moved/replaced in capability/failure tests.
+            # MSYS shortcut links lose their link identity when renamed.
+            printf '#!%s\nexec "%s" "$@"\n' "$BASH_BIN" "$path" > "$TOOLS/$tool"
+            chmod +x "$TOOLS/$tool" || exit 1 ;;
+        *)
+            # Avoid another Bash process for ordinary utility calls.
+            MSYS=winsymlinks ln -s "$path" "$TOOLS/$tool" || exit 1 ;;
+    esac
 done
 printf '#!%s\nprintf "%%s\\n" "$2"\n' "$BASH_BIN" > "$TOOLS/cygpath"
 printf '#!%s\ncat > /dev/null\nln -s "$JVM_TARGET" "$JVM_LINK"\n' "$BASH_BIN" > "$TOOLS/cmd.exe"
@@ -171,6 +181,7 @@ if [ -n "$TEST_DEFAULT_GATE" ] && [ "${3:-}" = "$XDG_DATA_HOME/jvm/jdks/$TEST_DE
 fi
 exec "$TEST_REAL_LN" "$@"
 EOF
+chmod +x "$TOOLS/ln" || exit 1
 export PATH=$TOOLS
 passed=0
 fail() { printf 'FAIL: %s\n' "$*" >&2; cat "$TEMP/err" >&2; exit 1; }
@@ -1396,6 +1407,18 @@ if [ "${1:-}" = --flags ]; then flag_alias_checks; exit 0; fi
 if [ "${1:-}" = --execution ]; then execution_checks; exit 0; fi
 if [ "${1:-}" = --defaults ]; then default_checks; exit 0; fi
 
+# Independent partitions of the full suite. Each process creates its own
+# fixtures/storage; the ordinary no-argument invocation still runs everything.
+case "${1:-}" in
+    --contracts)
+        ea_checks; type_checks; range_checks; java_major_checks
+        manifest_checks; inventory_checks; uninstall_checks
+        exit 0 ;;
+    --selection)
+        default_checks; flag_alias_checks; execution_checks; configuration_checks
+        exit 0 ;;
+esac
+
 if [ "${1:-}" != --publication ]; then
 run 0 list
 [ "$(< "$TEMP/out")" = "No JDKs are installed. Use 'install' to install one" ] || fail 'wrong empty inventory message'
@@ -1408,6 +1431,7 @@ done
 [ ! -e "$XDG_DATA_HOME" ] || fail 'empty listing created data storage'
 run 2 list ''; run 2 list ../21; run 2 list extra extra
 check 'empty offline inventory succeeds without creating storage; command usage'
+if [ "${1:-}" != --archives ]; then
 ea_checks
 type_checks
 range_checks
@@ -1416,6 +1440,7 @@ manifest_checks
 inventory_checks
 uninstall_checks
 default_checks
+fi
 
 index; row 21.0.2+9 vendor; run 0 install vendor-21; diagnostic '21.0.2+9-vendor'
 diagnostic 'Successfully installed 21.0.2+9-vendor'; diagnostic 'Installing 21.0.2+9-vendor...'
@@ -1715,9 +1740,11 @@ run 0 list
 contains '23+1-vendor'; contains '(invalid JDK)'
 check 'independent staging, race loser success, publication failure and preservation of prior installation/default'
 
+if [ "${1:-}" != --archives ]; then
 flag_alias_checks
 execution_checks
 configuration_checks
+fi
 
 saved_data=$XDG_DATA_HOME; XDG_DATA_HOME=relative
 index; row 24+1 vendor; run 0 install vendor-24
