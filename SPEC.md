@@ -638,6 +638,18 @@ Last-Modified and last-check metadata.
 
 ## Tool installer
 
+The static landing page (`web/index.html`) presents Unix and PowerShell tool
+installation commands, the follow-up `jvm install` command, and discovery,
+installation and execution examples. It uses a responsive layout with links to
+the GitHub repository and documentation. Each command has a keyboard-accessible
+copy button when JavaScript is enabled, with success feedback announced to
+assistive technology. If clipboard access fails, the command is selected for
+manual copying and the page reports the failure. Commands remain readable and
+selectable without JavaScript. Styling and icons are self-contained with no
+external runtime assets or dependencies. The local `web/duke-claw.png` artwork
+appears above the main heading in the left column; the header uses a text-only
+wordmark.
+
 `web/install.sh` and `web/install.ps1` implement standalone user-wide tool
 installation; public URLs require the maintainer publication sequence in
 [RELEASING.md](RELEASING.md). They install no JDK, never select a default, never
