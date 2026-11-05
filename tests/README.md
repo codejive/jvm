@@ -1,5 +1,111 @@
 # Discovery, installation and uninstallation verification
 
+## Malformed tar fixtures removed (2026-11-05)
+
+Removed the 21 malformed `.tar.gz` fixtures, their generator definitions and
+the tests consuming them, including malformed-archive extraction tests in both
+tool-installer suites. Valid tar fixtures and their tests remain, as do ZIP
+rejection tests and checksum/transfer checks. This changes test coverage only;
+runtime archive handling is unchanged. Earlier coverage reports below are
+historical and include checks that have now been removed.
+
+Local verification passed 17 Bash tool-installer groups, 10 native Windows
+PowerShell groups, release packaging/preflight and Bash syntax checks. A
+temporary generator run reproduced exactly the six remaining valid tar
+fixture names. All 35 JDK installation groups also passed under Git Bash
+with simulated host layouts. `git diff --check` passed.
+
+## Release archive pointer (2026-11-05)
+
+The release archive now contains `latest.txt` alongside the three scripts,
+with exact bytes from `web/latest.txt`, matching the standalone release asset.
+Packaging checks verify all four entries, byte preservation, SHA-256 and
+reproducibility. Pages preflight also checks the archived pointer. Installer
+fixtures use this four-file layout; installers still copy only the required
+scripts. Packaging/preflight, all 18 Bash installer groups (under Git Bash
+with simulated host detection), and all 11 native PowerShell installer groups
+passed locally. No runtime installer changes or README changes were needed.
+
+## Direct-copy installers (2026-11-05)
+
+The user replaced tool ownership, locks and transaction recovery with direct
+copying. Installers use a temporary download/extraction directory and overwrite
+the required scripts in HOME/.local/bin. No installer state, per-file hash
+inventory, history, permanent environment backups or logs are written. Shell
+profile rollback uses temporary work files; registry rollback uses in-memory
+snapshots. Download handling now uses standard curl/wget/.NET facilities rather
+than custom redirect parsing. Tests for removed features were deleted.
+
+Verification passed 18 offline Bash installer groups under installed Git Bash
+(with simulated Unix/Windows host detection), 11 native Windows PowerShell 5.1
+groups using a disposable registry key, packaging/preflight tests, Bash syntax
+and `git diff --check`. A temporary native Git Bash smoke check passed exact
+three-file copying, profile sourcing and native HOME/XDG inputs. No real JDKs,
+normal user profiles or normal environment registry values were changed.
+ShellCheck is unavailable locally. Native Linux/macOS, Cygwin/MSYS2, Bash 3.2
+and optional alternative-shell checks remain for hosted CI. Distributed sizes:
+14,713 bytes for `web/install.sh`, 11,764 bytes for `web/install.ps1`, both LF.
+Earlier entries below describe historical implementations and test results.
+
+## Trusted tool archives and Windows payloads (2026-11-05)
+
+Both installers verify SHA-256 and then extract the project-produced archive
+with tar. Installer entry-name/type/count and empty-payload checks, and their
+rejection tests, were removed. Packaging and Pages preflight still check the
+project-produced release layout upstream.
+
+Linux/macOS publish only `jvm`; Windows publishes all three scripts from either
+installer. Bash retains shell-profile setup on Windows. Its publication and
+recovery loops now cover each installed file. The offline Bash suite exercises
+three-file install/reinstall/update and rollback under simulated Git Bash,
+MSYS2 and Cygwin host detection. A temporary native Git Bash smoke check passed
+all three exact-byte payloads, profile sourcing and native HOME/XDG inputs.
+All 25 Bash installer groups and 15 PowerShell installer groups passed, as did
+packaging/preflight, Bash syntax and `git diff --check`. ShellCheck is unavailable; native Linux/macOS,
+Cygwin/MSYS2 and Bash 3.2 checks remain for hosted CI. Installer sizes are
+22,536 bytes (`web/install.sh`) and 21,463 bytes (`web/install.ps1`), with LF
+line endings. Earlier entries below describe previous implementations.
+
+## Bash installer independence (2026-11-05)
+
+The Bash installer now uses shell-profile setup on Windows and installs only
+`jvm`. The embedded PowerShell source, generator and delegation checks were
+removed. The existing checksum-capability tests now strip only the Bash entry
+point when loading helpers. Historical delegation results below describe the
+previous implementation.
+
+A temporary offline native Git Bash smoke check passed installation, profile
+sourcing, native JAVA_HOME/POSIX PATH values and native HOME/XDG input paths.
+The existing Bash installer suite passed all 24 groups under Git Bash with a
+simulated Unix host. The PowerShell installer suite passed all 15 remaining
+groups against its disposable registry key. Packaging/preflight checks, Bash syntax and
+`git diff --check` passed. No checks for the removed delegation feature were
+added. ShellCheck is unavailable locally; Linux/macOS, Cygwin/MSYS2 and Bash 3.2
+validation remain for hosted CI. `web/install.sh` is now 22,378 bytes, down from
+46,301 bytes; `web/install.ps1` remains 22,335 bytes.
+
+## Single-archive tool releases (2026-11-05)
+
+Both installers now fetch one `jvm.tar.gz` and one digest-only checksum file.
+The existing offline installer commands below cover the new download contract,
+exact payload bytes, corrupt checksums/archives, and verified archives with
+missing/duplicate/extra entries, traversal, absolute names, symbolic/hard links,
+directories and empty payloads. Rejection preserves installed files and the
+ownership record. `tests/generate-archives.py` regenerates the tiny checked-in
+inert fixtures; it is not needed to run the offline installer suites.
+`python tests/release-tooling.py` checks reproducible packaging, the release
+pointer, exact archive contents and the Pages preflight with fake HTTP responses.
+
+Local verification passed 24 Bash installer groups under Git Bash (simulated
+Unix host) and 16 native Windows PowerShell 5.1 groups, including real Windows
+tar extraction, CMD bootstrap and Git Bash delegation. Packaging/preflight tests,
+Bash syntax and `git diff --check` passed. No real JDK, user profile, or normal
+user environment registry values were changed. Native Linux/macOS, Bash 3.2,
+Cygwin/MSYS2 and the optional native-shell checks await hosted CI for this change;
+ShellCheck was unavailable locally. Distributed installers measure 46,301 bytes
+(`web/install.sh`, including embedded PowerShell) and 22,335 bytes
+(`web/install.ps1`), with LF line endings. Runtime scripts are unchanged.
+
 ## Native C-shell repair (2026-11-04)
 
 The [follow-up run](https://github.com/codejive/jvm/actions/runs/41812403128)
@@ -72,14 +178,10 @@ python tests/release-tooling.py
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/tool-installer.ps1
-# Also test native Bash-to-PowerShell delegation with an already installed Bash:
-$env:JVM_TEST_BASH = 'C:\Program Files\Git\bin\bash.exe'
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/tool-installer.ps1
-Remove-Item Env:JVM_TEST_BASH
 ```
 
 `tests/ci.sh` includes installer syntax and offline tests. Hosted Windows jobs
-also run the delegation test through the actual current Git Bash/MSYS2/Cygwin
+run the Bash installer suite through the actual current Git Bash/MSYS2/Cygwin
 interpreter. The hosted Linux shell job installs Zsh/Fish/csh/tcsh and runs:
 
 ```sh
@@ -786,8 +888,8 @@ distro and distro-major selectors use the same cache without additional requests
 `tests/install.sh` is a separate deterministic offline suite with isolated
 HOME/XDG/PATH and fake curl/wget transfers. It uses real tar/gzip, Info-ZIP unzip
 and sha256sum/openssl against tiny checked-in inert JDK archives. It does not
-execute Java. Fixtures include safe internal links and hostile traversal, link
-ancestors, escaping links, duplicate entries and cycles. The suite also covers
+execute Java. Valid tar fixtures include safe internal links; ZIP fixtures also
+cover traversal, link ancestors, escaping links, duplicate entries and cycles. The suite also covers
 selectors without version ordering, multi-ID ambiguity, format preference/fallback, manifest persistence,
 checksum/size/transfer/layout failures, idempotence, interrupted/concurrent
 installation, losing-publisher success, and preservation of prior installs

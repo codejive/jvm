@@ -13,7 +13,11 @@ mkdir -p "$HOME" "$TEMP/fixtures" "$TEMP/bin"
 cp "$ROOT/jvm" "$ROOT/jvm.ps1" "$ROOT/jvm.cmd" "$TEMP/fixtures/"
 printf '0.2.0\n' > "$TEMP/fixtures/latest.txt"
 REAL_HASH=$(command -v sha256sum)
-(cd "$TEMP/fixtures"; "$REAL_HASH" -t jvm jvm.ps1 jvm.cmd > SHA256SUMS)
+pack_fixture() {
+    (cd "$TEMP/fixtures"; tar -czf jvm.tar.gz jvm jvm.ps1 jvm.cmd latest.txt)
+    "$REAL_HASH" < "$TEMP/fixtures/jvm.tar.gz" | awk '{print $1}' > "$TEMP/fixtures/jvm.tar.gz.sha256"
+}
+pack_fixture
 export FIXTURES="$TEMP/fixtures" LOG="$TEMP/requests"
 export TEST_EVAL_MARKER="$TEMP/unexpected-command"
 cat > "$TEMP/bin/data" <<'EOF'
@@ -42,26 +46,16 @@ while [ "$#" -gt 0 ]; do
 done
 printf '%s\n' "$url" >> "$LOG"
 [ "${DOWNLOAD_FAIL:-0}" = 0 ] || exit 8
-if [ "${WGET_REDIRECT:-}" = downgrade ]; then
-    printf '  HTTP/1.1 302 Found\n  Location: http://insecure.example/payload\n' >&2
-    exit 8
-fi
-if [ "${WGET_REDIRECT:-}" = secure ]; then
-    case $url in
-        *://github.com/*) printf '  HTTP/1.1 302 Found\n  Location: https://release.example/%s\n' "${url##*/}" >&2; exit 8 ;;
-    esac
-fi
-printf '  HTTP/1.1 200 OK\n' >&2
 cp "$FIXTURES/${url##*/}" "$out"
 EOF
 cat > "$TEMP/bin/uname" <<'EOF'
 #!/usr/bin/env bash
-printf 'Linux\n'
+printf '%s\n' "${TEST_HOST:-Linux}"
 EOF
 chmod +x "$TEMP/bin/"*
 export PATH="$TEMP/bin:$PATH"
 INSTALLER=$ROOT/web/install.sh
-DEST=$HOME/.local/bin STATE=$XDG_DATA_HOME/jvm/tool-install
+DEST=$HOME/.local/bin
 count=0
 ok() { count=$((count+1)); printf 'ok %s - %s\n' "$count" "$*"; }
 run() { bash "$INSTALLER" "$@" > "$TEMP/out" 2> "$TEMP/err"; }
@@ -83,34 +77,26 @@ cmp "$DEST/jvm" "$ROOT/jvm"
 [ "$(wc -l < "$LOG" | tr -d ' ')" = 3 ]
 ok 'latest pins payload, exact bytes, unattended defaults preserve JDK storage'
 : > "$LOG"
-touch -t 200001010000 "$DEST/jvm"
-touch "$TEMP/mtime-sentinel"
 run --version 0.2.0 --non-interactive --no-path --no-java
 ! grep latest.txt "$LOG"
-[ "$DEST/jvm" -ot "$TEMP/mtime-sentinel" ]
-ok 'pinned matching reinstall bypasses latest'
+ok 'pinned install bypasses latest'
 run --path --java --shell bash --non-interactive
 [ -f "$HOME/.profile" ] && [ ! -e "$HOME/.bash_profile" ]
 # Start a real fresh Bash. Generated setup must treat metacharacters as data.
 bash --noprofile --norc -c '. "$HOME/.profile"; . "$HOME/.bashrc"; . "$HOME/.profile"; [ "$JAVA_HOME" = "$XDG_DATA_HOME/jvm/jdks/default" ]; case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) exit 1 ;; esac'
 bash --noprofile --norc -c 'PATH=; . "$HOME/.profile"; case "$PATH" in *:) ;; *) exit 1 ;; esac; unset PATH; . "$HOME/.profile"; case "$PATH" in *:) exit 1 ;; esac'
-before=$(find "$HOME" -name '*.jvm-backup.*' | wc -l)
+cp "$HOME/.bashrc" "$TEMP/before-repeat"
 run --path --java --shell bash --non-interactive
-[ "$before" = "$(find "$HOME" -name '*.jvm-backup.*' | wc -l)" ]
-ok 'Bash startup executes safely, deduplicates and repeat setup preserves backups'
-printf '\n# user edit\n' >> "$DEST/jvm"
-fails 1 --no-path --no-java --non-interactive
-grep -q 'locally modified' "$TEMP/err"
-cp "$ROOT/jvm" "$DEST/jvm"
-ok 'modified owned file refused'
-cp "$FIXTURES/SHA256SUMS" "$TEMP/good-sums"
-printf '<html>error</html>\n' > "$FIXTURES/SHA256SUMS"
+cmp "$HOME/.bashrc" "$TEMP/before-repeat"
+ok 'Bash startup executes safely, deduplicates and repeat setup preserves profiles'
+cp "$FIXTURES/jvm.tar.gz.sha256" "$TEMP/good-sums"
+printf '<html>error</html>\n' > "$FIXTURES/jvm.tar.gz.sha256"
 fails 1 --non-interactive
-cp "$TEMP/good-sums" "$FIXTURES/SHA256SUMS"
-printf bad >> "$FIXTURES/jvm"
+cp "$TEMP/good-sums" "$FIXTURES/jvm.tar.gz.sha256"
+printf bad >> "$FIXTURES/jvm.tar.gz"
 fails 1 --non-interactive
 cmp "$DEST/jvm" "$ROOT/jvm"
-cp "$ROOT/jvm" "$FIXTURES/jvm"
+pack_fixture
 DOWNLOAD_FAIL=1 fails 1 --non-interactive
 printf '0.2.0\n0.3.0\n' > "$FIXTURES/latest.txt"
 fails 1 --non-interactive
@@ -122,32 +108,14 @@ printf '# >>> jvm path >>>\n' >> "$HOME/.bashrc"
 fails 1 --path --shell bash --non-interactive
 grep -q 'Tool was installed' "$TEMP/err"
 sed '$d' "$HOME/.bashrc" > "$TEMP/profile"; cp "$TEMP/profile" "$HOME/.bashrc"
-ok 'corrupt markers fail setup after usable publication'
+ok 'corrupt markers fail setup after tool copy'
 printf '# existing login\n' > "$HOME/.bash_login"
 run --path --shell bash --no-java --non-interactive
 grep -q '^# existing login' "$HOME/.bash_login"
 [ ! -e "$HOME/.bash_profile" ]
 ok 'Bash honors login precedence'
-mkdir -p "$STATE/lock"
-printf '%s\n' "$$" > "$STATE/lock/pid"
-fails 1 --non-interactive --no-path --no-java
-grep -q 'another installer' "$TEMP/err"
-rm "$STATE/lock/pid"; rmdir "$STATE/lock"
-ok 'live competing installer refused'
-mkdir "$STATE/transaction"
-cp "$STATE/record" "$STATE/transaction/old-record"
-cp "$STATE/record" "$STATE/transaction/new-record"
-cp -p "$DEST/jvm" "$STATE/transaction/old-jvm"
-touch "$STATE/transaction/ready"
-printf partial > "$DEST/jvm"
-run --non-interactive --no-path --no-java
-cmp "$DEST/jvm" "$ROOT/jvm"
-[ ! -e "$STATE/transaction" ]
-ok 'interrupted update restores prior payload and ownership before retry'
-# Force failures after a replacement payload has been published, before record
-# publication. Rollback must restore a prior usable version, not the new bytes.
 REAL_MV=$(command -v mv)
-export REAL_MV INJECT_TARGET="$STATE/record" INJECT_ONCE="$TEMP/injected"
+export REAL_MV INJECT_TARGET="$HOME/.bash_login" INJECT_ONCE="$TEMP/injected"
 cat > "$TEMP/bin/mv" <<'EOF'
 #!/usr/bin/env bash
 set -eu
@@ -161,22 +129,6 @@ fi
 exec "$REAL_MV" "$@"
 EOF
 chmod +x "$TEMP/bin/mv"
-printf '\n# new release fixture\n' >> "$FIXTURES/jvm"
-(cd "$FIXTURES"; "$REAL_HASH" -t jvm jvm.ps1 jvm.cmd > SHA256SUMS)
-for mode in fail signal; do
-    rm -f "$INJECT_ONCE"
-    INJECT_MODE=$mode fails 1 --version 0.2.1 --non-interactive --no-path --no-java
-    cmp "$DEST/jvm" "$ROOT/jvm"
-    [ "$(sed -n '2p' "$STATE/record")" = 0.2.0 ]
-done
-ok 'publication error and catchable interruption restore old payload/record'
-run --version 0.2.1 --non-interactive --no-path --no-java
-cmp "$DEST/jvm" "$FIXTURES/jvm"
-[ "$(sed -n '2p' "$STATE/record")" = 0.2.1 ]
-cp "$ROOT/jvm" "$FIXTURES/jvm"
-(cd "$FIXTURES"; "$REAL_HASH" -t jvm jvm.ps1 jvm.cmd > SHA256SUMS)
-run --version 0.2.0 --non-interactive --no-path --no-java
-ok 'owned update and explicit version replacement'
 # The first profile in a two-file step must be restored if the second fails.
 cp "$HOME/.bashrc" "$TEMP/original-bashrc"
 cp "$HOME/.bash_login" "$TEMP/original-login"
@@ -189,12 +141,6 @@ cmp "$HOME/.bashrc" "$TEMP/before-rollback"
 cp "$TEMP/original-bashrc" "$HOME/.bashrc"
 cp "$TEMP/original-login" "$HOME/.bash_login"
 ok 'multi-profile setup step rolls back earlier edits on failure'
-mkdir "$STATE/transaction"
-printf 'do not delete\n' > "$STATE/transaction/unknown"
-fails 1 --non-interactive --no-path --no-java
-grep -q 'do not delete' "$STATE/transaction/unknown"
-rm "$STATE/transaction/unknown"; rmdir "$STATE/transaction"
-ok 'unknown recovery material retained for inspection'
 custom="$HOME/custom-profile"
 printf '# preserved\n' > "$custom"
 ln -s "$custom" "$HOME/link-profile"
@@ -207,7 +153,7 @@ run --path --shell zsh --profile "$custom" --no-java --non-interactive
 grep -q '^# preserved' "$custom"
 ok 'custom profile preserves content and symlink profiles are refused'
 # Force capability detection to exercise wget without contacting the network.
-sed '/# BEGIN GENERATED WINDOWS INSTALLER/,$d' "$INSTALLER" > "$TEMP/wget-installer"
+sed '/^main "\$@"$/d' "$INSTALLER" > "$TEMP/wget-installer"
 cat >> "$TEMP/wget-installer" <<'EOF'
 command() { if [ "$1" = -v ] && [ "$2" = curl ]; then return 1; fi; builtin command "$@"; }
 main "$@"
@@ -215,15 +161,11 @@ EOF
 INSTALLER=$TEMP/wget-installer
 run --no-path --no-java --non-interactive
 ok 'wget-only capability path'
-WGET_REDIRECT=secure run --no-path --no-java --non-interactive
-WGET_REDIRECT=downgrade fails 1 --no-path --no-java --non-interactive
-! grep '^http://' "$LOG"
-ok 'wget follows verified HTTPS hops and rejects downgrade before any HTTP request'
 INSTALLER=$ROOT/web/install.sh
 # Capability alternatives are tested without installing utilities.
 for hasher in shasum openssl; do
     if ! command -v "$hasher" >/dev/null 2>&1; then continue; fi
-    sed '/# BEGIN GENERATED WINDOWS INSTALLER/,$d' "$INSTALLER" > "$TEMP/hash-installer"
+    sed '/^main "\$@"$/d' "$INSTALLER" > "$TEMP/hash-installer"
     cat >> "$TEMP/hash-installer" <<'EOF'
 command() {
     if [ "$1" = -v ]; then
@@ -252,14 +194,10 @@ ok 'exported ZDOTDIR and Fish XDG configuration root'
 request_count=$(wc -l < "$LOG")
 HOME=relative fails 1 --non-interactive --no-path --no-java
 [ "$request_count" = "$(wc -l < "$LOG")" ]
-mkdir -p "$TEMP/conflict-home/.local/bin"
-printf unowned > "$TEMP/conflict-home/.local/bin/jvm"
-HOME="$TEMP/conflict-home" XDG_DATA_HOME="$TEMP/conflict-data" fails 1 --non-interactive --no-path --no-java
-[ "$(cat "$TEMP/conflict-home/.local/bin/jvm")" = unowned ]
-ok 'relative HOME rejected before networking and unowned file preserved'
-HOME="$TEMP/fallback-home" XDG_DATA_HOME=relative run --non-interactive --no-path --no-java
-[ -f "$TEMP/fallback-home/.local/share/jvm/tool-install/record" ]
-ok 'relative XDG override falls back beneath isolated HOME'
+ok 'relative HOME rejected before networking'
+HOME="$TEMP/fallback-home" XDG_DATA_HOME=relative run --path --java --shell bash --non-interactive
+grep -F '.local/share/jvm/jdks/default' "$TEMP/fallback-home/.bashrc" >/dev/null
+ok 'relative XDG override uses fallback for Java setup'
 # Never depend on a contributor's controlling terminal in the offline suite.
 cat "$INSTALLER" | HOME="$TEMP/piped-home" XDG_DATA_HOME="$TEMP/piped-data" bash -s -- --version 0.2.0 --non-interactive > "$TEMP/out" 2> "$TEMP/err"
 [ -f "$TEMP/piped-home/.local/bin/jvm" ] && [ ! -e "$TEMP/piped-home/.bashrc" ]
@@ -340,4 +278,24 @@ EOF
     [ "$native_failures" = 0 ] || { printf '%s native shell checks failed\n' "$native_failures" >&2; exit 1; }
     ok 'fresh shells load native startup files silently'
 fi
+# Exercise Windows file copying with offline transfers and isolated roots.
+cat > "$TEMP/bin/cygpath" <<'EOF'
+#!/usr/bin/env bash
+printf 'C:/fixture/default\n'
+EOF
+chmod +x "$TEMP/bin/cygpath"
+for host in MINGW64_NT MSYS_NT CYGWIN_NT; do
+    winhome=$TEMP/$host-home windata=$TEMP/$host-data
+    HOME="$winhome" XDG_DATA_HOME="$windata" TEST_HOST=$host run --path --java --shell bash --non-interactive
+    for name in jvm jvm.ps1 jvm.cmd; do cmp "$winhome/.local/bin/$name" "$ROOT/$name"; done
+    HOME="$winhome" XDG_DATA_HOME="$windata" TEST_HOST=$host run --no-path --no-java --non-interactive
+    printf '\n# updated Windows fixture\n' >> "$FIXTURES/jvm.ps1"
+    pack_fixture
+    HOME="$winhome" XDG_DATA_HOME="$windata" TEST_HOST=$host run --version 0.2.1 --no-path --no-java --non-interactive
+    for name in jvm jvm.ps1 jvm.cmd; do cmp "$winhome/.local/bin/$name" "$FIXTURES/$name"; done
+    cp "$ROOT/jvm.ps1" "$FIXTURES/jvm.ps1"
+    pack_fixture
+done
+rm "$TEMP/bin/cygpath"
+ok 'Windows three-file installation and update'
 printf '%s installer checks passed\n' "$count"
