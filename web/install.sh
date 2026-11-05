@@ -146,6 +146,7 @@ edit_profile() {
     [ ! -L "$file" ] || die "symlinked profile: $file; use --profile with its explicit target"
     if [ -e "$file" ]; then plain_file "$file" || die "profile is not a regular file: $file"; fi
     if [ "${FISH_MANAGED:-0}" = 1 ] && [ -e "$file" ] && ! grep -q '^# >>> jvm ' "$file"; then die "unowned Fish configuration: $file"; fi
+    if profile_correct "$file" "$kind" "$value"; then return; fi
     mkdir -p "$(dirname "$file")"
     tmp=$(mktemp "$(dirname "$file")/.jvm-profile.XXXXXXXX")
     if [ -e "$file" ]; then cp -p "$file" "$tmp"; else : > "$tmp"; fi
@@ -159,7 +160,6 @@ edit_profile() {
       $0=="# <<< jvm " k " <<<" {skip=0}
     ' "$tmp" > "$WORK/profile"
     cat "$WORK/block" >> "$WORK/profile"
-    if cmp -s "$file" "$WORK/profile" 2>/dev/null; then rm -f "$tmp"; return; fi
     backup=$(mktemp "$WORK/profile-backup.XXXXXXXX")
     if [ -e "$file" ]; then
         cp -p "$file" "$backup"
@@ -172,12 +172,12 @@ edit_profile() {
     say "Updated $file"
 }
 profile_correct() {
-    local file=$1 kind=$2 value=$3
+    local file=$1 kind=$2 value=$3 expected actual
     [ -f "$file" ] && [ ! -L "$file" ] || return 1
     validate_markers "$file" || return 1
-    block "$kind" "$value" > "$WORK/expected"
-    awk -v k="$kind" '$0=="# >>> jvm " k " >>>" {on=1} on {print} $0=="# <<< jvm " k " <<<" {on=0}' "$file" > "$WORK/actual"
-    cmp -s "$WORK/expected" "$WORK/actual"
+    expected=$(block "$kind" "$value") || return 1
+    actual=$(awk -v k="$kind" '$0=="# >>> jvm " k " >>>" {on=1} on {print} $0=="# <<< jvm " k " <<<" {on=0}' "$file") || return 1
+    [ "$expected" = "$actual" ]
 }
 setup() {
     local files file login pc jc value kind correct

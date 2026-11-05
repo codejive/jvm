@@ -18,18 +18,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Overlay latest release onto web files
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/site"
-          cp -a web/. "$RUNNER_TEMP/site/"
-          gh release download --repo "$GH_REPO" --pattern jvm.tar.gz --output "$RUNNER_TEMP/jvm.tar.gz"
-          tar -xzf "$RUNNER_TEMP/jvm.tar.gz" -C "$RUNNER_TEMP/site"
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
-          path: ${{ runner.temp }}/site
+          path: web
   deploy:
     needs: stage
     runs-on: ubuntu-24.04
