@@ -27,7 +27,7 @@ $script:DefaultVersion = '25'
 
 $script:ScriptInvocation = $MyInvocation
 $script:CmdOutput = $false
-$script:Version = '0.2.0'
+$script:Version = '0.2.1'
 $script:BaseUrl = 'https://getjvm.dev/index'
 $script:ExitCode = 1
 $script:CommandExitCode = 0
@@ -263,7 +263,7 @@ function Invoke-HttpsTransfer {
         $request.AllowAutoRedirect = $false
         $request.Timeout = $TimeoutSeconds * 1000
         $request.ReadWriteTimeout = $TimeoutSeconds * 1000
-        $request.UserAgent = 'jvm/0.2.0'
+        $request.UserAgent = 'jvm/0.2.1'
         if ($Validator -eq 'If-None-Match') {
             $request.Headers[[Net.HttpRequestHeader]::IfNoneMatch] = $ValidatorValue
         } elseif ($Validator -eq 'If-Modified-Since') {

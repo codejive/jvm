@@ -241,7 +241,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $install '.jvm-manifest'), $manifest,
         [Text.UTF8Encoding]::new($false))
 
-    Assert-Equal (Invoke-JvmTest @('--version')) 'jvm 0.2.0' 'Version output mismatch.'
+    Assert-Equal (Invoke-JvmTest @('--version')) 'jvm 0.2.1' 'Version output mismatch.'
     $list = Invoke-JvmTest @('list')
     if ($list -notmatch [regex]::Escape($id)) { throw "List omitted installed ID $id." }
     Assert-Equal (Invoke-JvmTest @('home', $id)) $install 'Exact-ID home resolution mismatch.'

@@ -1,5 +1,23 @@
 # Discovery, installation and uninstallation verification
 
+## Patch release preparation: 0.2.1 (2026-11-05)
+
+The runtime version constants, PowerShell HTTP User-Agent, version-output
+assertion, pinned README examples and `web/latest.txt` now agree on 0.2.1.
+Release notes are prepared in [RELEASE_NOTES.md](../RELEASE_NOTES.md).
+
+Local verification passed reproducible exact-byte packaging and checksum checks
+(`python tests/release-tooling.py`), all 30 Windows PowerShell 5.1 smoke groups,
+all 14 PowerShell installer groups and all 19 Git Bash installer groups. The
+installer tests use isolated offline fixtures; Git Bash host cases are simulated.
+All three entry points reported `jvm 0.2.1`. Bash syntax checks for `jvm` and
+`web/install.sh`, LF-ending checks and `git diff --check` passed. The 0.2.1
+archive and its checksum were also built locally.
+
+ShellCheck is unavailable. No additional Linux, macOS, Cygwin, MSYS2 or Bash 3.2
+runs were performed, and no hosted workflows were dispatched for this change.
+No commit, tag, push, release publication or deployment was performed.
+
 ## CMD environment output (2026-11-05)
 
 `jvm.cmd` supplies the leading `--cmd` signal. CMD `env`/`e` now prints a

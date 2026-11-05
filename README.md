@@ -159,7 +159,7 @@ curl -fsSL https://getjvm.dev/install.sh | bash
 curl -fsSL https://getjvm.dev/install.sh | bash -s -- --path --no-java --non-interactive
 
 # Install a specific version:
-curl -fsSL https://getjvm.dev/install.sh | bash -s -- --version 0.2.0 --no-path --no-java
+curl -fsSL https://getjvm.dev/install.sh | bash -s -- --version 0.2.1 --no-path --no-java
 ```
 
 Windows PowerShell:
@@ -169,7 +169,7 @@ iex (irm 'https://getjvm.dev/install.ps1')
 
 # Install a specific version with options:
 irm 'https://getjvm.dev/install.ps1' -OutFile "$env:TEMP\jvm-install.ps1"
-& "$env:TEMP\jvm-install.ps1" -Version 0.2.0 -Path -NoJava -NonInteractive
+& "$env:TEMP\jvm-install.ps1" -Version 0.2.1 -Path -NoJava -NonInteractive
 ```
 
 The first question offers two choices:
