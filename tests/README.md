@@ -1,5 +1,39 @@
 # Discovery, installation and uninstallation verification
 
+## Installed-JDK reminder (2026-11-05)
+
+Both installers now suggest listing the installed JDKs when the managed
+inventory contains a usable installation. Regression assertions cover
+`jvm list` for user installation, `./jvm list` for local Bash installation
+and `.\jvm list` for local PowerShell installation, while retaining install
+advice for empty inventories. The checks use the existing isolated offline
+fixtures and never execute JDK launchers.
+
+Verification passed all 19 offline Git Bash installer groups (simulated hosts),
+all 14 native Windows PowerShell 5.1 installer groups, Bash syntax checks and
+`git diff --check`. No native Unix/Cygwin/MSYS2 or Bash 3.2 runs were performed;
+ShellCheck remains unavailable. The installers retain LF endings and measure
+19,133 bytes (`web/install.sh`) and 16,660 bytes (`web/install.ps1`).
+
+## Local tool installation (2026-11-05)
+
+Both installers first offer local project copying or the existing user install.
+Local mode copies all three exact-byte scripts, skips environment setup even
+when requested by flags, and gives shell-appropriate relative JDK installation
+advice. Offline regressions exercise the question with fixture input, explicit
+local installation/reinstallation, conflicting mode options, spaced working
+directories, preservation after download failure, and absence of user/profile,
+registry and JDK-storage changes.
+
+Installed Git Bash passed all 19 offline installer groups with simulated host
+detection. Windows PowerShell 5.1 passed all 14 installer groups using temporary HOME/XDG
+roots and a disposable registry key. Bash and installer syntax checks,
+PowerShell parsing and `git diff --check` passed. ShellCheck is unavailable.
+The prompt tests simulate input; no live interactive terminal session, native
+Unix/Cygwin/MSYS2 or Bash 3.2 validation was performed for this change.
+Installer sizes: 19,044 bytes (`web/install.sh`) and 16,559 bytes
+(`web/install.ps1`), both LF.
+
 ## Installer setup wording (2026-11-05)
 
 Both installers list environment targets once, explain each optional setup in

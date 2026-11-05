@@ -650,20 +650,22 @@ external runtime assets or dependencies. The local `web/duke-claw.png` artwork
 appears above the main heading in the left column; the header uses a text-only
 wordmark.
 
-`web/install.sh` and `web/install.ps1` implement standalone user-wide tool
+`web/install.sh` and `web/install.ps1` implement standalone local or user-wide tool
 installation; public URLs require the maintainer publication sequence in
 [RELEASING.md](RELEASING.md). They install no JDK, never select a default, never
-modify project copies and introduce no `use` command. The defaults proposed in
+modify project copies during user installation and introduce no `use` command.
+The defaults proposed in
 [INSTALLER_PLAN.md](INSTALLER_PLAN.md) were approved for this implementation.
 
 ```text
 install.sh [--version major.minor.patch]
+           [--local | --user]
            [--path | --no-path] [--java | --no-java]
            [--shell bash|zsh|fish|csh|tcsh] [--profile /absolute/file]
            [--non-interactive]
 install.sh --help
 install.ps1 [-Version major.minor.patch] [-Path | -NoPath]
-            [-Java | -NoJava] [-NonInteractive]
+            [-Local | -User] [-Java | -NoJava] [-NonInteractive]
 install.ps1 -Help
 ```
 
@@ -671,6 +673,18 @@ Options are unique; conflicting/unknown options and invalid versions exit 2
 before downloads or directory creation. Profile requires an explicit shell.
 Shell/profile options apply to all Bash hosts; PowerShell is Windows-only.
 Help is offline.
+
+Before downloading, interactive installation first asks where to install:
+`1. Install locally` copies all three scripts into the current working directory
+for inclusion in a Java project, without changing the environment;
+`2. Install for your user` installs into HOME/.local/bin with the existing
+optional PATH and JAVA_HOME setup. Enter selects option 2; invalid answers retry.
+`--local`/`-Local` and `--user`/`-User` select a mode without this question.
+Without a usable terminal, in noninteractive mode or on failed input, the
+unspecified mode remains user installation. Bash reads this question from
+`/dev/tty`, never bootstrap stdin. Local mode ignores environment/shell/profile
+setup choices after validating their syntax and asks no further questions.
+
 Versions have exactly three numeric dotted components, each `0` or a positive
 integer without leading zeros. Exit 0 means the tool and any requested setup
 succeeded (optional setup may be declined); operational failure exits 1. If
@@ -711,14 +725,18 @@ Downloads use the standard redirect handling of curl, wget or .NET WebClient.
 Curl restricts protocols to HTTPS; wget and WebClient use their built-in redirect
 policies. There is no custom redirect parser. PowerShell enables TLS 1.2.
 
-The destination is resolved HOME/.local/bin, independent of XDG_DATA_HOME.
+The user-install destination is resolved HOME/.local/bin, independent of
+XDG_DATA_HOME.
+Local installation instead uses the current working directory and copies all
+three exact-byte scripts on every supported host; Bash makes `jvm` executable.
+Both modes retain the same HOME/data-root validation and shared JDK inventory.
 Bash requires absolute HOME; PowerShell uses HOME, falling back to USERPROFILE
 only when HOME is absent, and requires a native absolute path. Relative home
 values are errors. Data storage follows the existing absolute XDG override and
 fallback policy. Newline, CR, tab and PATH-separator paths are rejected before
 mutation (Bash also rejects semicolons for Windows interoperability). Bash
-ships only `jvm` with executable permissions on Linux and macOS. On Windows,
-both installers ship all three exact-byte scripts. On Git Bash, MSYS2 and
+user installation ships only `jvm` with executable permissions on Linux and
+macOS. On Windows, both installers ship all three exact-byte scripts. On Git Bash, MSYS2 and
 Cygwin, `install.sh` uses
 the same direct file copying and shell-profile setup as on Unix. It requires
 `cygpath` for native HOME/data-root inputs and emits native forward-slash
@@ -731,7 +749,7 @@ from PowerShell separately. No PowerShell source is embedded in `install.sh`.
 
 Download and extract in a unique temporary directory under `${TMPDIR:-/tmp}`
 for Bash or the Windows temporary directory (`%TEMP%`) for PowerShell. Create
-HOME/.local/bin and copy the required scripts directly there, overwriting
+the destination and copy the required scripts directly there, overwriting
 existing copies. Bash makes `jvm` executable. Each invocation downloads and
 copies again; there is no installed-version check, ownership record, per-file
 hash inventory, lock, destination-side staging, history or recovery journal.
@@ -751,8 +769,8 @@ Abrupt termination does not trigger recovery on a subsequent invocation.
 
 ### Persistent environment setup
 
-Tool PATH and default-Java setup have independent consent. Positive options
-consent to the corresponding changes; negative options suppress them. Otherwise
+User installation's tool PATH and default-Java setup have independent consent.
+Positive options consent to the corresponding changes; negative options suppress them. Otherwise
 show a shared introduction listing the shell startup files or user environment
 variables (HKCU\Environment), then explain each choice in terms of its effect
 in future terminals. Show the added paths and current/new JAVA_HOME. Both
@@ -768,7 +786,12 @@ downloaded scripts. Count safe ordinary installation directories with usable
 java/javac launchers, including installations without manifests; exclude links,
 reserved reference names and invalid layouts. If none exist, print `No JDK is
 installed yet. Install one with:` followed by `jvm install`. This check never
-creates JDK storage or selects/installs a JDK. End with `Setup complete.` and
+creates JDK storage or selects/installs a JDK. Local mode performs the same
+inventory check, but suggests `./jvm install` in Bash and `.\jvm install` in
+PowerShell. If a usable JDK is found, print `See your currently installed JDKs
+with:` followed by `jvm list` for user installation, `./jvm list` for local
+Bash installation, or `.\jvm list` for local PowerShell installation.
+End with `Setup complete.` and
 show the new-terminal reminder only when environment settings changed.
 An already-correct managed setup avoids repeated prompts and
 edits. The Bash installer compares managed setup text using Bash itself; it

@@ -94,6 +94,20 @@ namespace JvmInstaller { public static class Native {
     [JvmInstaller.Native]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result) | Out-Null
 }
 function Test-SetupAnswer([string]$Answer) { return $Answer -match '\A(?i:|y|yes)\z' }
+function Get-InstallationMode([string]$Mode, [bool]$Unattended) {
+    if ($Mode) { return $Mode }
+    if ($Unattended -or [Console]::IsInputRedirected -or -not [Environment]::UserInteractive) { return 'user' }
+    Write-InstallerMessage "`nHow would you like to install jvm?`n`n1. Install locally`n   Copy all three jvm scripts to the current directory, without changing your`n   environment. Useful for including jvm in a Java project.`n`n2. Install for your user`n   Install jvm in HOME/.local/bin, with optional PATH and JAVA_HOME setup.`n   Useful for keeping jvm available across projects.`n"
+    while ($true) {
+        try { $answer = Read-Host 'Choose [1/2] (default: 2)' } catch { return 'user' }
+        switch -Exact ($answer) {
+            '1' { return 'local' }
+            '2' { return 'user' }
+            '' { return 'user' }
+            default { Write-InstallerMessage 'Please enter 1 or 2.' }
+        }
+    }
+}
 function Get-SetupConsent([string]$Choice, [bool]$Unattended, [string]$Prompt) {
     if ($Choice -eq 'yes') { return $true }
     if ($Choice -eq 'no' -or $Unattended -or [Console]::IsInputRedirected -or -not [Environment]::UserInteractive) { return $false }
@@ -179,18 +193,20 @@ function Test-InstalledJdk([string]$Data) {
 }
 function Invoke-JvmInstaller([string[]]$Arguments) {
     $script:EnvironmentChanged = $false
-    $version = ''; $pathChoice = 'ask'; $javaChoice = 'ask'; $unattended = $false
+    $version = ''; $pathChoice = 'ask'; $javaChoice = 'ask'; $unattended = $false; $mode = ''
     $seen = @{}
     for ($i = 0; $i -lt $Arguments.Count; $i++) {
         $arg = $Arguments[$i]
         if ($arg -ieq '-Help') {
             if ($Arguments.Count -ne 1) { Stop-Installer '-Help must be used alone' 2 }
-            Write-Output 'Usage: install.ps1 [-Version major.minor.patch] [-Path | -NoPath] [-Java | -NoJava] [-NonInteractive]'
+            Write-Output 'Usage: install.ps1 [-Version major.minor.patch] [-Local | -User] [-Path | -NoPath] [-Java | -NoJava] [-NonInteractive]'
+            Write-Output 'Local installation copies all three scripts to the current directory, without setup. Without a terminal, user installation remains the default.'
             return
         }
         $group = $arg.ToLowerInvariant()
         if ($group -in @('-path', '-nopath')) { $group = 'path' }
         if ($group -in @('-java', '-nojava')) { $group = 'java' }
+        if ($group -in @('-local', '-user')) { $group = 'mode' }
         if ($seen.ContainsKey($group)) { Stop-Installer "Duplicate/conflicting option: $arg" 2 }
         $seen[$group] = $true
         switch ($arg.ToLowerInvariant()) {
@@ -199,10 +215,13 @@ function Invoke-JvmInstaller([string[]]$Arguments) {
             '-nopath' { $pathChoice = 'no' }
             '-java' { $javaChoice = 'yes' }
             '-nojava' { $javaChoice = 'no' }
+            '-local' { $mode = 'local' }
+            '-user' { $mode = 'user' }
             '-noninteractive' { $unattended = $true }
             default { Stop-Installer "Unknown option: $arg" 2 }
         }
     }
+    $mode = Get-InstallationMode $mode $unattended
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Stop-Installer 'The native installer supports Windows only' }
     $tar = Join-Path ([Environment]::SystemDirectory) 'tar.exe'
     if (-not [IO.File]::Exists($tar)) {
@@ -219,6 +238,7 @@ function Invoke-JvmInstaller([string[]]$Arguments) {
     Assert-SafeRoot $data
     $data = [IO.Path]::GetFullPath($data)
     $destination = Join-Path $userHome '.local\bin'
+    if ($mode -eq 'local') { $destination = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('.') }
     $javaHome = Join-Path $data 'jvm\jdks\default'
     $work = Join-Path ([IO.Path]::GetTempPath()) ('jvm-bootstrap-' + [Guid]::NewGuid().ToString('N'))
     [IO.Directory]::CreateDirectory($work) | Out-Null
@@ -240,9 +260,12 @@ function Invoke-JvmInstaller([string[]]$Arguments) {
         }
         $installed = $true
         Write-InstallerMessage "jvm $version installed successfully in $destination."
-        Set-UserEnvironment $destination $javaHome $pathChoice $javaChoice $unattended
+        if ($mode -eq 'user') { Set-UserEnvironment $destination $javaHome $pathChoice $javaChoice $unattended }
         try {
-            if (-not (Test-InstalledJdk $data)) { Write-InstallerMessage "`nNo JDK is installed yet. Install one with:`n  jvm install" }
+            $invocation = 'jvm'
+            if ($mode -eq 'local') { $invocation = '.\jvm' }
+            if (Test-InstalledJdk $data) { Write-InstallerMessage "`nSee your currently installed JDKs with:`n  $invocation list" }
+            else { Write-InstallerMessage "`nNo JDK is installed yet. Install one with:`n  $invocation install" }
         } catch { Write-InstallerMessage "Could not check installed JDKs: $($_.Exception.Message)" }
         Write-InstallerMessage 'Setup complete.'
         if ($script:EnvironmentChanged) { Write-InstallerMessage 'Open a new terminal application to use your changes.' }

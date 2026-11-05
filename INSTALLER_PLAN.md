@@ -6,6 +6,10 @@ publication and hosted verification remain maintainer steps in RELEASING.md.
 SPEC.md records current behavior. The user simplified installation on
 2026-11-05 to temporary extraction and direct copying, removing ownership,
 locking, history, recovery and permanent backups.
+On the same date, the user added a first choice between local project copying
+and the existing user installation. Local mode copies all three scripts into
+the working directory and skips environment setup; see SPEC.md for current
+interfaces. The user-install work breakdown below predates this addition.
 Read `AGENTS.md` and `SPEC.md` before implementation. This document defines the
 work breakdown; `SPEC.md` remains the product contract. When implementing,
 update the contract to distinguish completed behavior from remaining proposals.

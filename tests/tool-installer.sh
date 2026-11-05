@@ -77,11 +77,36 @@ fails() {
 }
 run --help
 fails 2 --path --no-path
+fails 2 --local --user
+fails 2 --local --local
 fails 2 --version 01.2.3
 fails 2 --version "$(printf '0.2.0\ninvalid')"
 fails 2 --profile /tmp/x
 [ ! -e "$LOG" ] && [ ! -e "$HOME/.local" ]
 ok 'help and invalid options have no side effects'
+# Exercise the first question with fixture input instead of a controlling terminal.
+sed -e 's|> /dev/tty|>\&2|g' -e 's|< /dev/tty|< "$TEST_INSTALLER_ANSWERS"|g' -e 's|} 2>/dev/null|}|g' "$INSTALLER" > "$TEMP/prompt-installer"
+export TEST_INSTALLER_ANSWERS="$TEMP/answers"
+mkdir -p "$TEMP/project with spaces"
+printf '1\n' > "$TEMP/answers"
+(
+    cd "$TEMP/project with spaces"
+    bash "$TEMP/prompt-installer" --path --java > "$TEMP/out" 2> "$TEMP/err"
+)
+for name in jvm jvm.ps1 jvm.cmd; do cmp "$TEMP/project with spaces/$name" "$ROOT/$name"; done
+grep -q 'How would you like to install jvm?' "$TEMP/err"
+grep -q '^  ./jvm install$' "$TEMP/err"
+! grep -q 'Enable this?\|future terminals\|Open a new terminal' "$TEMP/err"
+[ ! -e "$HOME/.local" ] && [ ! -e "$HOME/.bashrc" ] && [ ! -e "$XDG_DATA_HOME" ]
+# Reinstall explicitly without prompting, and preserve copies after failed verification.
+(
+    cd "$TEMP/project with spaces"
+    run --local --non-interactive
+    DOWNLOAD_FAIL=1 fails 1 --local --non-interactive
+)
+for name in jvm jvm.ps1 jvm.cmd; do cmp "$TEMP/project with spaces/$name" "$ROOT/$name"; done
+ok 'first-question local choice and explicit local reinstall copy three scripts without setup'
+: > "$LOG"
 run --non-interactive --no-path --no-java
 cmp "$DEST/jvm" "$ROOT/jvm"
 [ ! -e "$HOME/.bashrc" ] && [ ! -e "$XDG_DATA_HOME/jvm/jdks" ]
@@ -100,6 +125,13 @@ mkdir -p "$XDG_DATA_HOME/jvm/jdks/.custom JDK/bin"
 for name in java javac; do cp "$XDG_DATA_HOME/jvm/jdks/default/bin/$name" "$XDG_DATA_HOME/jvm/jdks/.custom JDK/bin/$name"; done
 run --non-interactive --no-path --no-java
 ! grep -q 'No JDK is installed yet' "$TEMP/err"
+grep -q '^  jvm list$' "$TEMP/err"
+(
+    cd "$TEMP/project with spaces"
+    run --local --non-interactive
+    grep -q '^  ./jvm list$' "$TEMP/err"
+    ! grep -q 'No JDK is installed yet' "$TEMP/err"
+)
 # Leave reserved and broken directories in place; exclude a linked installation.
 mv "$XDG_DATA_HOME/jvm/jdks/.custom JDK" "$TEMP/external-jdk"
 ln -s "$TEMP/external-jdk" "$XDG_DATA_HOME/jvm/jdks/linked"

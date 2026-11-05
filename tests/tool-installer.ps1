@@ -54,6 +54,8 @@ try {
     }
     Invoke-JvmInstaller @('-Help') | Out-Null
     Expect-Failure { Invoke-JvmInstaller @('-Path', '-NoPath') } 2
+    Expect-Failure { Invoke-JvmInstaller @('-Local', '-User') } 2
+    Expect-Failure { Invoke-JvmInstaller @('-Local', '-Local') } 2
     Expect-Failure { Invoke-JvmInstaller @('-Version', '01.2.3') } 2
     Expect-Failure { Invoke-JvmInstaller @('-Shell', 'bash') } 2
     Assert ($script:requests.Count -eq 0 -and -not (Test-Path -LiteralPath $env:HOME)) 'help/usage caused side effects'
@@ -65,6 +67,49 @@ try {
     & $env:ComSpec /d /c $publicInvalid
     Assert ($LASTEXITCODE -eq 2) 'CMD public invalid argument exit status'
     Pass 'public PowerShell/CMD entry points and exit statuses'
+    $originalMode = ${function:Get-InstallationMode}
+    try {
+        # Replace only terminal detection; input still passes through the real question.
+        ${function:Get-InstallationMode} = [scriptblock]::Create($originalMode.ToString().Replace('$Unattended -or [Console]::IsInputRedirected -or -not [Environment]::UserInteractive', '$Unattended'))
+        $script:answers = New-Object 'Collections.Generic.Queue[string]'
+        function Read-Host { return $script:answers.Dequeue() }
+        $script:answers.Enqueue('invalid'); $script:answers.Enqueue('1')
+        Assert ((Get-InstallationMode '' $false) -eq 'local') 'first question did not select local'
+        $script:answers.Enqueue('2')
+        Assert ((Get-InstallationMode '' $false) -eq 'user') 'first question did not select user'
+        $script:answers.Enqueue('')
+        Assert ((Get-InstallationMode '' $false) -eq 'user') 'Enter did not preserve user default'
+        Assert ((Get-InstallationMode '' $true) -eq 'user') 'unattended default changed'
+    } finally {
+        ${function:Get-InstallationMode} = $originalMode
+        Remove-Item Function:Read-Host
+    }
+    Pass 'first question accepts local/user choices, retries invalid answers and preserves user default'
+    $project = Join-Path $temp 'project with spaces'
+    [IO.Directory]::CreateDirectory($project) | Out-Null
+    Push-Location -LiteralPath $project
+    try {
+        $savedError = [Console]::Error
+        $localMessages = New-Object IO.StringWriter
+        try {
+            [Console]::SetError($localMessages)
+            Invoke-JvmInstaller @('-Local', '-Path', '-Java', '-NonInteractive')
+        } finally { [Console]::SetError($savedError) }
+        Assert ($localMessages.ToString().Contains('  .\jvm install')) 'missing relative PowerShell install advice'
+        Assert (-not $localMessages.ToString().Contains('future terminals')) 'local install offered environment setup'
+        $localMessages.Dispose()
+        foreach ($name in @('jvm', 'jvm.ps1', 'jvm.cmd')) { Assert ((Get-ToolHash (Join-Path $project $name)) -ceq $hashes[$name]) "local payload differs: $name" }
+        Assert (-not (Test-Path -LiteralPath $env:HOME)) 'local installation created user destination'
+        Assert (-not (Test-Path -LiteralPath $env:XDG_DATA_HOME)) 'local installation created JDK storage'
+        Assert (-not [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($registryPath)) 'local installation accessed environment setup'
+        Invoke-JvmInstaller @('-Local', '-NonInteractive')
+        $script:downloadFailure = $true
+        Expect-Failure { Invoke-JvmInstaller @('-Local', '-NonInteractive') }
+        $script:downloadFailure = $false
+        foreach ($name in @('jvm', 'jvm.ps1', 'jvm.cmd')) { Assert ((Get-ToolHash (Join-Path $project $name)) -ceq $hashes[$name]) "local failure changed: $name" }
+    } finally { Pop-Location }
+    Pass 'local install/reinstall copies three scripts without user destination, storage or registry setup'
+    $script:requests = @()
     Invoke-JvmInstaller @('-NonInteractive', '-NoPath', '-NoJava')
     $destination = Join-Path $env:HOME '.local\bin'
     foreach ($name in @('jvm', 'jvm.ps1', 'jvm.cmd')) { Assert ((Get-ToolHash (Join-Path $destination $name)) -ceq $hashes[$name]) "payload differs: $name" }
@@ -85,6 +130,19 @@ try {
     Assert (-not (Test-InstalledJdk $env:XDG_DATA_HOME)) 'missing javac counted as installed'
     [IO.File]::WriteAllText((Join-Path $jdk 'javac.cmd'), 'must not execute')
     Assert (Test-InstalledJdk $env:XDG_DATA_HOME) 'manifest-free installation was missed'
+    foreach ($modeOption in @('-User', '-Local')) {
+        Push-Location -LiteralPath $project
+        $savedError = [Console]::Error
+        $messages = New-Object IO.StringWriter
+        try {
+            [Console]::SetError($messages)
+            Invoke-JvmInstaller @($modeOption, '-NonInteractive', '-NoPath', '-NoJava')
+            $expectedCommand = '  jvm list'
+            if ($modeOption -eq '-Local') { $expectedCommand = '  .\jvm list' }
+            Assert ($messages.ToString().Contains($expectedCommand)) "missing installed-JDK advice for $modeOption"
+            Assert (-not $messages.ToString().Contains('No JDK is installed yet')) 'installed JDK prompted installation'
+        } finally { [Console]::SetError($savedError); $messages.Dispose(); Pop-Location }
+    }
     Pass 'post-setup inventory excludes reserved/invalid layouts and accepts native launchers without execution'
 
     Invoke-JvmInstaller @('-NonInteractive')
