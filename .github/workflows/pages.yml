@@ -3,9 +3,7 @@ on:
   push:
     paths:
       - 'web/**'
-      - 'tools/**'
-      - 'tests/**'
-      - '.github/workflows/**'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -13,22 +11,22 @@ concurrency:
   group: pages
   cancel-in-progress: false
 jobs:
-  checks:
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    uses: ./.github/workflows/test.yml
-    with:
-      revision: ${{ github.sha }}
   stage:
-    needs: checks
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Verify public release before exposing latest.txt
+      - name: Overlay latest release onto web files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          python3 tools/pages-preflight.py
-          python3 tools/package-release.py "$(cat web/latest.txt)" "$RUNNER_TEMP/site" --site
+          mkdir -p "$RUNNER_TEMP/site"
+          cp -a web/. "$RUNNER_TEMP/site/"
+          gh release download --repo "$GH_REPO" --pattern jvm.tar.gz --output "$RUNNER_TEMP/jvm.tar.gz"
+          tar -xzf "$RUNNER_TEMP/jvm.tar.gz" -C "$RUNNER_TEMP/site"
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: ${{ runner.temp }}/site

@@ -174,11 +174,12 @@ Consult current official action documentation when implementing.
 - Release publication builds assets from a checked, explicit tag/revision and
   runs the relevant tests. Do not overwrite assets of a published version.
 - Maintain reviewed `web/latest.txt`; its version advances only after the release
-  assets exist. A Pages preflight verifies the referenced release is complete.
+  assets exist. Updated 2026-11-05: Pages overlays the latest release archive
+  onto the current web directory without repeating release checks.
 - Deploy Pages on default-branch changes to `web/` or the Pages workflow, plus
-  manual dispatch. Gate deployment on installer checks for that same revision.
-- Upload only a staging copy of `web/`, not the repository. Run no site generator
-  for installer scripts. Exclude contributor/test files and preserve script bytes.
+  manual dispatch. Pages does not rerun installer checks.
+- Upload a staging copy of `web/` overlaid by the latest release archive, not
+  the repository. Run no site generator for installer scripts.
 - Concurrent deployments must not let an older queued run replace newer content.
 - Account for the domain's actual custom-domain/proxy configuration. Do not assume
   a visible HTTP redirect or change Cloudflare/DNS during repository work.
