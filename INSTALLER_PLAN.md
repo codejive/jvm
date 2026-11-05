@@ -81,7 +81,7 @@ Defaults and consent:
 
 - Installing/updating the tool is the requested action and needs no extra prompt.
 - Ask separately about missing tool PATH setup and default-JDK setup; show the
-  exact target files/registry values and intended changes. Default answers are no.
+  exact target files/registry values and intended changes. Interactive answers default to yes (`[Y/n]`), as approved on 2026-11-05.
 - Detect an already-correct managed setup and avoid repeat prompts and edits.
 - Explicit positive options consent to their respective edits. Negative options
   suppress them. Never silently replace an unrelated JAVA_HOME without showing

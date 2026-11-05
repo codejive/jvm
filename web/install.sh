@@ -2,7 +2,7 @@
 # Standalone Bash bootstrap; persistent setup uses shell profiles on every host.
 set -eu
 VERSION='' PATH_CHOICE='' JAVA_CHOICE='' SHELL_CHOICE='' PROFILE='' NONINTERACTIVE=0
-WORK='' INSTALLED=0 DEST='' DATA=''
+WORK='' INSTALLED=0 DEST='' DATA='' ENV_CHANGED=0
 FILES=(jvm)
 SETUP_FILES=() SETUP_BACKUPS=() SETUP_EXISTED=()
 say() { printf '%s\n' "jvm installer: $*" >&2; }
@@ -16,7 +16,7 @@ Usage: install.sh [--version major.minor.patch]
   [--shell bash|zsh|fish|csh|tcsh] [--profile /absolute/file]
   [--non-interactive]
 Explicit positive options consent to persistent environment edits.
-Otherwise separate prompts default to no; unattended setup is skipped.
+Otherwise separate prompts default to yes; unattended setup is skipped.
 EOF
 }
 valid_version() {
@@ -103,14 +103,17 @@ quote() {
         *) printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")" ;;
     esac
 }
+setup_answer_yes() {
+    case $1 in ''|y|Y|[yY][eE][sS]) return 0 ;; *) return 1 ;; esac
+}
 consent() {
     [ "$1" != no ] || return 1
     [ "$1" != yes ] || return 0
     [ "$NONINTERACTIVE" = 0 ] && [ -r /dev/tty ] && [ -w /dev/tty ] || return 1
     local answer
     # Opening the controlling terminal may fail even when /dev/tty exists.
-    { printf '%s [y/N] ' "$2" > /dev/tty; IFS= read -r answer < /dev/tty; } 2>/dev/null || return 1
-    case $answer in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+    { printf '%s [Y/n] ' "$2" > /dev/tty; IFS= read -r answer < /dev/tty; } 2>/dev/null || return 1
+    setup_answer_yes "$answer"
 }
 block() {
     local kind=$1 value=$2 q
@@ -180,7 +183,7 @@ profile_correct() {
     [ "$expected" = "$actual" ]
 }
 setup() {
-    local files file login pc jc value kind correct
+    local files file login pc jc value kind correct introduced=0
     if [ "$NONINTERACTIVE" = 1 ]; then
         if [ -z "$PATH_CHOICE" ]; then PATH_CHOICE=--no-path; say "Tool PATH setup skipped; manually add $DEST to PATH if desired."; fi
         if [ -z "$JAVA_CHOICE" ]; then JAVA_CHOICE=--no-java; say "Java setup skipped; manually set JAVA_HOME=$JAVA_HOME_TARGET and add its bin to PATH if desired."; fi
@@ -219,13 +222,50 @@ setup() {
         correct=1
         for file in "${files[@]}"; do profile_correct "$file" "$kind" "$value" || correct=0; done
         [ "$correct" = 0 ] || continue
-        say "Persistent $kind setup targets: ${files[*]}"
-        if [ "$kind" = java ]; then say "JAVA_HOME: ${JAVA_HOME-<unset>} -> $JAVA_HOME_TARGET; PATH adds $value (a default JDK may not exist yet)."; else say "PATH adds $value (current membership does not establish persistence)."; fi
-        if { [ "$kind" = path ] && consent "$pc" 'Configure persistent tool PATH?'; } || { [ "$kind" = java ] && consent "$jc" 'Configure persistent default Java?'; }; then
+        if [ "$introduced" = 0 ]; then
+            printf "\nLet's set up jvm for future terminals.\nThe optional settings below update these shell startup files:\n" >&2
+            printf '  %s\n' "${files[@]}" >&2
+            introduced=1
+        fi
+        if [ "$kind" = java ]; then
+            printf "\nUse jvm's default JDK for Java commands?\n\nSets JAVA_HOME to %s\n(current value: %s)\nand adds its bin directory to PATH.\n\nYes: configure future terminals to use jvm's default JDK.\n" "$JAVA_HOME_TARGET" "${JAVA_HOME-<unset>}" >&2
+        else
+            printf '\nRun jvm from any directory?\n\nAdds %s to PATH.\n\nYes: enable the jvm command in future terminals.\n' "$value" >&2
+        fi
+        printf 'No:  leave your Java environment settings unchanged.\n\n' >&2
+        if { [ "$kind" = path ] && consent "$pc" 'Enable this?'; } || { [ "$kind" = java ] && consent "$jc" 'Enable this?'; }; then
             for file in "${files[@]}"; do edit_profile "$file" "$kind" "$value"; done
             SETUP_FILES=() SETUP_BACKUPS=() SETUP_EXISTED=()
+            ENV_CHANGED=1
         else say "Skipped $kind setup. Manually configure the paths above if desired."; fi
     done
+}
+# Inspect managed inventory only; do not execute Java or the downloaded tool.
+installed_jdk() {
+    local directory id name suffix found
+    [ -d "$DATA/jvm/jdks" ] || return 1
+    if [ ! -r "$DATA/jvm/jdks" ] || [ ! -x "$DATA/jvm/jdks" ]; then
+        say 'Could not check installed JDKs: inventory is not readable.'
+        return 0
+    fi
+    for directory in "$DATA/jvm/jdks/"* "$DATA/jvm/jdks/".[!.]* "$DATA/jvm/jdks/"..?*; do
+        [ -d "$directory" ] && [ ! -L "$directory" ] || continue
+        id=${directory##*/}
+        [ "${#id}" -le 180 ] || continue
+        case $id in default|-*|*\\*|*[$'\t\r\n']*) continue ;; esac
+        [[ ! $id =~ ^[0-9]+$ ]] || continue
+        for name in java javac; do
+            found=0
+            for suffix in '' .exe .bat .cmd; do
+                if [ "$windows" = 1 ]; then
+                    [ ! -f "$directory/bin/$name$suffix" ] || found=1
+                elif [ -f "$directory/bin/$name" ] && [ -x "$directory/bin/$name" ]; then found=1; fi
+            done
+            [ "$found" = 1 ] || break
+        done
+        [ "$found" != 1 ] || return 0
+    done
+    return 1
 }
 main() {
     local host name windows=0
@@ -281,8 +321,12 @@ main() {
     done
     chmod 755 "$DEST/jvm"
     INSTALLED=1
-    say "Installed jvm $VERSION in $DEST"
+    say "jvm $VERSION installed successfully in $DEST."
     setup
-    say 'Open a fresh terminal application to inherit changes; later startup statements can override them.'
+    if ! installed_jdk; then
+        printf '\nNo JDK is installed yet. Install one with:\n  jvm install\n' >&2
+    fi
+    say 'Setup complete.'
+    if [ "$ENV_CHANGED" = 1 ]; then say 'Open a new terminal application to use your changes.'; fi
 }
 main "$@"

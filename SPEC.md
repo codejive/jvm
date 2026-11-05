@@ -733,11 +733,24 @@ Abrupt termination does not trigger recovery on a subsequent invocation.
 
 Tool PATH and default-Java setup have independent consent. Positive options
 consent to the corresponding changes; negative options suppress them. Otherwise
-show exact target files/registry values and old/new JAVA_HOME, then ask with a
-no default. Bash reads `/dev/tty`, never the piped bootstrap stdin. Without a
+show a shared introduction listing the shell startup files or user environment
+variables (HKCU\Environment), then explain each choice in terms of its effect
+in future terminals. Show the added paths and current/new JAVA_HOME. Both
+questions use `Enable this? [Y/n]`; an empty answer accepts setup, while a
+failed read never consents. Both no descriptions say `leave your Java environment
+settings unchanged`. Bash reads `/dev/tty`, never the piped bootstrap stdin.
+Without a
 usable terminal, or in noninteractive mode, unspecified setup is skipped with
 manual instructions. An unknown shell skips optional setup but fails explicitly
-requested setup. An already-correct managed setup avoids repeated prompts and
+requested setup. After setup, inspect only the managed JDK inventory without
+executing Java or
+downloaded scripts. Count safe ordinary installation directories with usable
+java/javac launchers, including installations without manifests; exclude links,
+reserved reference names and invalid layouts. If none exist, print `No JDK is
+installed yet. Install one with:` followed by `jvm install`. This check never
+creates JDK storage or selects/installs a JDK. End with `Setup complete.` and
+show the new-terminal reminder only when environment settings changed.
+An already-correct managed setup avoids repeated prompts and
 edits. The Bash installer compares managed setup text using Bash itself; it
 does not require `cmp` or `diff`. Current process PATH membership alone is not
 persistent Unix setup.
