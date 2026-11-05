@@ -10,6 +10,8 @@ $scriptPath = Join-Path $repository 'jvm.ps1'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('jvm powershell ' + [guid]::NewGuid().ToString('N'))
 $oldEnvironment = @{}
 $script:passed = 0
+$script:processCount = 0
+$suiteTimer = [Diagnostics.Stopwatch]::StartNew()
 foreach ($name in @('HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'JVM_TEST_ARGS')) {
     $oldEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
 }
@@ -24,6 +26,34 @@ function Assert-Equal {
     param([string]$Actual, [string]$Expected, [string]$Message)
     if ($Actual -cne $Expected) {
         throw "$Message`nExpected: $Expected`nActual:   $Actual"
+    }
+}
+
+function Invoke-TestProcess {
+    param([string]$FilePath, [string]$ArgumentText)
+    # Start-Process -Wait polls the job at one-second intervals in Windows
+    # PowerShell. Drain both pipes concurrently and wait on the process itself.
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo.FileName = $FilePath
+    $process.StartInfo.Arguments = $ArgumentText
+    $process.StartInfo.WorkingDirectory = (Get-Location).ProviderPath
+    $process.StartInfo.UseShellExecute = $false
+    $process.StartInfo.CreateNoWindow = $true
+    $process.StartInfo.RedirectStandardOutput = $true
+    $process.StartInfo.RedirectStandardError = $true
+    try {
+        if (-not $process.Start()) { throw "Cannot start test process: $FilePath" }
+        $script:processCount++
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit()
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            Out = $stdoutTask.GetAwaiter().GetResult()
+            Err = $stderrTask.GetAwaiter().GetResult()
+        }
+    } finally {
+        $process.Dispose()
     }
 }
 
@@ -62,12 +92,10 @@ function Invoke-JvmTest {
     $quotedArguments = @($allArguments | ForEach-Object {
         '"' + ([string]$_).Replace('"', '\"') + '"'
     })
-    $process = Start-Process -FilePath $powershellExe `
-        -ArgumentList ($quotedArguments -join ' ') -Wait -PassThru -NoNewWindow `
-        -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    $process = Invoke-TestProcess $powershellExe ($quotedArguments -join ' ')
     $code = $process.ExitCode
-    $outText = [IO.File]::ReadAllText($stdout)
-    $errText = [IO.File]::ReadAllText($stderr)
+    $outText = $process.Out
+    $errText = $process.Err
     if ($Redirect -or $Capture) {
         Assert-Equal $outText '' 'Output bypassed PowerShell stdout redirection.'
         Assert-Equal $errText '' 'Output bypassed PowerShell stderr redirection.'
@@ -76,7 +104,6 @@ function Invoke-JvmTest {
         Remove-Item -LiteralPath $redirectOut, $redirectErr -Force
     }
     $output = $outText + $errText
-    Remove-Item -LiteralPath $stdout, $stderr -Force
     if ($code -ne $ExpectedExitCode) {
         throw "jvm.ps1 $($Arguments -join ' ') exited $code; expected $ExpectedExitCode.`n$output"
     }
@@ -106,15 +133,10 @@ function Assert-DefaultUsage {
 
 function Invoke-JvmLauncherTest {
     param([string]$ArgumentText, [int]$ExpectedExitCode = 0)
-    $stdout = Join-Path $testRoot ([guid]::NewGuid().ToString('N') + '.out')
-    $stderr = Join-Path $testRoot ([guid]::NewGuid().ToString('N') + '.err')
     $command = '/d /s /c ""' + $launcherPath + '" ' + $ArgumentText + '"'
-    $process = Start-Process -FilePath (Join-Path ([Environment]::SystemDirectory) 'cmd.exe') `
-        -ArgumentList $command -Wait -PassThru -NoNewWindow `
-        -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-    $outText = [IO.File]::ReadAllText($stdout).TrimEnd()
-    $errText = [IO.File]::ReadAllText($stderr).TrimEnd()
-    Remove-Item -LiteralPath $stdout, $stderr -Force
+    $process = Invoke-TestProcess (Join-Path ([Environment]::SystemDirectory) 'cmd.exe') $command
+    $outText = $process.Out.TrimEnd()
+    $errText = $process.Err.TrimEnd()
     Assert-Equal ([string]$process.ExitCode) ([string]$ExpectedExitCode) `
         "jvm.cmd $ArgumentText returned the wrong exit code. $outText $errText"
     return [pscustomobject]@{ Out = $outText; Err = $errText }
@@ -624,6 +646,7 @@ try {
 
     [Console]::Out.WriteLine("PASS: $script:passed PowerShell smoke checks (offline; synthetic JDKs) using $PowerShellExecutable.")
 } finally {
+    [Console]::Out.WriteLine(('PowerShell suite: {0:N2}s, {1} test processes' -f $suiteTimer.Elapsed.TotalSeconds, $script:processCount))
     if ((Get-Location).Path -eq $testRoot) { Pop-Location }
     foreach ($name in $oldEnvironment.Keys) {
         [Environment]::SetEnvironmentVariable($name, $oldEnvironment[$name])
