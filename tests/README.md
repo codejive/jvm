@@ -1,5 +1,139 @@
 # Discovery, installation and uninstallation verification
 
+## Native C-shell repair (2026-11-04)
+
+The [follow-up run](https://github.com/codejive/jvm/actions/runs/41812403128)
+passed every platform job, including Cygwin, and passed ShellCheck. The native
+shell test then attempted to execute backticked fixture path text (`data`)
+before BSD csh crashed. Native C-shell paths now use single-quoted literals;
+list comparisons and the test's `source` arguments use `:q` protection. The
+harness includes a command-execution sentinel and reports sourcing/startup
+results for Zsh, Fish, BSD csh and tcsh before failing the hosted job, so one
+failure cannot hide later shells.
+
+Hosted checks can select one shell with
+`bash tests/tool-installer.sh --native-shells csh` (or `zsh`, `fish`, `tcsh`);
+omitting the last argument still checks all four. Actual native validation for
+this correction belongs to hosted CI; no local shells/platforms were added.
+The [C-shell manual](https://man.openbsd.org/csh.1) documents single-quote
+literals and `:q` preventing subsequent substitutions.
+
+Hosted follow-up isolated an upstream BSD csh initialization issue: `csh.c`
+sets `home` from unquoted HOME before option processing, and `set.c` applies
+glob/command substitution. BSD csh tests therefore use a separate safe
+bootstrap HOME, while sourcing and starting up with the exact generated
+profiles containing the original metacharacter-rich tool/data paths. The
+execution sentinel, exact JAVA_HOME checks and repeated sourcing remain.
+Zsh/Fish/tcsh retain the original hostile HOME. This compatibility boundary is
+documented in SPEC/README; native-shell reruns verify the remaining behavior.
+
+The next hosted result exposed a separate BSD csh `foreach` behavior: its
+internal loop-variable assignment applies `set()` expansion after stripping
+quote protection. Setup now checks PATH entries by indexed `:q` expansion
+inside a `while` loop, avoiding that implicit reassignment. Multiline `if`
+blocks keep literal path assignments separate from expression reexecution.
+
+## Installer CI repair (2026-11-04)
+
+The [installer branch run](https://github.com/codejive/jvm/actions/runs/41808043776)
+passed packaging, native PowerShell, Git Bash, MSYS2, and Linux/macOS with both
+Bash 3.2 and current Bash. Cygwin passed the existing manager suites, all 23
+installer groups and native junction smoke, then failed to locate PowerShell
+for delegation. The shell job stopped at ShellCheck SC1007 warnings before
+running its native startup tests.
+
+The bootstrap now uses explicit empty-string assignments and locates native
+PowerShell under the system directory when it is absent from PATH. The CI
+wrapper includes the PowerShell directory for the suite's nested native calls.
+The delegation regression also removes PowerShell from its Bash PATH and
+requires successful fallback. Local Windows PowerShell/Git Bash checks passed
+(15 groups), as did the 23 Bash installer groups, packaging, syntax and
+`git diff --check`. Native Cygwin rerun and the previously blocked ShellCheck/
+Zsh/Fish/csh/tcsh job still require hosted CI; no local alternative platforms
+or shells were installed or run for this repair.
+
+## Tool installer verification (2026-11-04)
+
+The new tests are distinct from `tests/install.sh`, which installs synthetic
+JDKs. Installer tests download only local fixtures through fake transfers and
+use temporary HOME/XDG roots, destinations and profiles. Native registry tests
+replace `Open-EnvironmentKey` with a disposable key beneath
+`HKCU\Software\Codejive\InstallerTests\<GUID>` and delete only that key.
+They never change the contributor's real user environment, profile or JDKs.
+Mocks are supplied by the harness in memory or in private script copies;
+shipped installers have no alternate URL/registry backend or evaluation hook.
+
+```sh
+bash -n ./jvm
+bash -n web/install.sh
+bash tests/tool-installer.sh
+python tests/release-tooling.py
+```
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/tool-installer.ps1
+# Also test native Bash-to-PowerShell delegation with an already installed Bash:
+$env:JVM_TEST_BASH = 'C:\Program Files\Git\bin\bash.exe'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/tool-installer.ps1
+Remove-Item Env:JVM_TEST_BASH
+```
+
+`tests/ci.sh` includes installer syntax and offline tests. Hosted Windows jobs
+also run the delegation test through the actual current Git Bash/MSYS2/Cygwin
+interpreter. The hosted Linux shell job installs Zsh/Fish/csh/tcsh and runs:
+
+```sh
+shellcheck -S warning web/install.sh
+bash tests/tool-installer.sh --native-shells
+```
+
+Do not run this shell/platform tooling locally without the express confirmation
+required by AGENTS.md. The native-shell option starts actual fresh shells and
+checks both explicit sourcing (twice) and normal startup files. Ordinary tests
+simulate Unix host detection on Windows; that is not native Unix verification.
+Git Bash's `ln -s` can make a copy, so its symlink-profile assertion is explicitly
+skipped when no real link exists. Hosted Unix exercises the actual link case.
+
+Checks cover latest/pinned releases, exact-byte payloads, curl/wget paths,
+available checksum alternatives, HTTPS redirect/downgrade policy for wget,
+malformed/missing/checksum-failing downloads, usage without side effects,
+matching reinstall, updates, modified/unowned conflicts, lock contention,
+publication error/interruption rollback, interrupted-run recovery and retention
+of unknown journal material. Setup checks cover separate consent, literal
+metacharacter/spaced paths, native non-ASCII Windows homes, XDG fallback,
+relative HOME rejection, Bash login precedence, ZDOTDIR/Fish roots, profile
+backups/rollback, all shell formats, registry raw values/types, missing PATH,
+failed setup rollback, CMD bootstrap quoting and Windows Bash delegation.
+
+Local results: 23 Bash installer groups passed under installed Git Bash 5.3.15
+(Unix host simulated); 15 installer groups passed under Windows PowerShell 5.1
+including native Git Bash delegation and CMD. Exact-byte packaging, checksum
+generation, embedded-source equality and public-file staging checks passed.
+All workflow YAML parsed, Bash/PowerShell syntax checks and `git diff --check`
+passed. Existing regressions passed: 56 Bash discovery groups, 35 installation
+groups, home/env suite and 29 PowerShell smoke groups. The runtime manager
+scripts are unchanged. ShellCheck is unavailable locally.
+Measured sizes after the C-shell repair: `web/install.sh` 44,068 bytes (including the
+generated Windows source), `web/install.ps1` 21,023 bytes; unchanged `jvm` 68,978 bytes,
+`jvm.ps1` 78,630 bytes and `jvm.cmd` 116 bytes. New installer sources use LF.
+
+At initial delivery, hosted Linux/macOS Bash 3.2/current, real Zsh/Fish/csh/tcsh
+startup and MSYS2/Cygwin delegation were unverified; see the CI repair results
+above for subsequent hosted evidence. No alternative shells, WSL or
+containers were installed/run, and no hosted jobs, releases, deployment or
+GitHub/Cloudflare settings were changed. An early CMD fixture mistakenly let
+the built-in `irm` alias make a failed public installer request; the corrected
+fixture removes that alias with `-Force` and fails closed before execution if
+mock setup fails. Final installer tests are offline; no live JDK installation
+or bootstrap installation against a published release was performed.
+
+Release/Pages files are locally reviewed and YAML-parsed, not verified hosted
+runs. `tools/pages-preflight.py` intentionally needs the public release and is
+not part of offline tests. Follow [RELEASING.md](../RELEASING.md) for the first
+release sequence and public download/metadata-route smoke checks afterwards.
+
+## Earlier manager verification
+
 CI wrapper lookup repair (2026-11-03): capture real `tar` and `sha256sum`
 paths before isolating PATH, avoiding cached wrapper targets in Bash 3.2.
 Syntax checks for `jvm` and `tests/install.sh`, all 35 offline installation

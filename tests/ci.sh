@@ -23,8 +23,16 @@ export PATH="$TEMP/bin:$PATH"
 bash -c '[ "$BASH_VERSION" = "$1" ]' bash "$BASH_VERSION"
 cd "$ROOT"
 "$BASH_BIN" -n ./jvm
+"$BASH_BIN" -n web/install.sh
 for script in tests/*.sh; do "$BASH_BIN" -n "$script"; done
 "$BASH_BIN" tests/run.sh
+"$BASH_BIN" tests/tool-installer.sh
 case "$(uname -s)" in
-    CYGWIN*|MSYS*|MINGW*) "$BASH_BIN" tests/default-native-windows.sh ;;
+    CYGWIN*|MSYS*|MINGW*)
+        "$BASH_BIN" tests/default-native-windows.sh
+        # A restricted Cygwin PATH may contain System32 without its PowerShell
+        # subdirectory. Include it for the suite's nested PowerShell/CMD calls.
+        system_directory=$(cygpath -u -S)
+        export PATH="$PATH:$system_directory/WindowsPowerShell/v1.0"
+        JVM_TEST_BASH="$(cygpath -aw "$BASH_BIN")" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -aw "$ROOT/tests/tool-installer.ps1")" ;;
 esac

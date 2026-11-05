@@ -365,7 +365,7 @@ links and hardlinks are preserved. Unrecognized listings fail before
 extraction. On Windows, case aliases, reserved device names and trailing dots
 are rejected.
 
-Installers use no shared lock; each stages independently. A complete,
+JDK installations use no shared lock; each stages independently. A complete,
 compatible `<ID>` that appears during publication wins: the loser discards only
 its own copy and reports success. A uniquely marked nested copy left by a lost
 `mv` race is renamed back into the private staging directory before deletion;
@@ -470,7 +470,8 @@ Lifecycle:
   `jvm/tmp/default.XXXXXXXX/previous`. Concurrent explicit changes: last
   publication wins.
 
-Shell setup is manual; the tool never edits profiles or the registry. Unix:
+Ordinary manager commands never edit profiles or the registry. The separate
+[tool installer](#tool-installer) offers consented persistent setup. Manual Unix setup:
 
 ```bash
 export JAVA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/jvm/jdks/default"
@@ -625,35 +626,192 @@ Last-Modified and last-check metadata.
   Windows `tar.exe` and rejects links and special entries. Both are stricter
   than Bash, which preserves verified internal links.
 
+## Tool installer
+
+`web/install.sh` and `web/install.ps1` implement standalone user-wide tool
+installation; public URLs require the maintainer publication sequence in
+[RELEASING.md](RELEASING.md). They install no JDK, never select a default, never
+modify project copies and introduce no `use` command. The defaults proposed in
+[INSTALLER_PLAN.md](INSTALLER_PLAN.md) were approved for this implementation.
+
+```text
+install.sh [--version major.minor.patch]
+           [--path | --no-path] [--java | --no-java]
+           [--shell bash|zsh|fish|csh|tcsh] [--profile /absolute/file]
+           [--non-interactive]
+install.sh --help
+install.ps1 [-Version major.minor.patch] [-Path | -NoPath]
+            [-Java | -NoJava] [-NonInteractive]
+install.ps1 -Help
+```
+
+Options are unique; conflicting/unknown options and invalid versions exit 2
+before downloads or directory creation. Profile requires an explicit shell.
+Shell/profile options are Unix-only; PowerShell is Windows-only. Help is offline.
+Versions have exactly three numeric dotted components, each `0` or a positive
+integer without leading zeros. Exit 0 means the tool and any requested setup
+succeeded (optional setup may be declined); operational failure exits 1. If
+setup fails after publication, the tool remains installed and the diagnostic
+identifies this partial success.
+
+### Downloads and placement
+
+Without a version, read `https://getjvm.dev/latest.txt` once and validate its
+single version (optional final LF). Pin all payload requests to
+`https://github.com/codejive/jvm/releases/download/v<VERSION>/<ASSET>`.
+Explicit versions bypass latest.txt. Allow only HTTPS, including redirects;
+Bash supports curl or HTTPS-capable wget and sha256sum/shasum/openssl;
+PowerShell uses built-in .NET with TLS 1.2 support. No helper downloads,
+archive extraction, JSON parsing or execution of downloaded tool scripts is
+needed. SHA256SUMS must contain exactly three unique allowlisted basenames
+(`jvm`, `jvm.ps1`, `jvm.cmd`) with 64-digit SHA-256 digests. Hash downloaded
+bytes before setting permissions or publishing. Checksums detect inconsistent
+or corrupt release content; they share the HTTPS publisher trust channel and
+are not independent signatures.
+
+Downloader detail verified 2026-11-04: GNU wget's
+[`--https-only`](https://www.gnu.org/software/wget/manual/html_node/HTTPS-_0028SSL_002fTLS_0029-Options.html)
+applies to recursive links. The tool installer instead uses disabled automatic
+redirects plus validated HTTPS hops with a bounded redirect count. A wget
+without the needed server-response/redirect controls fails clearly; use curl.
+
+The destination is resolved HOME/.local/bin, independent of XDG_DATA_HOME.
+Unix requires absolute HOME; Windows uses HOME, falling back to USERPROFILE
+only when HOME is absent, and requires a native absolute path. Relative home
+values are errors. Data storage follows the existing absolute XDG override and
+fallback policy. Newline, CR, tab and PATH-separator paths are rejected before
+mutation (Unix also rejects semicolons for Windows interoperability). Unix
+ships only `jvm` with executable permissions; Windows ships all three exact-byte
+scripts. Windows Bash requires cygpath and Windows PowerShell and converts
+paths before delegating to the embedded PowerShell installer. The Bash
+bootstrap locates PowerShell on PATH or under the Windows system directory's
+`WindowsPowerShell/v1.0`, allowing a restricted Cygwin PATH. The embedded
+source is generated from `web/install.ps1`, not downloaded or separately
+maintained registry code. No private command-evaluation interface exists.
+
+### Ownership, failure and recovery
+
+New storage: `${XDG_DATA_HOME:-$HOME/.local/share}/jvm/tool-install/`.
+`record` is literal UTF-8/LF data: `jvm-tool-v1`, version, absolute destination,
+then one `sha256<two spaces>basename` line per owned file, in `jvm`, `jvm.ps1`,
+`jvm.cmd` order (only `jvm` on Unix). It is never sourced. Missing/modified
+owned files, unowned destinations, directory links/reparse points, directories
+in place of scripts and invalid records fail clearly. Matching reinstall is a
+payload no-op; rerunning otherwise replaces only verified installer-owned
+files. Moving an owned installation or changing its data root requires manual
+ownership review; there is no force/adoption option.
+
+Downloads are staged privately before publication. An installer-only lock
+serializes publication and environment setup; JDK operations remain lock-free.
+Bash uses `lock/pid`; a live owner fails immediately. A leftover lock is never
+guessed stale: confirm the recorded process exited, remove only `lock/pid` and
+the empty `lock/` directory, then rerun. An incomplete/unknown lock needs manual
+inspection. PowerShell holds an exclusive handle on the `lock` file; the OS
+releases it when the process exits, leaving a harmless empty file.
+
+`transaction/` holds `new-record`, optional `old-record` and `old-jvm` (plus
+`old-jvm.ps1`/`old-jvm.cmd` on Windows). `ready` marks the point at which all
+backups exist and publication may start. Windows `stage-name` names only an
+allowlisted `.jvm-next-<32 hex digits>` destination-side directory; Bash reserves
+`.jvm-next` and `.jvm-recover` files. Replacement files are staged on the
+destination filesystem. Checked renames/copies publish the payload and record;
+catchable failures restore old bytes and ownership. A subsequent invocation
+recognizes and recovers pending transactions under the lock before checking
+ownership and republishing. Damaged/unrecognized recovery material is retained
+with a diagnostic rather than deleted. Do not remove the ownership directory
+while recovery is pending. Successful transactions discard their backups;
+there is no version history or switching launcher.
+
+Windows publication is a sequence of file replacements, not an atomic multi-file
+transaction. An uncatchable kill can leave a temporary mixed installation until
+recovery. Neither implementation promises power-loss durability. On Unix,
+profile edits have exact sibling `.jvm-backup.<random>` backups. A failing or
+catchably interrupted profile setup step restores that step's changed files;
+completed earlier setup steps remain. Windows raw user registry values/types
+are backed up to `environment-backup-<32 hex digits>.clixml` before changes;
+a failed setup restores the previous values. An uncatchable kill during
+persistent setup may require manual inspection of the retained backups.
+
+### Persistent environment setup
+
+Tool PATH and default-Java setup have independent consent. Positive options
+consent to the corresponding changes; negative options suppress them. Otherwise
+show exact target files/registry values and old/new JAVA_HOME, then ask with a
+no default. Bash reads `/dev/tty`, never the piped bootstrap stdin. Without a
+usable terminal, or in noninteractive mode, unspecified setup is skipped with
+manual instructions. An unknown shell skips optional setup but fails explicitly
+requested setup. An already-correct managed setup avoids repeated prompts and
+edits. Current process PATH membership alone is not persistent Unix setup.
+
+Unix uses separate `# >>> jvm path >>>`/`# <<< jvm path <<<` and
+`# >>> jvm java >>>`/`# <<< jvm java <<<` blocks containing literal resolved
+paths and native shell syntax, with whole-entry PATH deduplication. JAVA_HOME
+names the stable data-root `jvm/jdks/default`, even before a default exists;
+its bin directory and the tool bin are separate entries. No GRAALVM_HOME edits,
+network requests, JDK execution or inventory scans occur at startup.
+
+- Bash: `.bashrc` and the first existing readable `.bash_profile`, `.bash_login`,
+  `.profile`; absent all three, create `.profile`. Generated content is POSIX
+  compatible, so no higher-priority login file hides an existing profile.
+- Zsh: `.zshrc` beneath exported ZDOTDIR or HOME; show the assumed path. Use
+  `--profile` if startup code sets an unexported/custom ZDOTDIR.
+- Fish: XDG_CONFIG_HOME (fallback HOME/.config) `fish/conf.d/jvm.fish`;
+  unowned existing files conflict. Explicit profile overrides are supported.
+- Csh/tcsh: `.cshrc`, or existing `.tcshrc` for tcsh; native `path` list and
+  `setenv` syntax handle initially unset variables. Literal paths use single
+  quotes with explicit apostrophe/history escaping; PATH-list comparisons use
+  quote-protected (`:q`) shell-variable expansions to preserve metacharacters.
+  Iterate PATH entries by index: legacy BSD csh's `foreach` re-expands its
+  loop-variable values, so it cannot safely carry literal backticked entries.
+  Legacy BSD csh expands inherited HOME before processing options or profiles;
+  HOME values containing backticks/glob syntax can execute text or crash that
+  shell before setup is read. Use tcsh for such homes. Generated setup still
+  treats metacharacters in tool/data paths literally. This upstream boundary
+  was inspected on 2026-11-04 in
+  [`csh.c`](https://github.com/openbsd/src/blob/master/bin/csh/csh.c) and
+  [`set.c`](https://github.com/openbsd/src/blob/master/bin/csh/set.c).
+
+Profile contents outside managed blocks and permissions are preserved where
+practical (a missing trailing newline is normalized); exact original bytes are
+backed up. Duplicate/corrupt markers stop setup. Symlink profiles are refused;
+select the resolved target explicitly with `--shell` and `--profile`.
+
+Windows modifies only HKCU\Environment. Read raw values without expansion and
+preserve REG_SZ/REG_EXPAND_SZ kinds and untouched PATH tokens, including empty
+entries; never persist the merged process PATH or use setx. Tool setup adds the
+concrete native tool directory; Java setup sets JAVA_HOME and adds the native
+stable-default bin entry. Whole-entry comparison is case-insensitive and
+recognizes expandable references; new entries contain no quotes. Broadcast an
+environment-change notification after writes. Report observed machine Java
+shadowing without changing machine PATH. No PowerShell profile edits occur.
+
+Open a fresh terminal application/IDE afterwards; a new tab in an old host may
+still inherit stale values. Later startup statements may override setup, and
+not every GUI/noninteractive process reads these profiles. Manual removal is
+documented in README: remove only owned payloads/blocks/entries, preserve
+JDKs/config/cache, and never restore old backups over subsequent user changes.
+
+### Publication
+
+Release and Pages workflows are checked in, not yet run or deployed. Releases
+are built from an explicit existing `v<version>` tag after the offline test
+matrix passes; exact-byte assets are published via a draft and are never
+overwritten. `web/latest.txt` is reviewed source and advances only after the
+release exists. Pages runs installer checks for the same revision and verifies
+the complete public referenced release before staging only the public-file
+allowlist. It uses the `github-pages` environment and refuses stale queued
+revisions. The site root has no `/web/` prefix. See RELEASING.md for first-release
+ordering, settings, action documentation and post-deployment checks.
+
+Hosting status (2026-11-03): the user reports `https://getjvm.dev/` now
+points to this repository's GitHub Pages site. An HTTP check reached a
+GitHub response through Cloudflare, currently returning 404 at the root;
+a working landing page is not yet verified. The concrete metadata path
+`/index/metadata/all/linux/x86_64/jdk-latest.tsv` still returns a 302 to
+`https://jbangdev.github.io/jdkdb-index/metadata/all/linux/x86_64/jdk-latest.tsv`.
+
 ## Open items
 
-- **Roadmap idea: installer for the `jvm` tool.** Provide a hosted bootstrap
-  installer for Bash and Windows PowerShell, plus an invocation from CMD.
-  Proposed commands (endpoints are not yet provided or verified):
-
-  ```bash
-  curl -fsSL https://getjvm.dev/sh | bash
-  ```
-
-  ```powershell
-  iex (irm 'https://getjvm.dev/ps1')
-  ```
-
-  CMD could invoke the PowerShell installer through Windows PowerShell:
-
-  ```cmd
-  powershell.exe -NoProfile -Command "iex (irm 'https://getjvm.dev/ps1')"
-  ```
-
-  These examples use the project's existing `getjvm.dev` domain. The installer
-  would install the tool itself, distinct from `jvm install` downloading a JDK.
-  Investigate project-local versus user-wide placement, PATH setup and the
-  existing manual shell-setup policy, installing `jvm.ps1` together with
-  `jvm.cmd` on Windows, release/version selection, updates and removal, and
-  download verification and interrupted-install recovery. Validate quoting and
-  bootstrap behavior on supported shells, including Windows PowerShell 5.1 and
-  CMD. This is a roadmap proposal, not an available installer or a change to
-  current installation and shell-setup behavior.
 - **Roadmap investigation: minimum-major selectors by default.** Consider
   changing `25` from exactly major 25 to major 25 or higher (currently `25+`),
   with `25!` expressing exactly major 25. The motivation is that a requested

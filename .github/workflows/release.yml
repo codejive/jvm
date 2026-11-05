@@ -1,0 +1,63 @@
+name: Publish versioned tool
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing reviewed tag, e.g. v0.2.0 (never overwritten)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    outputs:
+      revision: ${{ steps.tag.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          revision=$(git rev-parse "refs/tags/$TAG^{commit}")
+          test "$revision" = "$(git rev-parse HEAD)"
+          printf 'revision=%s\n' "$revision" >> "$GITHUB_OUTPUT"
+  checks:
+    needs: resolve
+    uses: ./.github/workflows/test.yml
+    with:
+      revision: ${{ needs.resolve.outputs.revision }}
+  publish:
+    needs: [resolve, checks]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.revision }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate tag and prepare exact-byte assets
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$(git rev-parse HEAD)"
+          python3 tools/package-release.py "${TAG#v}" "$RUNNER_TEMP/assets"
+      - name: Create draft with all assets, then publish
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$TAG" "$RUNNER_TEMP/assets/"* --verify-tag --draft --title "$TAG" --notes "Verified jvm tool payloads. See README for installation instructions."
+          gh release edit "$TAG" --draft=false
