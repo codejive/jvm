@@ -8,6 +8,14 @@ implementations: the Bash script `jvm` and the native Windows PowerShell 5.1
 script `jvm.ps1`. Verification procedures and results live in
 [tests/README.md](tests/README.md).
 
+## Licensing
+
+The project uses the MIT license in [LICENSE](LICENSE). The distributed runtime
+scripts (`jvm`, `jvm.ps1`, `jvm.cmd`) and standalone installers
+(`web/install.sh`, `web/install.ps1`) embed the full license notice so copies
+can be redistributed with their required notices in the files themselves.
+Downloaded JDKs retain their respective licenses.
+
 ## Commands
 
 ```text
