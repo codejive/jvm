@@ -16,8 +16,10 @@
 Replace `VERSION`, `REVIEWED_COMMIT` and `DEFAULT_BRANCH` in the commands below.
 
 1. Set the same version in `jvm` (`VERSION`), `jvm.ps1` (`$script:Version`) and
-   `web/latest.txt`. The text file must end with one LF. Commit and review the
-   changes before tagging.
+   `web/latest.txt`. The text file must end with one LF. Update the PowerShell
+   HTTP User-Agent, version-output test and pinned README examples to agree.
+   Prepare [release notes](RELEASE_NOTES.md) describing changes since the previous
+   tag. Commit and review the changes before tagging.
 2. Tag the reviewed commit and push the tag:
 
    ```sh
