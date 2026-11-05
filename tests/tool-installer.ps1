@@ -22,6 +22,12 @@ try {
     $source = [IO.File]::ReadAllText((Join-Path $root 'web\install.ps1'))
     # Load functions, excluding only the public entry point; no production test hooks.
     . ([scriptblock]::Create($source.Substring(0, $source.LastIndexOf('try { Invoke-JvmInstaller @($args) }'))))
+    foreach ($answer in @('', 'y', 'Y', 'yes', 'Yes', 'YES')) { Assert (Test-SetupAnswer $answer) "acceptance rejected: '$answer'" }
+    foreach ($answer in @('n', 'N', 'no', 'NO', 'invalid', ' ')) { Assert (-not (Test-SetupAnswer $answer)) "refusal accepted: '$answer'" }
+    Assert (-not (Get-SetupConsent 'ask' $true 'must not prompt')) 'unattended setup consented'
+    Assert (Get-SetupConsent 'yes' $true 'explicit consent') 'explicit consent ignored'
+    Assert (-not (Get-SetupConsent 'no' $false 'explicit refusal')) 'explicit refusal ignored'
+    Pass 'Enter accepts recommended setup; refusals and unattended input do not consent'
     function Open-EnvironmentKey { return [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($registryPath) }
     function Send-EnvironmentChange { if ($script:failNotification) { throw 'injected registry setup failure' } }
     $script:failNotification = $false
@@ -65,6 +71,22 @@ try {
     Assert (-not (Test-Path -LiteralPath (Join-Path $env:XDG_DATA_HOME 'jvm\jdks'))) 'created JDK storage'
     Assert ($script:requests.Count -eq 3) 'expected latest, one checksum and one archive'
     Pass 'latest, native paths, non-ASCII home and complete exact-byte Windows payload'
+    Assert (-not (Test-InstalledJdk $env:XDG_DATA_HOME)) 'absent inventory counted as installed'
+    foreach ($id in @('default', '21', 'broken')) {
+        [IO.Directory]::CreateDirectory((Join-Path $env:XDG_DATA_HOME "jvm\jdks\$id\bin")) | Out-Null
+    }
+    foreach ($id in @('default', '21')) {
+        foreach ($name in @('java.exe', 'javac.cmd')) { [IO.File]::WriteAllText((Join-Path $env:XDG_DATA_HOME "jvm\jdks\$id\bin\$name"), 'must not execute') }
+    }
+    Assert (-not (Test-InstalledJdk $env:XDG_DATA_HOME)) 'reserved or broken directory counted as installed'
+    $jdk = Join-Path $env:XDG_DATA_HOME 'jvm\jdks\.custom JDK\bin'
+    [IO.Directory]::CreateDirectory($jdk) | Out-Null
+    [IO.File]::WriteAllText((Join-Path $jdk 'java.exe'), 'must not execute')
+    Assert (-not (Test-InstalledJdk $env:XDG_DATA_HOME)) 'missing javac counted as installed'
+    [IO.File]::WriteAllText((Join-Path $jdk 'javac.cmd'), 'must not execute')
+    Assert (Test-InstalledJdk $env:XDG_DATA_HOME) 'manifest-free installation was missed'
+    Pass 'post-setup inventory excludes reserved/invalid layouts and accepts native launchers without execution'
+
     Invoke-JvmInstaller @('-NonInteractive')
     $key = Open-EnvironmentKey
     try { Assert (-not (Get-RegistryValue $key 'Path').Exists -and -not (Get-RegistryValue $key 'JAVA_HOME').Exists) 'unattended implicit edits' } finally { $key.Dispose() }

@@ -71,10 +71,11 @@ namespace JvmInstaller { public static class Native {
     $result = [UIntPtr]::Zero
     [JvmInstaller.Native]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result) | Out-Null
 }
+function Test-SetupAnswer([string]$Answer) { return $Answer -match '\A(?i:|y|yes)\z' }
 function Get-SetupConsent([string]$Choice, [bool]$Unattended, [string]$Prompt) {
     if ($Choice -eq 'yes') { return $true }
     if ($Choice -eq 'no' -or $Unattended -or [Console]::IsInputRedirected -or -not [Environment]::UserInteractive) { return $false }
-    try { return (Read-Host "$Prompt [y/N]") -match '\A(?i:y|yes)\z' } catch { return $false }
+    try { return Test-SetupAnswer (Read-Host "$Prompt [Y/n]") } catch { return $false }
 }
 function Set-UserEnvironment([string]$Destination, [string]$JavaHome, [string]$PathChoice, [string]$JavaChoice, [bool]$Unattended) {
     if ($PathChoice -eq 'no' -and $JavaChoice -eq 'no') { return }
@@ -94,13 +95,18 @@ function Set-UserEnvironment([string]$Destination, [string]$JavaHome, [string]$P
         $javaBin = Join-Path $JavaHome 'bin'
         $javaPresent = $oldJava.Exists -and (Test-PathEntry ([string]$oldJava.Value) $JavaHome) -and ((Add-UserPath $pathValue $javaBin) -ceq $pathValue)
         $toolYes = $false; $javaYes = $false
-        if (-not $toolPresent) {
-            Write-InstallerMessage "HKCU\Environment\Path ($($oldPath.Kind)): add $Destination; preserve raw existing value: $pathValue"
-            $toolYes = Get-SetupConsent $PathChoice $Unattended 'Persist tool PATH?'
+        if ((-not $toolPresent -and $PathChoice -ne 'no') -or (-not $javaPresent -and $JavaChoice -ne 'no')) {
+            Write-InstallerMessage "`nLet's set up jvm for future terminals.`nThe optional settings below update your user environment variables:`n  PATH and JAVA_HOME (HKCU\Environment)"
         }
-        if (-not $javaPresent) {
-            Write-InstallerMessage "HKCU\Environment: JAVA_HOME '$($oldJava.Value)' -> '$JavaHome'; Path adds $javaBin. A default JDK may not exist yet."
-            $javaYes = Get-SetupConsent $JavaChoice $Unattended 'Persist default Java?'
+        if (-not $toolPresent -and $PathChoice -ne 'no') {
+            Write-InstallerMessage "`nRun jvm from any directory?`n`nAdds $Destination to your user PATH.`n`nYes: enable the jvm command in future terminals.`nNo:  leave your Java environment settings unchanged.`n"
+            $toolYes = Get-SetupConsent $PathChoice $Unattended 'Enable this?'
+        }
+        if (-not $javaPresent -and $JavaChoice -ne 'no') {
+            $oldJavaDisplay = '<unset>'
+            if ($oldJava.Exists) { $oldJavaDisplay = [string]$oldJava.Value }
+            Write-InstallerMessage "`nUse jvm's default JDK for Java commands?`n`nSets JAVA_HOME to $JavaHome`n(current value: $oldJavaDisplay)`nand adds its bin directory to your user PATH.`n`nYes: configure future terminals to use jvm's default JDK.`nNo:  leave your Java environment settings unchanged.`n"
+            $javaYes = Get-SetupConsent $JavaChoice $Unattended 'Enable this?'
         }
         if (-not $toolYes -and -not $javaYes) {
             Write-InstallerMessage "Environment unchanged. Manual setup: user PATH adds $Destination; JAVA_HOME=$JavaHome and PATH adds $javaBin."
@@ -119,7 +125,8 @@ function Set-UserEnvironment([string]$Destination, [string]$JavaHome, [string]$P
             catch { Write-InstallerMessage "Registry rollback failed: $($_.Exception.Message)" }
             throw $failure
         }
-        Write-InstallerMessage 'Updated HKCU\Environment'
+        $script:EnvironmentChanged = $true
+        Write-InstallerMessage 'Updated your user environment settings.'
         $systemPath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
         foreach ($entry in $systemPath.Split(';')) {
             $expanded = [Environment]::ExpandEnvironmentVariables($entry.Trim('"'))
@@ -128,7 +135,28 @@ function Set-UserEnvironment([string]$Destination, [string]$JavaHome, [string]$P
         }
     } finally { $key.Dispose() }
 }
+# Inspect managed inventory without executing Java or downloaded scripts.
+function Test-InstalledJdk([string]$Data) {
+    $inventory = Join-Path $Data 'jvm\jdks'
+    if (-not [IO.Directory]::Exists($inventory)) { return $false }
+    foreach ($directory in Get-ChildItem -LiteralPath $inventory -Directory -Force -ErrorAction Stop) {
+        $id = $directory.Name
+        if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint -or
+            $id.Length -gt 180 -or $id -ceq 'default' -or $id -match '^(?:-|[0-9]+$)' -or $id -match '[\\/\t\r\n]') { continue }
+        $valid = $true
+        foreach ($name in @('java', 'javac')) {
+            $found = $false
+            foreach ($suffix in @('', '.exe', '.bat', '.cmd')) {
+                if ([IO.File]::Exists((Join-Path $directory.FullName "bin\$name$suffix"))) { $found = $true; break }
+            }
+            if (-not $found) { $valid = $false; break }
+        }
+        if ($valid) { return $true }
+    }
+    return $false
+}
 function Invoke-JvmInstaller([string[]]$Arguments) {
+    $script:EnvironmentChanged = $false
     $version = ''; $pathChoice = 'ask'; $javaChoice = 'ask'; $unattended = $false
     $seen = @{}
     for ($i = 0; $i -lt $Arguments.Count; $i++) {
@@ -189,9 +217,13 @@ function Invoke-JvmInstaller([string[]]$Arguments) {
             [IO.File]::Copy((Join-Path $work $name), (Join-Path $destination $name), $true)
         }
         $installed = $true
-        Write-InstallerMessage "Installed jvm $version in $destination"
+        Write-InstallerMessage "jvm $version installed successfully in $destination."
         Set-UserEnvironment $destination $javaHome $pathChoice $javaChoice $unattended
-        Write-InstallerMessage 'Open a fresh terminal application/IDE; existing hosts may retain old values. Bash startup files may override inherited PATH; use cygpath -u for native paths there.'
+        try {
+            if (-not (Test-InstalledJdk $data)) { Write-InstallerMessage "`nNo JDK is installed yet. Install one with:`n  jvm install" }
+        } catch { Write-InstallerMessage "Could not check installed JDKs: $($_.Exception.Message)" }
+        Write-InstallerMessage 'Setup complete.'
+        if ($script:EnvironmentChanged) { Write-InstallerMessage 'Open a new terminal application to use your changes.' }
     } catch {
         if ($installed) { Write-InstallerMessage 'Tool was installed; persistent environment setup failed.' }
         throw

@@ -1,5 +1,26 @@
 # Discovery, installation and uninstallation verification
 
+## Installer setup wording (2026-11-05)
+
+Both installers list environment targets once, explain each optional setup in
+terms of future-terminal behavior, and accept Enter at `[Y/n]`. After setup,
+they check managed JDK launcher layouts without executing downloaded scripts
+or Java, and suggest `jvm install` only when no usable installation is found.
+The new-terminal reminder appears only after environment changes.
+
+Verification: `bash tests/tool-installer.sh` passed 18 offline groups using
+installed Git Bash with simulated host detection; `powershell.exe -NoProfile
+-ExecutionPolicy Bypass -File tests/tool-installer.ps1` passed 12 groups with
+isolated HOME/XDG roots and a disposable registry key. Input parsing covers
+Enter, yes, no and invalid answers, plus explicit/unattended consent. Inventory
+checks cover absent storage, reserved references, incomplete launchers and
+manifest-free installations. Real symlink exclusion remains for hosted Unix
+because local Git Bash copied the symlink fixture. No live interactive prompt
+session or native Linux/macOS/Cygwin/MSYS2/Bash 3.2 run was performed.
+Bash syntax checks and `git diff --check` passed. ShellCheck is unavailable.
+Installer sizes: 16,551 bytes (`web/install.sh`), 13,873 bytes (`web/install.ps1`),
+both with LF endings.
+
 ## Direct web publication (2026-11-05)
 
 Pages now uploads web directly. The release-download/extraction staging step

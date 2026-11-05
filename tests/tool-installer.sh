@@ -56,6 +56,17 @@ chmod +x "$TEMP/bin/"*
 export PATH="$TEMP/bin:$PATH"
 INSTALLER=$ROOT/web/install.sh
 DEST=$HOME/.local/bin
+# Load functions only, retaining the real input parser without invoking installation.
+sed '$d' "$INSTALLER" > "$TEMP/functions.sh"
+(
+    . "$TEMP/functions.sh"
+    for answer in '' y Y yes Yes YES; do setup_answer_yes "$answer"; done
+    for answer in n N no NO invalid ' '; do ! setup_answer_yes "$answer"; done
+    NONINTERACTIVE=1
+    ! consent ask 'must not prompt'
+    consent yes 'explicit consent'
+    ! consent no 'explicit refusal'
+)
 count=0
 ok() { count=$((count+1)); printf 'ok %s - %s\n' "$count" "$*"; }
 run() { bash "$INSTALLER" "$@" > "$TEMP/out" 2> "$TEMP/err"; }
@@ -76,11 +87,40 @@ cmp "$DEST/jvm" "$ROOT/jvm"
 [ ! -e "$HOME/.bashrc" ] && [ ! -e "$XDG_DATA_HOME/jvm/jdks" ]
 [ "$(wc -l < "$LOG" | tr -d ' ')" = 3 ]
 ok 'latest pins payload, exact bytes, unattended defaults preserve JDK storage'
+grep -q 'No JDK is installed yet' "$TEMP/err"
+grep -q '^  jvm install$' "$TEMP/err"
+! grep -q 'Open a new terminal' "$TEMP/err"
+mkdir -p "$XDG_DATA_HOME/jvm/jdks/default/bin" "$XDG_DATA_HOME/jvm/jdks/21/bin" "$XDG_DATA_HOME/jvm/jdks/broken/bin"
+for id in default 21; do
+    for name in java javac; do printf '#!/bin/sh\nexit 99\n' > "$XDG_DATA_HOME/jvm/jdks/$id/bin/$name"; chmod +x "$XDG_DATA_HOME/jvm/jdks/$id/bin/$name"; done
+done
+run --non-interactive --no-path --no-java
+grep -q 'No JDK is installed yet' "$TEMP/err"
+mkdir -p "$XDG_DATA_HOME/jvm/jdks/.custom JDK/bin"
+for name in java javac; do cp "$XDG_DATA_HOME/jvm/jdks/default/bin/$name" "$XDG_DATA_HOME/jvm/jdks/.custom JDK/bin/$name"; done
+run --non-interactive --no-path --no-java
+! grep -q 'No JDK is installed yet' "$TEMP/err"
+# Leave reserved and broken directories in place; exclude a linked installation.
+mv "$XDG_DATA_HOME/jvm/jdks/.custom JDK" "$TEMP/external-jdk"
+ln -s "$TEMP/external-jdk" "$XDG_DATA_HOME/jvm/jdks/linked"
+# Git Bash may copy instead of making a symlink when symlinks are disabled.
+if [ -L "$XDG_DATA_HOME/jvm/jdks/linked" ]; then
+    run --non-interactive --no-path --no-java
+    grep -q 'No JDK is installed yet' "$TEMP/err"
+fi
+mv "$XDG_DATA_HOME/jvm/jdks/linked" "$TEMP/linked-fixture"
+ok 'post-setup advice checks usable managed JDKs without executing launchers'
+
 : > "$LOG"
 run --version 0.2.0 --non-interactive --no-path --no-java
 ! grep latest.txt "$LOG"
 ok 'pinned install bypasses latest'
 run --path --java --shell bash --non-interactive
+[ "$(grep -c 'optional settings below' "$TEMP/err")" = 1 ]
+[ "$(grep -c 'No:  leave your Java environment settings unchanged.' "$TEMP/err")" = 2 ]
+grep -q 'Run jvm from any directory?' "$TEMP/err"
+grep -q "Use jvm's default JDK for Java commands?" "$TEMP/err"
+grep -q 'Open a new terminal application' "$TEMP/err"
 [ -f "$HOME/.profile" ] && [ ! -e "$HOME/.bash_profile" ]
 # Start a real fresh Bash. Generated setup must treat metacharacters as data.
 bash --noprofile --norc -c '. "$HOME/.profile"; . "$HOME/.bashrc"; . "$HOME/.profile"; [ "$JAVA_HOME" = "$XDG_DATA_HOME/jvm/jdks/default" ]; case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) exit 1 ;; esac'
@@ -88,6 +128,8 @@ bash --noprofile --norc -c 'PATH=; . "$HOME/.profile"; case "$PATH" in *:) ;; *)
 cp "$HOME/.bashrc" "$TEMP/before-repeat"
 run --path --java --shell bash --non-interactive
 cmp "$HOME/.bashrc" "$TEMP/before-repeat"
+! grep -q "Let's set up jvm" "$TEMP/err"
+! grep -q "Open a new terminal" "$TEMP/err"
 ok 'Bash startup executes safely, deduplicates and repeat setup preserves profiles'
 cp "$FIXTURES/jvm.tar.gz.sha256" "$TEMP/good-sums"
 printf '<html>error</html>\n' > "$FIXTURES/jvm.tar.gz.sha256"

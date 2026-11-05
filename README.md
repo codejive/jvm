@@ -106,7 +106,9 @@ irm 'https://getjvm.dev/install.ps1' -OutFile "$env:TEMP\jvm-install.ps1"
 ```
 
 The installer asks separately whether to add `jvm` to PATH and whether to make
-its default Java available in your terminals. Both answers default to no.
+its default Java available in your terminals.
+After setup, it checks jvm's inventory and suggests `jvm install` if no usable
+JDK is installed.
 You can also choose explicitly:
 
 | Setup | Bash | PowerShell |
