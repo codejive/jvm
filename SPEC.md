@@ -738,7 +738,9 @@ no default. Bash reads `/dev/tty`, never the piped bootstrap stdin. Without a
 usable terminal, or in noninteractive mode, unspecified setup is skipped with
 manual instructions. An unknown shell skips optional setup but fails explicitly
 requested setup. An already-correct managed setup avoids repeated prompts and
-edits. Current process PATH membership alone is not persistent Unix setup.
+edits. The Bash installer compares managed setup text using Bash itself; it
+does not require `cmp` or `diff`. Current process PATH membership alone is not
+persistent Unix setup.
 
 Bash uses separate `# >>> jvm path >>>`/`# <<< jvm path <<<` and
 `# >>> jvm java >>>`/`# <<< jvm java <<<` blocks containing literal resolved
@@ -803,19 +805,20 @@ constants before tagging. Individual payload assets and the old `SHA256SUMS`
 manifest are no longer published. New installers require the archive assets;
 releases containing only individual payloads are not compatible with them.
 
-Pages stages the current default branch's `web/` directory, downloads
-`jvm.tar.gz` from GitHub's latest release and extracts it over those files.
-Release files take precedence on collisions, including `latest.txt`; web files
-absent from the archive remain. The workflow uploads that merged directory and
-deploys it to GitHub Pages. It does not run the test matrix or release preflight;
-release validation remains in the release workflow. Pushes affecting `web/` or
-`pages.yml`, and manual dispatch, trigger Pages. It uses the `github-pages`
-environment and refuses stale queued revisions. The site root has no `/web/`
-prefix. See RELEASING.md for publication ordering and settings.
+Pages uploads the current default branch's `web/` directory directly and
+publishes it at the site root, with no `/web/` prefix. It does not download or
+extract release archives, run the test matrix, or run a release preflight.
+Pushes affecting `web/` or `pages.yml`, and manual dispatch, trigger Pages. The
+workflow uses the `github-pages` environment and refuses stale queued revisions.
 
-Latest-release download behavior was verified on 2026-11-05 against the
-[GitHub CLI manual](https://cli.github.com/manual/gh_release_download): omitting
-the tag selects the latest release, using `--pattern jvm.tar.gz` for the asset.
+The installers are unversioned public files at `/install.sh` and `/install.ps1`,
+published from `web/`. Only the tool payloads (`jvm`, `jvm.ps1`, `jvm.cmd`) are
+versioned as runtime releases; their release archive also carries `latest.txt`
+metadata. Installer `--version` / `-Version` selects the tool version to install,
+not an installer version. Pages publishes `web/latest.txt` as-is; maintainers
+must ensure that pointer names an available runtime release. Pages publication
+is independent of runtime release publication. See RELEASING.md for settings
+and publication instructions.
 
 Hosting status (2026-11-03): the user reports `https://getjvm.dev/` now
 points to this repository's GitHub Pages site. An HTTP check reached a

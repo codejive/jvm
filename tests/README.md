@@ -1,5 +1,18 @@
 # Discovery, installation and uninstallation verification
 
+## Direct web publication (2026-11-05)
+
+Pages now uploads web directly. The release-download/extraction staging step
+was removed; no overlay checks were added. Installer scripts are unversioned
+site files, while jvm tool payloads retain versioned releases. The site publishes
+web/latest.txt as-is. The release archive still includes its own latest.txt
+metadata alongside the tool scripts.
+
+Local review parsed the Pages and release workflow YAML, confirmed the artifact
+upload points to the existing web directory, and passed `git diff --check`.
+No hosted workflow or deployment was triggered. The earlier overlay results
+below describe the former implementation.
+
 ## Pages release overlay (2026-11-05)
 
 Pages no longer invokes the test matrix or a public-release preflight. It copies

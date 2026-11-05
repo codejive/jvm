@@ -174,12 +174,12 @@ Consult current official action documentation when implementing.
 - Release publication builds assets from a checked, explicit tag/revision and
   runs the relevant tests. Do not overwrite assets of a published version.
 - Maintain reviewed `web/latest.txt`; its version advances only after the release
-  assets exist. Updated 2026-11-05: Pages overlays the latest release archive
-  onto the current web directory without repeating release checks.
+  assets exist. Updated 2026-11-05: Pages publishes web directly, independently
+  of runtime releases, without repeating release checks or extracting archives.
 - Deploy Pages on default-branch changes to `web/` or the Pages workflow, plus
   manual dispatch. Pages does not rerun installer checks.
-- Upload a staging copy of `web/` overlaid by the latest release archive, not
-  the repository. Run no site generator for installer scripts.
+- Upload `web/` directly, not the repository. Installers are unversioned public
+  files; only jvm tool payloads have versioned releases. Run no site generator.
 - Concurrent deployments must not let an older queued run replace newer content.
 - Account for the domain's actual custom-domain/proxy configuration. Do not assume
   a visible HTTP redirect or change Cloudflare/DNS during repository work.
