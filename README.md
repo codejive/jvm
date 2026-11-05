@@ -84,7 +84,8 @@ sure it's the correct version!
 
 ## Using it installed
 
-Install `jvm` for your user account in `~/.local/bin`:
+Run the installer to choose a local project copy or installation for your user
+account in `~/.local/bin`:
 
 ```sh
 # Linux, macOS, Git Bash, MSYS2 or Cygwin:
@@ -107,20 +108,26 @@ irm 'https://getjvm.dev/install.ps1' -OutFile "$env:TEMP\jvm-install.ps1"
 & "$env:TEMP\jvm-install.ps1" -Version 0.2.0 -Path -NoJava -NonInteractive
 ```
 
-The installer asks separately whether to add `jvm` to PATH and whether to make
-its default Java available in your terminals.
-After setup, it checks jvm's inventory and suggests `jvm install` if no usable
-JDK is installed.
+The first question offers two choices:
+
+1. **Install locally:** copy all three scripts into the current directory,
+   without changing your environment. Useful for including `jvm` in a Java project.
+2. **Install for your user:** install in `~/.local/bin`, then optionally add
+   `jvm` to PATH and make its default Java available in your terminals.
+
 You can also choose explicitly:
 
 | Setup | Bash | PowerShell |
 | --- | --- | --- |
+| Install in the current directory | `--local` | `-Local` |
+| Install for your user | `--user` | `-User` |
 | Add jvm to PATH | `--path` | `-Path` |
 | Set up default Java | `--java` | `-Java` |
 | Skip either setup | `--no-path`, `--no-java` | `-NoPath`, `-NoJava` |
 | Skip prompts | `--non-interactive` | `-NonInteractive` |
 
-Without prompts, setup is skipped unless explicitly requested. The Bash
+Without prompts, user installation is the default and setup is skipped unless
+explicitly requested. Local mode always skips environment setup. The Bash
 installer configures your selected shell, including on Windows. Use the
 PowerShell installer to configure your Windows user environment.
 

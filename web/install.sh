@@ -24,7 +24,7 @@
 # Standalone Bash bootstrap; persistent setup uses shell profiles on every host.
 set -eu
 VERSION='' PATH_CHOICE='' JAVA_CHOICE='' SHELL_CHOICE='' PROFILE='' NONINTERACTIVE=0
-WORK='' INSTALLED=0 DEST='' DATA='' ENV_CHANGED=0
+WORK='' INSTALLED=0 DEST='' DATA='' ENV_CHANGED=0 MODE=''
 FILES=(jvm)
 SETUP_FILES=() SETUP_BACKUPS=() SETUP_EXISTED=()
 say() { printf '%s\n' "jvm installer: $*" >&2; }
@@ -32,13 +32,16 @@ die() { say "$*"; exit 1; }
 usage_error() { say "$*"; exit 2; }
 help_text() {
     cat <<'EOF'
-Install or update jvm in HOME/.local/bin (no JDK is installed).
+Install or update jvm locally or in HOME/.local/bin (no JDK is installed).
 Usage: install.sh [--version major.minor.patch]
+  [--local | --user]
   [--path | --no-path] [--java | --no-java]
   [--shell bash|zsh|fish|csh|tcsh] [--profile /absolute/file]
   [--non-interactive]
 Explicit positive options consent to persistent environment edits.
 Otherwise separate prompts default to yes; unattended setup is skipped.
+Local installation copies all three scripts to the current directory, without setup.
+Without a terminal, user installation remains the default.
 EOF
 }
 valid_version() {
@@ -57,6 +60,7 @@ parse() {
                     --profile) [ -z "$PROFILE" ] || usage_error 'duplicate profile'; PROFILE=$2 ;;
                 esac; shift ;;
             --path|--no-path) [ -z "$PATH_CHOICE" ] || usage_error 'conflicting/duplicate PATH options'; PATH_CHOICE=$1 ;;
+            --local|--user) [ -z "$MODE" ] || usage_error 'conflicting/duplicate installation options'; MODE=${1#--} ;;
             --java|--no-java) [ -z "$JAVA_CHOICE" ] || usage_error 'conflicting/duplicate Java options'; JAVA_CHOICE=$1 ;;
             --non-interactive) [ "$NONINTERACTIVE" = 0 ] || usage_error 'duplicate non-interactive'; NONINTERACTIVE=1 ;;
             *) usage_error "unknown option: $1" ;;
@@ -127,6 +131,18 @@ quote() {
 }
 setup_answer_yes() {
     case $1 in ''|y|Y|[yY][eE][sS]) return 0 ;; *) return 1 ;; esac
+}
+choose_installation() {
+    [ -z "$MODE" ] || return 0
+    MODE=user
+    [ "$NONINTERACTIVE" = 0 ] && [ -r /dev/tty ] && [ -w /dev/tty ] || return 0
+    local answer
+    while :; do
+        { printf '\nHow would you like to install jvm?\n\n1. Install locally\n   Copy all three jvm scripts to the current directory, without changing your\n   environment. Useful for including jvm in a Java project.\n\n2. Install for your user\n   Install jvm in HOME/.local/bin, with optional PATH and JAVA_HOME setup.\n   Useful for keeping jvm available across projects.\n\nChoose [1/2] (default: 2): ' > /dev/tty
+          IFS= read -r answer < /dev/tty; } 2>/dev/null || return 0
+        case $answer in 1) MODE=local; return 0 ;; ''|2) return 0 ;; esac
+        say 'Please enter 1 or 2.'
+    done
 }
 consent() {
     [ "$1" != no ] || return 1
@@ -292,6 +308,7 @@ installed_jdk() {
 main() {
     local host name windows=0
     parse "$@"
+    choose_installation
     host=$(uname -s)
     case $host in
         CYGWIN*|MSYS*|MINGW*)
@@ -312,6 +329,10 @@ main() {
     case $DATA in /*) ;; *) DATA=$HOME/.local/share ;; esac
     safe_path "$DATA"
     DEST=$HOME/.local/bin
+    if [ "$MODE" = local ]; then
+        DEST=$(pwd -P) || die 'could not resolve current directory'
+        FILES=(jvm jvm.ps1 jvm.cmd)
+    fi
     JAVA_HOME_TARGET=$DATA/jvm/jdks/default
     JAVA_BIN_TARGET=$JAVA_HOME_TARGET/bin
     if [ "$windows" = 1 ]; then
@@ -344,9 +365,13 @@ main() {
     chmod 755 "$DEST/jvm"
     INSTALLED=1
     say "jvm $VERSION installed successfully in $DEST."
-    setup
-    if ! installed_jdk; then
-        printf '\nNo JDK is installed yet. Install one with:\n  jvm install\n' >&2
+    if [ "$MODE" = user ]; then setup; fi
+    local invocation=jvm
+    [ "$MODE" != local ] || invocation=./jvm
+    if installed_jdk; then
+        printf '\nSee your currently installed JDKs with:\n  %s list\n' "$invocation" >&2
+    else
+        printf '\nNo JDK is installed yet. Install one with:\n  %s install\n' "$invocation" >&2
     fi
     say 'Setup complete.'
     if [ "$ENV_CHANGED" = 1 ]; then say 'Open a new terminal application to use your changes.'; fi
