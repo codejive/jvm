@@ -20,7 +20,9 @@ Windows PowerShell 5.1.
 ## Using it in your projects
 
 Copy the three scripts `jvm`, `jvm.cmd` and `jvm.ps1` to the root of your
-project, and tell your users they can run your application by simply typing:
+project, keeping the embedded MIT license notices intact. You can keep your
+project's own license. Tell your users they can run your application by simply
+typing:
 
 ```sh
 ./jvm x 25+ your_app
@@ -243,3 +245,10 @@ A command-line selector overrides the project file, which overrides the user
 file. Configuration does not affect `default`, `available`, `list`, `uninstall`
 or help. Run `jvm --help` for the full reference, and see [SPEC.md](SPEC.md) for
 the detailed behavior.
+
+## License
+
+[MIT](LICENSE). The runtime scripts and standalone installers include the full
+license notice so it travels with copied files. Preserve these notices when
+redistributing copies or substantial portions, including modified versions.
+Downloaded JDKs remain subject to their respective licenses.
