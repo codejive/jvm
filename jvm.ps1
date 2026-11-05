@@ -26,6 +26,7 @@ $script:DefaultDistro = 'temurin'
 $script:DefaultVersion = '25'
 
 $script:ScriptInvocation = $MyInvocation
+$script:CmdOutput = $false
 $script:Version = '0.2.0'
 $script:BaseUrl = 'https://getjvm.dev/index'
 $script:ExitCode = 1
@@ -1423,17 +1424,23 @@ function Invoke-HomeOrEnvironment {
     }
     $javaHome = $resolved.Home
     $bin = Join-Path $javaHome 'bin'
-    $invocationPath = Get-EnvironmentInvocationPath
-    if ($invocationPath -match "[`r`n]") { Stop-Jvm 'script path must be a single-line path' }
-    $usage = '& ' + (ConvertTo-PowerShellLiteral $invocationPath)
-    foreach ($argument in $OriginalArguments) {
-        if ($argument -match '^[a-zA-Z0-9_-]+$') { $usage += ' ' + $argument }
-        else { $usage += ' ' + (ConvertTo-PowerShellLiteral $argument) }
-    }
-    $lines = @("# Use: iex ($usage)",
-        ('$env:JAVA_HOME = ' + (ConvertTo-PowerShellLiteral $javaHome)))
-    if ($resolved.Row.JVM -eq 'graalvm') {
-        $lines += '$env:GRAALVM_HOME = ' + (ConvertTo-PowerShellLiteral $javaHome)
+    if ($script:CmdOutput) {
+        $lines = @('rem Copy ^& paste these lines into your CMD window',
+            ('set "JAVA_HOME=' + $javaHome + '"'))
+        if ($resolved.Row.JVM -eq 'graalvm') { $lines += 'set "GRAALVM_HOME=' + $javaHome + '"' }
+    } else {
+        $invocationPath = Get-EnvironmentInvocationPath
+        if ($invocationPath -match "[`r`n]") { Stop-Jvm 'script path must be a single-line path' }
+        $usage = '& ' + (ConvertTo-PowerShellLiteral $invocationPath)
+        foreach ($argument in $OriginalArguments) {
+            if ($argument -match '^[a-zA-Z0-9_-]+$') { $usage += ' ' + $argument }
+            else { $usage += ' ' + (ConvertTo-PowerShellLiteral $argument) }
+        }
+        $lines = @("# Use: iex ($usage)",
+            ('$env:JAVA_HOME = ' + (ConvertTo-PowerShellLiteral $javaHome)))
+        if ($resolved.Row.JVM -eq 'graalvm') {
+            $lines += '$env:GRAALVM_HOME = ' + (ConvertTo-PowerShellLiteral $javaHome)
+        }
     }
     $alreadyPresent = $false
     if (-not $ForcePath) {
@@ -1442,7 +1449,11 @@ function Invoke-HomeOrEnvironment {
         }
     }
     if (-not $alreadyPresent) {
-        $lines += '$env:PATH = ' + (ConvertTo-PowerShellLiteral ($bin + ';')) + ' + $env:PATH'
+        if ($script:CmdOutput) {
+            $lines += 'set "PATH=' + $bin + ';%PATH%"'
+        } else {
+            $lines += '$env:PATH = ' + (ConvertTo-PowerShellLiteral ($bin + ';')) + ' + $env:PATH'
+        }
     }
     # One complete string also supports Invoke-Expression (& .\jvm env ...).
     Write-Output ($lines -join "`n")
@@ -1659,17 +1670,17 @@ jvm finds and installs Java Development Kits for this computer.
 Usage: .\jvm <command> [options] [selector]
 
 Commands:
-  available, a [-t] [selector]      Show compatible JDKs available to download.
-  install, i [-d] [-v] [selector]   Download, verify and install a JDK.
-  uninstall, u <selector>           Remove an installed JDK.
-  list, l [selector]                Show JDK folders and manifest status, offline.
-  default, d [<major>]          Query the global or Java-major default.
-  default, d set [<major>] <selector>  Set a persistent default.
-  home, h [selector]           Print an installed JDK home or default path.
-  env, e [-f] [selector]       Print PowerShell environment assignments.
+  available, a [-t] [selector]        Show compatible JDKs available to download.
+  install, i [-d] [-v] [selector]     Download, verify and install a JDK.
+  uninstall, u <selector>             Remove an installed JDK.
+  list, l [selector]                  Show JDK folders and manifest status, offline.
+  default, d [<major>]                Query the global or Java-major default.
+  default, d set [<major>] <selector> Set a persistent default.
+  home, h [selector]                  Print an installed JDK home or default path.
+  env, e [-f] [selector]              Print environment assignments.
   exec, x <selector> [--] <command> [args...]  Run with a selected JDK.
-  --help                            Show this help.
-  --version                         Show the jvm version.
+  --help                              Show this help.
+  --version                           Show the jvm version.
 
 default set/home/env/exec install automatically when no installed JDK matches.
 default queries are offline. After set: one argument is a selector; two are scope and selector.
@@ -1736,6 +1747,10 @@ function Get-DefaultArguments {
 
 function Invoke-Jvm {
     param([string[]]$Arguments)
+    if ($Arguments.Count -and $Arguments[0] -ceq '--cmd') {
+        $script:CmdOutput = $true
+        $Arguments = @($Arguments | Select-Object -Skip 1)
+    }
     $command = if ($Arguments.Count) { $Arguments[0] } else { '' }
     $aliases = @{ a = 'available'; i = 'install'; u = 'uninstall'; l = 'list'
         d = 'default'; h = 'home'; e = 'env'; x = 'exec' }

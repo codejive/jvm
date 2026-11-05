@@ -120,6 +120,32 @@ function Invoke-JvmLauncherTest {
     return [pscustomobject]@{ Out = $outText; Err = $errText }
 }
 
+function Assert-CmdEnvironmentPaste {
+    param([string]$Output, [string]$JavaHome, [switch]$GraalVM)
+    $stdout = Join-Path $testRoot 'cmd-env.out'
+    $stderr = Join-Path $testRoot 'cmd-env.err'
+    $stdin = Join-Path $testRoot 'cmd-env.in'
+    $result = Join-Path $testRoot 'cmd-env.result'
+    $probePath = Join-Path $testRoot 'cmd environment probe.ps1'
+    [IO.File]::WriteAllText($probePath,
+        '$values = @($env:JAVA_HOME, $env:PATH); ' +
+        'if ($args.Count -gt 1) { $values += $env:GRAALVM_HOME }; ' +
+        '[IO.File]::WriteAllLines($args[0], $values)')
+    $probe = '"' + $PowerShellExecutable + '" -NoProfile -NonInteractive -File "' +
+        $probePath + '" "' + $result + '"'
+    $expected = "$JavaHome`r`n" + (Join-Path $JavaHome 'bin') + ';' + $env:PATH
+    if ($GraalVM) { $probe += ' graalvm'; $expected += "`r`n$JavaHome" }
+    # Feed separate lines to CMD as if pasted at its prompt, including the comment.
+    [IO.File]::WriteAllText($stdin, $Output + "`r`n" + $probe + "`r`nexit`r`n")
+    $process = Start-Process -FilePath $env:ComSpec -NoNewWindow -Wait -PassThru `
+        -ArgumentList '/d /q /v:off' -RedirectStandardInput $stdin `
+        -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    Assert-Equal ([string]$process.ExitCode) '0' 'Pasted CMD statements failed.'
+    Assert-Equal ([IO.File]::ReadAllText($stderr)) '' 'Pasted CMD statements emitted stderr.'
+    Assert-Equal ([IO.File]::ReadAllText($result).TrimEnd()) $expected `
+        'Pasted CMD statements did not apply JAVA_HOME and expand PATH.'
+}
+
 try {
     [void][IO.Directory]::CreateDirectory($testRoot)
     $homeDir = Join-Path $testRoot 'home'
@@ -353,11 +379,48 @@ try {
     }
     Invoke-JvmTest @('exec', $id, '--', '--', 'probe.exe') -ExpectedExitCode 127 | Out-Null
     Write-TestPass 'exec and x accept selectors and the placeholder, with one optional separator'
-    $launcherDirectory = Join-Path $testRoot 'launcher folder'
+    $launcherDirectory = Join-Path $testRoot "launcher's folder & !test! (x)^"
     [void][IO.Directory]::CreateDirectory($launcherDirectory)
     $launcherPath = Join-Path $launcherDirectory 'jvm.cmd'
     Copy-Item -LiteralPath (Join-Path $repository 'jvm.cmd') -Destination $launcherPath
     Copy-Item -LiteralPath $scriptPath -Destination (Join-Path $launcherDirectory 'jvm.ps1')
+    foreach ($alias in @('env', 'e')) {
+        $streams = Invoke-JvmLauncherTest ($alias + ' -f ' + $id)
+        Assert-Equal $streams.Err '' 'CMD env emitted stderr.'
+        $lines = $streams.Out -split "`r?`n"
+        Assert-Equal $lines[1] ('set "JAVA_HOME=' + $install + '"') 'CMD env omitted JAVA_HOME.'
+        Assert-Equal $lines[2] ('set "PATH=' + (Join-Path $install 'bin') + ';%PATH%"') `
+            'CMD env did not retain the PATH reference.'
+        Assert-Equal $lines[0] 'rem Copy ^& paste these lines into your CMD window' 'CMD copy-and-paste comment mismatch.'
+        Assert-CmdEnvironmentPaste $streams.Out $install
+    }
+    $savedPath = $env:PATH
+    try {
+        $env:PATH = (Join-Path $install 'bin') + ';' + $savedPath
+        $streams = Invoke-JvmLauncherTest ('env ' + $id)
+        if ($streams.Out -match '(?m)^set "PATH=') { throw 'CMD env repeated an existing bin entry.' }
+        $streams = Invoke-JvmLauncherTest ('env -f ' + $id)
+        if ($streams.Out -notmatch '(?m)^set "PATH=') { throw 'CMD env -f omitted PATH.' }
+    } finally { $env:PATH = $savedPath }
+    $savedData = $env:XDG_DATA_HOME
+    try {
+        $env:PATH = $savedPath + ';C:\literal %PATH% !bang! (x)^'
+        $env:XDG_DATA_HOME = Join-Path $testRoot 'data !bang! & (jdk)^'
+        $graalId = '21.0.1-graalvm'
+        $graalHome = Join-Path $env:XDG_DATA_HOME ('jvm\jdks\' + $graalId)
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $graalHome))
+        Copy-Item -LiteralPath $install -Destination $graalHome -Recurse
+        $graalFields = @($fields)
+        $graalFields[4] = 'graalvm'; $graalFields[6] = 'graalvm'
+        [IO.File]::WriteAllText((Join-Path $graalHome '.jvm-manifest'),
+            "jvm-manifest-v1`n$($graalFields -join "`t")`n`n", [Text.UTF8Encoding]::new($false))
+        $streams = Invoke-JvmLauncherTest ('env -f ' + $graalId)
+        Assert-CmdEnvironmentPaste $streams.Out $graalHome -GraalVM
+    } finally { $env:XDG_DATA_HOME = $savedData; $env:PATH = $savedPath }
+    [void](Invoke-JvmTest @('env', '--cmd', $id) -ExpectedExitCode 2)
+    [void](Invoke-JvmTest @('--cmd', '--cmd', 'env', $id) -ExpectedExitCode 2)
+    [void](Invoke-JvmLauncherTest '--version')
+    Write-TestPass 'CMD env supports copy and paste, PATH expansion, GraalVM and PATH deduplication'
     foreach ($alias in @('exec', 'x')) {
         foreach ($separator in @('', '-- ')) {
             $prefix = $alias + ' _ ' + $separator + 'probe.exe -NoProfile -NonInteractive -File "' + $argumentProbe + '" '
@@ -369,6 +432,9 @@ try {
             [void](Invoke-JvmLauncherTest ($prefix + '"--" "$(1+2) & * --help"'))
             Assert-Equal ([IO.File]::ReadAllText($argsFile)) '<-->|<$(1+2) & * --help>' `
                 'jvm.cmd interpreted literal child arguments.'
+            [void](Invoke-JvmLauncherTest ($prefix + '"--cmd" "two words"'))
+            Assert-Equal ([IO.File]::ReadAllText($argsFile)) '<--cmd>|<two words>' `
+                'jvm.cmd consumed the output signal from child arguments.'
         }
     }
     [void](Invoke-JvmLauncherTest 'x _ probe.exe -NoProfile -NonInteractive -Command "exit 37"' 37)

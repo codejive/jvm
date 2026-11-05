@@ -208,6 +208,12 @@ jvm <command> [options] [selector]
 configured selections and unusable defaults are errors. The `_` placeholder is
 exclusive to exec; it is not a configuration value. Other commands give it no
 placeholder meaning and retain their existing exact-directory ID rules.
+
+On Windows, `jvm.ps1 env` prints PowerShell assignments for `iex`. The
+`jvm.cmd` launcher requests CMD assignments using a leading `--cmd` signal.
+Run `jvm.cmd env temurin-21`, then copy and paste the printed lines into your
+CMD window. The PATH statement uses `%PATH%` to retain your current PATH.
+
 `home` and `env` use the same precedence when their selector is omitted.
 `jvm default` queries the global default; `jvm default 21` queries Java 21.
 After `set`, one argument is a selector (`jvm default set 21` sets the global

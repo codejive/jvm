@@ -83,17 +83,17 @@ jvm finds and installs Java Development Kits for this computer.
 Usage: jvm <command> [options] [selector]
 
 Commands:
-  available, a [-t] [selector]      Show compatible JDKs available to download.
-  install, i [-d] [-v] [selector] Download, verify and install a JDK in user storage.
-  uninstall, u <selector>      Remove an installed JDK from user storage.
-  list, l [selector]           Show JDK folders and manifest status, even offline.
-  default, d [<major>]     Query the global or Java-major default.
-  default, d set [<major>] <selector>  Set a persistent JDK default.
-  home, h [selector]      Print an installed JDK home or the stable default path.
-  env, e [-f] [selector]  Print Bash exports, including GRAALVM_HOME for GraalVM.
+  available, a [-t] [selector]        Show compatible JDKs available to download.
+  install, i [-d] [-v] [selector]     Download, verify and install a JDK in user storage.
+  uninstall, u <selector>             Remove an installed JDK from user storage.
+  list, l [selector]                  Show JDK folders and manifest status, even offline.
+  default, d [<major>]                Query the global or Java-major default.
+  default, d set [<major>] <selector> Set a persistent JDK default.
+  home, h [selector]                  Print an installed JDK home or the stable default path.
+  env, e [-f] [selector]              Print Bash exports, including GRAALVM_HOME for GraalVM.
   exec, x <selector> [--] <command> [args...]  Run with a selected JDK or default.
-  --help                      Show this help.
-  --version                   Show the jvm version.
+  --help                              Show this help.
+  --version                           Show the jvm version.
 
 default set/home/env/exec install automatically when no installed JDK matches.
 default queries are offline. After set: one argument is a selector; two are scope and selector.
