@@ -25,14 +25,18 @@ origin when inspected on 2026-11-04. The installer defaults from
    three numeric components with no leading zeros, except the component `0`.
 4. Dispatch **Publish versioned tool** with `tag=v0.2.0` from the reviewed
    default-branch workflow. It checks out and tests that tag, validates the
-   version constants, builds `jvm`, `jvm.ps1`, `jvm.cmd`, `SHA256SUMS`, creates
-   a draft with all assets, then publishes it. Existing releases are never
-   overwritten. If upload fails, inspect/delete the incomplete draft before
+   version constants and `web/latest.txt`, builds `jvm.tar.gz`,
+   `jvm.tar.gz.sha256`, `latest.txt`, then creates a draft with all assets and
+   publishes it. Existing releases are never overwritten. If upload fails,
+   inspect/delete the incomplete draft before
    retrying; never edit assets of an already published version.
-5. After all four public release assets exist, dispatch **Publish installer
-   site** on the current default branch. For later releases, only now advance
-   the reviewed `web/latest.txt` pointer and merge it; that change triggers
-   Pages. The preflight downloads and verifies all referenced assets before
+5. After all three public release assets exist, dispatch **Publish installer
+   site** on the current default branch. For later releases, update
+   `web/latest.txt` alongside the runtime version constants before tagging;
+   packaging requires it to match the release version with one final LF.
+   The current Pages workflow still reads the pointer and installers from the
+   default branch; switching those files to the latest release is pending.
+   The preflight verifies the release pointer, archive checksum and contents before
    uploading the allowlisted public files. A queued old revision cannot deploy
    over a newer default-branch revision. If an unrelated commit makes a run
    stale, dispatch a fresh run at the current default-branch head.
@@ -56,7 +60,7 @@ After review/merge and the settings check, the first-release commands are:
 git tag v0.2.0 REVIEWED_COMMIT
 git push origin refs/tags/v0.2.0
 gh workflow run release.yml --repo codejive/jvm --ref main -f tag=v0.2.0
-# Wait for that run to succeed and verify all four assets are publicly available.
+# Wait for that run to succeed and verify all three assets are publicly available.
 gh workflow run pages.yml --repo codejive/jvm --ref main
 ```
 
@@ -67,16 +71,19 @@ they have not been executed as part of implementation.
 ## Offline preparation
 
 ```sh
-python tools/embed-installer.py --check
 python tests/release-tooling.py
 python tools/package-release.py 0.2.0 /absolute/new/assets
 python tools/package-release.py 0.2.0 /absolute/new/site --site
 ```
 
 These commands do not publish anything. Destination directories must not exist.
-After editing the Windows installer, run `python tools/embed-installer.py` and
-review both standalone files. The embedded Windows source is checked byte for
-byte so registry mutation logic has one maintained source.
+The archive contains `jvm`, `jvm.ps1`, `jvm.cmd` and `latest.txt` at its root,
+preserving their exact bytes. Its `latest.txt` matches the standalone asset and
+`web/latest.txt`. Its checksum file contains just the SHA-256 digest and a final LF.
+Both installers require these archive assets; older releases containing only
+individual script assets cannot be installed by the new installers.
+The Bash and PowerShell installers are independent entry points. Run their
+respective offline suites after editing them; there is no embedding step.
 
 The site staging allowlist is `install.sh`, `install.ps1`, `latest.txt`,
 `index.html`, `.nojekyll`; no source tree, test fixtures or site generator is

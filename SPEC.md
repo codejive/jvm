@@ -491,6 +491,8 @@ An executable cannot export variables into its parent shell; an existing
 
 ## Host compatibility
 
+- Windows requires an up-to-date Windows 10 or later. Older Windows versions
+  are outside the supported scope, including when PowerShell 5.1 is installed.
 - Detect OS, architecture and Linux libc. API values: `macosx`, `linux`,
   `linux-musl`, `windows`; `x86_64`, `aarch64`. Cygwin, MSYS2 and Git Bash
   target Windows JDKs; WSL targets Linux. glibc and musl are distinguished, a
@@ -647,7 +649,8 @@ install.ps1 -Help
 
 Options are unique; conflicting/unknown options and invalid versions exit 2
 before downloads or directory creation. Profile requires an explicit shell.
-Shell/profile options are Unix-only; PowerShell is Windows-only. Help is offline.
+Shell/profile options apply to all Bash hosts; PowerShell is Windows-only.
+Help is offline.
 Versions have exactly three numeric dotted components, each `0` or a positive
 integer without leading zeros. Exit 0 means the tool and any requested setup
 succeeded (optional setup may be declined); operational failure exits 1. If
@@ -659,78 +662,72 @@ identifies this partial success.
 Without a version, read `https://getjvm.dev/latest.txt` once and validate its
 single version (optional final LF). Pin all payload requests to
 `https://github.com/codejive/jvm/releases/download/v<VERSION>/<ASSET>`.
-Explicit versions bypass latest.txt. Allow only HTTPS, including redirects;
-Bash supports curl or HTTPS-capable wget and sha256sum/shasum/openssl;
-PowerShell uses built-in .NET with TLS 1.2 support. No helper downloads,
-archive extraction, JSON parsing or execution of downloaded tool scripts is
-needed. SHA256SUMS must contain exactly three unique allowlisted basenames
-(`jvm`, `jvm.ps1`, `jvm.cmd`) with 64-digit SHA-256 digests. Hash downloaded
-bytes before setting permissions or publishing. Checksums detect inconsistent
-or corrupt release content; they share the HTTPS publisher trust channel and
-are not independent signatures.
+Explicit versions bypass latest.txt. Release URLs use HTTPS.
+Bash supports curl or wget and sha256sum/shasum/openssl;
+PowerShell uses built-in .NET with TLS 1.2 support. Both installers download
+`jvm.tar.gz.sha256` and `jvm.tar.gz`. The checksum file contains only one
+64-digit hexadecimal SHA-256 digest (optional final LF), with no filename;
+the publisher emits lowercase hex and one final LF. Verify the compressed
+archive before extraction, then unpack it into private temporary storage with
+`tar -xzf`, then copy the scripts directly to the destination. The archives are
+project-produced and trusted after checksum verification; installers do not
+inspect entry names, counts, types or payload sizes. The publisher produces
+`jvm`, `jvm.ps1`, `jvm.cmd` and `latest.txt` at the archive root.
+The archived `latest.txt` is an exact copy of `web/latest.txt`, matching the
+standalone release asset. Installers copy only scripts to the destination.
+There is no JSON parsing or execution of downloaded tool scripts.
+Checksums detect inconsistent or corrupt release content; they share the HTTPS
+publisher trust channel and are not independent signatures.
 
-Downloader detail verified 2026-11-04: GNU wget's
-[`--https-only`](https://www.gnu.org/software/wget/manual/html_node/HTTPS-_0028SSL_002fTLS_0029-Options.html)
-applies to recursive links. The tool installer instead uses disabled automatic
-redirects plus validated HTTPS hops with a bounded redirect count. A wget
-without the needed server-response/redirect controls fails clearly; use curl.
+Bash needs `tar` with gzip support; PowerShell uses the built-in `tar.exe`, first
+looking in the Windows system directory, then on PATH. A missing extractor
+fails clearly before downloads. Windows tar support was verified 2026-11-05
+against Microsoft's [tar documentation](https://learn.microsoft.com/en-us/windows/tar)
+and [Windows 10 version 1803 announcement](https://devblogs.microsoft.com/commandline/windows10v1803/).
+The supported Windows baseline includes this capability; no ZIP release or
+downloaded extractor is needed.
+
+Downloads use the standard redirect handling of curl, wget or .NET WebClient.
+Curl restricts protocols to HTTPS; wget and WebClient use their built-in redirect
+policies. There is no custom redirect parser. PowerShell enables TLS 1.2.
 
 The destination is resolved HOME/.local/bin, independent of XDG_DATA_HOME.
-Unix requires absolute HOME; Windows uses HOME, falling back to USERPROFILE
+Bash requires absolute HOME; PowerShell uses HOME, falling back to USERPROFILE
 only when HOME is absent, and requires a native absolute path. Relative home
 values are errors. Data storage follows the existing absolute XDG override and
 fallback policy. Newline, CR, tab and PATH-separator paths are rejected before
-mutation (Unix also rejects semicolons for Windows interoperability). Unix
-ships only `jvm` with executable permissions; Windows ships all three exact-byte
-scripts. Windows Bash requires cygpath and Windows PowerShell and converts
-paths before delegating to the embedded PowerShell installer. The Bash
-bootstrap locates PowerShell on PATH or under the Windows system directory's
-`WindowsPowerShell/v1.0`, allowing a restricted Cygwin PATH. The embedded
-source is generated from `web/install.ps1`, not downloaded or separately
-maintained registry code. No private command-evaluation interface exists.
+mutation (Bash also rejects semicolons for Windows interoperability). Bash
+ships only `jvm` with executable permissions on Linux and macOS. On Windows,
+both installers ship all three exact-byte scripts. On Git Bash, MSYS2 and
+Cygwin, `install.sh` uses
+the same direct file copying and shell-profile setup as on Unix. It requires
+`cygpath` for native HOME/data-root inputs and emits native forward-slash
+JAVA_HOME with a POSIX PATH entry. It never invokes PowerShell or changes the
+Windows registry. This installation configures the selected shell environment;
+users wanting native Windows installation and registry setup run `install.ps1`
+from PowerShell separately. No PowerShell source is embedded in `install.sh`.
 
-### Ownership, failure and recovery
+### Direct installation and failures
 
-New storage: `${XDG_DATA_HOME:-$HOME/.local/share}/jvm/tool-install/`.
-`record` is literal UTF-8/LF data: `jvm-tool-v1`, version, absolute destination,
-then one `sha256<two spaces>basename` line per owned file, in `jvm`, `jvm.ps1`,
-`jvm.cmd` order (only `jvm` on Unix). It is never sourced. Missing/modified
-owned files, unowned destinations, directory links/reparse points, directories
-in place of scripts and invalid records fail clearly. Matching reinstall is a
-payload no-op; rerunning otherwise replaces only verified installer-owned
-files. Moving an owned installation or changing its data root requires manual
-ownership review; there is no force/adoption option.
+Download and extract in a unique temporary directory under `${TMPDIR:-/tmp}`
+for Bash or the Windows temporary directory (`%TEMP%`) for PowerShell. Create
+HOME/.local/bin and copy the required scripts directly there, overwriting
+existing copies. Bash makes `jvm` executable. Each invocation downloads and
+copies again; there is no installed-version check, ownership record, per-file
+hash inventory, lock, destination-side staging, history or recovery journal.
+Temporary downloads and extracted files are cleaned up on ordinary exit.
 
-Downloads are staged privately before publication. An installer-only lock
-serializes publication and environment setup; JDK operations remain lock-free.
-Bash uses `lock/pid`; a live owner fails immediately. A leftover lock is never
-guessed stale: confirm the recorded process exited, remove only `lock/pid` and
-the empty `lock/` directory, then rerun. An incomplete/unknown lock needs manual
-inspection. PowerShell holds an exclusive handle on the `lock` file; the OS
-releases it when the process exits, leaving a harmless empty file.
+A download, checksum or extraction failure occurs before copying. A copy failure
+can leave a partial installation; fix the cause and rerun. There is no atomic
+replacement or rollback of installed scripts. Installers do not create or consult
+`jvm/tool-install/` and do not migrate or remove old installer state.
 
-`transaction/` holds `new-record`, optional `old-record` and `old-jvm` (plus
-`old-jvm.ps1`/`old-jvm.cmd` on Windows). `ready` marks the point at which all
-backups exist and publication may start. Windows `stage-name` names only an
-allowlisted `.jvm-next-<32 hex digits>` destination-side directory; Bash reserves
-`.jvm-next` and `.jvm-recover` files. Replacement files are staged on the
-destination filesystem. Checked renames/copies publish the payload and record;
-catchable failures restore old bytes and ownership. A subsequent invocation
-recognizes and recovers pending transactions under the lock before checking
-ownership and republishing. Damaged/unrecognized recovery material is retained
-with a diagnostic rather than deleted. Do not remove the ownership directory
-while recovery is pending. Successful transactions discard their backups;
-there is no version history or switching launcher.
-
-Windows publication is a sequence of file replacements, not an atomic multi-file
-transaction. An uncatchable kill can leave a temporary mixed installation until
-recovery. Neither implementation promises power-loss durability. On Unix,
-profile edits have exact sibling `.jvm-backup.<random>` backups. A failing or
-catchably interrupted profile setup step restores that step's changed files;
-completed earlier setup steps remain. Windows raw user registry values/types
-are backed up to `environment-backup-<32 hex digits>.clixml` before changes;
-a failed setup restores the previous values. An uncatchable kill during
-persistent setup may require manual inspection of the retained backups.
+Consented environment edits retain rollback only for the current invocation:
+Bash keeps temporary profile copies in its work directory and PowerShell keeps
+raw registry values/types in memory. A failing environment-edit step attempts
+to restore that step; completed earlier steps and copied tool scripts remain.
+No permanent profile backups, registry snapshots or installation logs are kept.
+Abrupt termination does not trigger recovery on a subsequent invocation.
 
 ### Persistent environment setup
 
@@ -743,7 +740,7 @@ manual instructions. An unknown shell skips optional setup but fails explicitly
 requested setup. An already-correct managed setup avoids repeated prompts and
 edits. Current process PATH membership alone is not persistent Unix setup.
 
-Unix uses separate `# >>> jvm path >>>`/`# <<< jvm path <<<` and
+Bash uses separate `# >>> jvm path >>>`/`# <<< jvm path <<<` and
 `# >>> jvm java >>>`/`# <<< jvm java <<<` blocks containing literal resolved
 paths and native shell syntax, with whole-entry PATH deduplication. JAVA_HOME
 names the stable data-root `jvm/jdks/default`, even before a default exists;
@@ -772,11 +769,11 @@ network requests, JDK execution or inventory scans occur at startup.
   [`set.c`](https://github.com/openbsd/src/blob/master/bin/csh/set.c).
 
 Profile contents outside managed blocks and permissions are preserved where
-practical (a missing trailing newline is normalized); exact original bytes are
-backed up. Duplicate/corrupt markers stop setup. Symlink profiles are refused;
+practical (a missing trailing newline is normalized); original bytes are kept
+temporarily for rollback during setup. Duplicate/corrupt markers stop setup. Symlink profiles are refused;
 select the resolved target explicitly with `--shell` and `--profile`.
 
-Windows modifies only HKCU\Environment. Read raw values without expansion and
+PowerShell modifies only HKCU\Environment. Read raw values without expansion and
 preserve REG_SZ/REG_EXPAND_SZ kinds and untouched PATH tokens, including empty
 entries; never persist the merged process PATH or use setx. Tool setup adds the
 concrete native tool directory; Java setup sets JAVA_HOME and adds the native
@@ -788,18 +785,30 @@ shadowing without changing machine PATH. No PowerShell profile edits occur.
 Open a fresh terminal application/IDE afterwards; a new tab in an old host may
 still inherit stale values. Later startup statements may override setup, and
 not every GUI/noninteractive process reads these profiles. Manual removal is
-documented in README: remove only owned payloads/blocks/entries, preserve
-JDKs/config/cache, and never restore old backups over subsequent user changes.
+documented in README: remove the installed scripts and selected managed
+profile blocks or registry entries, preserving JDKs/config/cache and unrelated
+environment settings.
 
 ### Publication
 
-Release and Pages workflows are checked in, not yet run or deployed. Releases
+Release and Pages workflows are checked in. Releases
 are built from an explicit existing `v<version>` tag after the offline test
-matrix passes; exact-byte assets are published via a draft and are never
-overwritten. `web/latest.txt` is reviewed source and advances only after the
-release exists. Pages runs installer checks for the same revision and verifies
-the complete public referenced release before staging only the public-file
-allowlist. It uses the `github-pages` environment and refuses stale queued
+matrix passes. Release assets are `jvm.tar.gz`, `jvm.tar.gz.sha256` and
+`latest.txt`, published via a draft and never overwritten. The archive preserves
+the three scripts and `latest.txt` byte for byte, uses a fixed flat layout and
+normalized metadata, and is reproducible for the same inputs. Each release includes `latest.txt`,
+copied byte for byte from `web/latest.txt`; packaging requires its version to match the release version
+with one final LF. Update this source file alongside the runtime version
+constants before tagging. Individual payload assets and the old `SHA256SUMS`
+manifest are no longer published. New installers require the archive assets;
+releases containing only individual payloads are not compatible with them.
+
+Pages must ultimately publish the installers and pointer from the latest
+release, with `index.html` allowed to come from the default branch; that workflow
+change is pending. Currently Pages runs installer checks for the same revision
+and verifies the referenced public release pointer, archive checksum and contents
+before staging the public-file allowlist. It uses the `github-pages` environment
+and refuses stale queued
 revisions. The site root has no `/web/` prefix. See RELEASING.md for first-release
 ordering, settings, action documentation and post-deployment checks.
 

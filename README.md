@@ -13,8 +13,9 @@ and `jvm.cmd` (Windows launcher) need no Java, no package manager and no
 runtime installation step. That gives you a sure-fire way for your users to
 build and run your project, even when they don't have Java installed.
 
-On Linux and macOS, the Bash script supports Bash 3.2 and later. On Windows,
-use current Git Bash, MSYS2 or Cygwin, or Windows PowerShell 5.1.
+On Linux and macOS, the Bash script supports Bash 3.2 and later. Windows requires
+an up-to-date Windows 10 or later; use current Git Bash, MSYS2 or Cygwin, or
+Windows PowerShell 5.1.
 
 ## Using it in your projects
 
@@ -81,68 +82,57 @@ sure it's the correct version!
 
 ## Using it installed
 
-The standalone installers place the tool in `~/.local/bin` on every platform.
-They do not install a JDK. The public URLs become available after the maintainer
-publishes the first release and Pages site (see [publishing](RELEASING.md)).
+Install `jvm` for your user account in `~/.local/bin`:
 
 ```sh
+# Linux, macOS, Git Bash, MSYS2 or Cygwin:
 curl -fsSL https://getjvm.dev/install.sh | bash
-# Unattended, with explicit consent to persistent tool PATH only:
+
+# Install without prompts and add jvm to PATH:
 curl -fsSL https://getjvm.dev/install.sh | bash -s -- --path --no-java --non-interactive
-# Pin a release; rerunning without --version updates to the reviewed latest:
+
+# Install a specific version:
 curl -fsSL https://getjvm.dev/install.sh | bash -s -- --version 0.2.0 --no-path --no-java
 ```
 
-Windows PowerShell 5.1 (no Bash required):
+Windows PowerShell:
 
 ```powershell
 iex (irm 'https://getjvm.dev/install.ps1')
-# For parameters, download and invoke the script:
+
+# Install a specific version with options:
 irm 'https://getjvm.dev/install.ps1' -OutFile "$env:TEMP\jvm-install.ps1"
 & "$env:TEMP\jvm-install.ps1" -Version 0.2.0 -Path -NoJava -NonInteractive
 ```
 
-From CMD:
+The installer asks separately whether to add `jvm` to PATH and whether to make
+its default Java available in your terminals. Both answers default to no.
+You can also choose explicitly:
 
-```cmd
-powershell.exe -NoProfile -Command "iex (irm 'https://getjvm.dev/install.ps1')"
-```
+| Setup | Bash | PowerShell |
+| --- | --- | --- |
+| Add jvm to PATH | `--path` | `-Path` |
+| Set up default Java | `--java` | `-Java` |
+| Skip either setup | `--no-path`, `--no-java` | `-NoPath`, `-NoJava` |
+| Skip prompts | `--non-interactive` | `-NonInteractive` |
 
-The installer asks separately about persistent tool PATH and default-JDK
-JAVA_HOME/PATH setup, showing the target profiles or user registry changes.
-Answers default to no. Without a terminal, unspecified setup is skipped;
-`--path`/`--java` (PowerShell `-Path`/`-Java`) explicitly consent to edits.
-`--no-path`/`--no-java` suppress them. `--non-interactive` suppresses prompts.
-Tool downloads are checked against SHA-256 values from the same HTTPS release
-channel; this checks consistency, not an independent publisher signature.
+Without prompts, setup is skipped unless explicitly requested. The Bash
+installer configures your selected shell, including on Windows. Use the
+PowerShell installer to configure your Windows user environment.
 
-Unix supports Bash, Zsh, Fish, csh and tcsh. Choose one with `--shell bash`
-(or another supported name). Use `--profile /absolute/file` with `--shell` for
-custom startup files or an explicit symlink target. Bash normally updates
-`.bashrc` and the existing active login file; Zsh assumes exported `ZDOTDIR` or
-HOME; Fish uses XDG_CONFIG_HOME's `fish/conf.d/jvm.fish`. Unknown shells need
-manual setup. Exact profile backups are reported. Windows persists only
-current-user environment values, with raw value/type backups; machine PATH
-can still take precedence over user Java. No PowerShell profiles are edited.
+For Bash, Zsh, Fish, csh or tcsh, choose a shell with `--shell bash` (or another
+supported name). Use `--profile /absolute/file` with `--shell` to choose a
+custom startup file. Other shells require manual setup.
 
-Legacy BSD csh expands `HOME` before reading profiles and can crash on homes
-containing backticks or glob syntax; use tcsh for those homes. Generated setup
-keeps tool/data paths literal, but cannot change the shell's own initialization.
-
-Open a **fresh terminal application or IDE**, since a new tab in an old host
-may inherit stale values. Later startup statements can override setup. This
-does not configure all GUI or noninteractive programs. Then install Java:
+Open a **fresh terminal application or IDE** after setup. Then install Java:
 
 ```sh
 jvm install
 jvm x _ java -version
 ```
 
-Default-JDK setup can precede the first JDK installation. It names the stable
-`jvm/jdks/default` reference under the existing data root. Rerunning the
-installer updates only its own unmodified files; unrelated or locally modified
-files cause a conflict. A matching reinstall leaves the payload unchanged.
-Installer recovery is described in [SPEC.md](SPEC.md#tool-installer).
+You can enable default-Java setup before installing your first JDK. Rerun the
+installer to update `jvm`, or use `--version` / `-Version` to choose a release.
 
 You can also copy the scripts manually to a directory on your PATH:
 
@@ -152,8 +142,7 @@ cp jvm jvm.cmd jvm.ps1 ~/.local/bin/
 chmod +x ~/.local/bin/jvm
 ```
 
-With a manual copy, add that directory to PATH yourself. An installer refuses
-to take ownership of a manual copy; move it aside before using the installer.
+With a manual copy, add that directory to PATH yourself.
 
 To make the default JDK available in every shell, add this once to your shell
 profile:
@@ -170,26 +159,20 @@ export PATH="$(cygpath -u "${JAVA_HOME}")/bin:$PATH"
 
 ### Removing the user-wide tool
 
-Read `${XDG_DATA_HOME:-$HOME/.local/share}/jvm/tool-install/record` (native
-Windows path separators on Windows). It records the destination and hashes of
-owned files. After checking that they still match, remove **only** its listed
-`jvm` file on Unix, or `jvm`, `jvm.ps1`, `jvm.cmd` on Windows. Remove the
-`tool-install` directory only when no installer is active and no recovery is
-pending. Preserve sibling `jdks`, configuration and cache directories.
+Remove `~/.local/bin/jvm` on Linux/macOS, or `jvm`, `jvm.ps1` and `jvm.cmd`
+from the corresponding `.local/bin` directory on Windows. Preserve JDKs,
+configuration and cache directories if you want to keep using them.
 
-On Unix, remove only the `# >>> jvm path >>>` / `# <<< jvm path <<<` and
+For Bash setup, remove only the `# >>> jvm path >>>` / `# <<< jvm path <<<` and
 `# >>> jvm java >>>` / `# <<< jvm java <<<` blocks from the profiles the
 installer reported. Leave all surrounding user content; remove Fish's
-`jvm.fish` only if those blocks are its entire content. Backups are for
-inspection; do not restore an old profile over later edits.
+`jvm.fish` only if those blocks are its entire content.
 
-On Windows, use the user Environment Variables editor to remove only the exact
-tool-bin and default-JDK-bin entries that the installer added. Remove
-JAVA_HOME only if it still equals the installer-reported stable default path
-and you want Java setup removed. Consult the reported raw registry backups to
-distinguish pre-existing entries. Preserve all other tokens/types; do not
-restore old environment values over subsequent changes. Refresh terminal
-applications afterwards. Project copies continue to work independently.
+For PowerShell setup, open the Windows user Environment Variables editor and
+remove the PATH entries added for `jvm` and its default Java. Remove JAVA_HOME
+if it still points to that default and you want Java setup removed. Leave your
+other settings unchanged, then restart your terminal application or IDE.
+Project copies continue to work independently.
 
 ## Usage
 

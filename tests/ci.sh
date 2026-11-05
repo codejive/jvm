@@ -34,5 +34,5 @@ case "$(uname -s)" in
         # subdirectory. Include it for the suite's nested PowerShell/CMD calls.
         system_directory=$(cygpath -u -S)
         export PATH="$PATH:$system_directory/WindowsPowerShell/v1.0"
-        JVM_TEST_BASH="$(cygpath -aw "$BASH_BIN")" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -aw "$ROOT/tests/tool-installer.ps1")" ;;
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -aw "$ROOT/tests/tool-installer.ps1")" ;;
 esac

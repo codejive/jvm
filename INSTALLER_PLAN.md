@@ -3,7 +3,9 @@
 Date: 2026-11-03. Implementation: 2026-11-04, approved defaults applied.
 The installer sources, tests and publication workflows are implemented locally;
 publication and hosted verification remain maintainer steps in RELEASING.md.
-SPEC.md records completed behavior and recovery boundaries.
+SPEC.md records current behavior. The user simplified installation on
+2026-11-05 to temporary extraction and direct copying, removing ownership,
+locking, history, recovery and permanent backups.
 Read `AGENTS.md` and `SPEC.md` before implementation. This document defines the
 work breakdown; `SPEC.md` remains the product contract. When implementing,
 update the contract to distinguish completed behavior from remaining proposals.
@@ -22,7 +24,8 @@ User decisions already established:
   platforms. Windows uses native paths beneath the same home-resolution policy
   as `jvm.ps1` (HOME, then USERPROFILE when HOME is unavailable).
 - Offer tool PATH setup when needed and default-JDK environment setup separately.
-- Windows persists these settings in the current user's environment registry.
+- The PowerShell installer persists settings in the current user's environment registry;
+  the Bash installer uses shell profiles, including on Windows.
 - Put public installer sources and optional website content in root-level
   `web/`. Deploy its contents as the Pages site root through GitHub Actions.
 - The domain now reaches GitHub Pages through Cloudflare. On 2026-11-03 the
@@ -44,15 +47,14 @@ RELEASING.md records publication steps and verification boundaries.
 1. Publish versioned GitHub Release assets; default to a stable version recorded
    in a small Pages `latest.txt`. Support explicit version selection. Never fetch
    tool payloads from the moving default branch or scrape JSON/HTML for versions.
-2. Ship `jvm` on Unix and all three scripts (`jvm`, `jvm.ps1`, `jvm.cmd`) on
-   Windows, regardless of which installer is used. Require no Bash installation
+2. Updated 2026-11-05: Linux/macOS retain only `jvm`; Windows retains all three
+   scripts (`jvm`, `jvm.ps1`, `jvm.cmd`), regardless of installer. Require no Bash installation
    for the native PowerShell route.
 3. Support persistent setup for Bash, Zsh, Fish, csh and tcsh, plus Windows user
    environment values. Unknown/custom shells get manual instructions. Unix
    shell setup is not a prerequisite for installing the executable.
-4. Rerunning an installer updates an installation it owns; matching installed
-   content is a no-op. Refuse unrelated or locally modified destination files
-   with an actionable explanation. No overwrite/force flag in version one.
+4. Updated 2026-11-05: rerunning downloads and copies directly over existing
+   scripts. No ownership checks, lock, history or recovery transaction.
 5. Permit default-JDK setup before a default exists, explaining that Java becomes
    available after the first JDK installation. Do not resolve it through `home`
    or `env`, since those commands can install JDKs.
@@ -71,7 +73,7 @@ install.sh --help
 ```
 
 Proposed PowerShell equivalents: `-Version`, `-Path` / `-NoPath`, `-Java` /
-`-NoJava`, `-NonInteractive`, and `-Help`. Shell/profile options are Unix-only;
+`-NoJava`, `-NonInteractive`, and `-Help`. Shell/profile options apply to all Bash hosts;
 the native installer is Windows-only. Reject conflicting or unsupported options
 before networking, directory creation or edits. Help requires no network.
 
@@ -124,7 +126,15 @@ mode. Proposed tag convention: `v<version>`, with `<version>` a documented stric
 numeric dotted version. First inspect existing tags and version constants; do
 not rename existing releases or publish a release without authorization.
 
-For each release, produce exact-byte assets:
+The original individual-asset proposal below was superseded on 2026-11-05 by
+one `jvm.tar.gz` containing all three scripts and `latest.txt`, one
+`jvm.tar.gz.sha256` digest
+file, and a separate `latest.txt`. Both installers use `tar`; the Windows
+baseline is up-to-date Windows 10 or later. After checksum verification,
+installers simply extract these project-produced archives without entry
+inspection. See SPEC.md for the current contract.
+
+Originally, for each release, produce exact-byte assets:
 
 ```text
 jvm
@@ -175,44 +185,23 @@ Consult current official action documentation when implementing.
 - Explain the first-release bootstrap sequence: release assets first, then the
   corresponding latest.txt and Pages deployment. Do not publish a broken pointer.
 
-## Step 2: Installer transaction and ownership
+## Step 2: Simple installation (updated 2026-11-05)
 
-Implement `web/install.sh` and `web/install.ps1` as standalone files. Keep helpers
-readable and separated by concern. No runtime helper downloads except the
-version/checksum/payload data. Preserve LF in Bash and the project script bytes.
+Implement independent `web/install.sh` and `web/install.ps1` entry points.
+Validate options and paths, resolve the release version, download the archive
+and digest into a unique temporary directory, verify SHA-256, unpack and copy
+the platform's required scripts directly to HOME/.local/bin. Overwrite existing
+copies and make Bash's jvm executable. Clean up temporary files on exit.
 
-Suggested ownership state: `$XDG_DATA_HOME/jvm/tool-install/` with the existing
-data-home fallback and absolute-path rules. This is NEW proposed storage; add
-its exact schema and lifecycle to SPEC when implementing. Store installed version,
-destination and hashes for owned filenames as literal data. Do not source it.
+Do not create ownership records, per-file hash inventories, locks, destination
+staging, history, persistent backups or recovery journals. A failed copy may
+leave partial replacement; users rerun after fixing the cause. Do not add
+regression tests for removed features.
 
-Algorithm:
-
-1. Validate arguments, host, home, roots and required capabilities.
-2. Resolve/pin version, stage downloads in a private temporary directory, and
-   verify the complete selected payload. Nothing edits profiles or registry yet.
-3. Before publication, serialize installer mutations with a small installer-only
-   lock in the ownership directory; recheck destination state under that lock.
-   This does not introduce a lock for JDK installation or inventory operations.
-   A concurrent invocation can fail clearly and be retried; no busy waiting needed.
-4. Treat symlinks/reparse points, directories and unowned existing destination
-   files as conflicts. Detect locally modified owned scripts using saved hashes.
-5. Stage replacement files on the destination filesystem and preserve old owned
-   versions plus a literal transaction record before renaming anything.
-6. Publish the complete payload and ownership record with checked operations.
-   On failure or a catchable interruption, restore the old payload. A Windows
-   multi-file replacement is not atomic: record that limitation honestly.
-   The next invocation must recognize interrupted publication and recover before
-   proceeding; never delete recovery material blindly or guess at a stale lock.
-7. Apply consented environment setup after successful publication. Back up each
-   changed profile or registry value first and restore that step on failure.
-   Do not roll back a usable tool installation merely because setup failed.
-8. Clean only owned staging, report installed version/path, and explain how to
-   open a refreshed terminal or apply the displayed setup instructions.
-
-A process killed between file renames can leave a temporary mixed installation
-until recovery. Do not promise atomic multi-file visibility or power-loss durability.
-Keep the recovery design small; do not add a version-switching launcher framework.
+Offer environment setup only after copying succeeds. Preserve the consent and
+shell/registry behavior below. Rollback of a failed environment edit may use
+temporary profile copies or registry values held in memory, with no permanent
+backup files. Never execute downloaded scripts during installation.
 
 ## Step 3: Unix persistent setup
 
@@ -225,7 +214,8 @@ as defined by the existing reference contract. No GRAALVM_HOME setup is needed.
 
 Use separate marked blocks for tool PATH and default Java, so reruns can enable
 one without duplicating or removing the other. Preserve surrounding content,
-encoding/line endings where practical, permissions and an exact backup. Stop
+encoding/line endings where practical, permissions and a temporary copy for
+rollback during the current invocation. Stop
 on duplicate/corrupt markers. Do not replace a symlinked profile with a regular
 file: resolve and show its target or require an explicit target override.
 
@@ -252,13 +242,11 @@ Profile setup does not configure every GUI application or noninteractive process
 
 ## Step 4: Windows persistent setup
 
-PowerShell owns registry updates. When install.sh runs under Git Bash/MSYS2/Cygwin,
-use native path conversion and delegate consented registry setup to the verified
-PowerShell installer without recursion, duplicate download/publication or duplicate
-prompts. Design a private, validated setup-only invocation if necessary; document
-it as internal and do not expose an arbitrary command-evaluation interface.
-If this introduces unnecessary complexity, share a private staged-data contract,
-not duplicated registry mutation code in Bash. Test the selected design end to end.
+Updated user decision (2026-11-05): only the PowerShell installer owns registry
+updates. Under Git Bash/MSYS2/Cygwin, install.sh installs all three scripts and uses
+shell-profile setup for that environment. Do not embed, download or invoke the
+PowerShell installer from Bash. Users wanting native setup run install.ps1 from
+PowerShell themselves.
 
 Use `HKCU\Environment`, not machine values. Read raw values without expansion;
 preserve existing REG_SZ/REG_EXPAND_SZ types and unrelated PATH tokens. Never
@@ -296,15 +284,14 @@ Acceptance cases:
   prompts never consume script bytes. Interactive and unattended choices agree.
 - Latest and pinned versions, HTTPS redirects, downloader alternatives, HTTP
   errors, malformed version/checksum data, missing files and checksum mismatch.
-- Fresh install, matching reinstall, update, locally modified/unowned conflicts,
-  two concurrent installers, publication failures and interrupted-run recovery.
+- Fresh install, explicit versions and copying all required platform scripts.
 - Paths containing spaces and supported shell metacharacters, native Windows
   paths, non-ASCII homes, XDG overrides and invalid/relative home overrides.
   Reject unrepresentable PATH separator/newline paths clearly before mutation.
 - Each consent combination; existing tool PATH; missing default JDK; existing
   JAVA_HOME; no duplicate PATH entries; no JDK storage/default mutation.
 - Correct Bash login precedence, custom ZDOTDIR/profile override, Fish config
-  roots, csh/tcsh unset variables, profile backups and symlink handling.
+  roots, csh/tcsh unset variables, profile-edit rollback and symlink handling.
 - A real fresh shell loads generated setup in hosted tests; no startup download,
   accidental output or command evaluation occurs. Shell text is not merely
   compared against private helper output.
@@ -329,13 +316,13 @@ redirect. Live checks are optional deployment validation, not default tests.
 ## Step 6: Documentation and delivery
 
 Update SPEC's commands/current behavior only when implementation exists. Add
-installer interfaces, ownership storage, failure/recovery rules, supported shell
+installer interfaces, direct-copy failure behavior, supported shell
 setup and Windows boundaries. Update the manual-only setup statement to distinguish
 the installer from ordinary manager commands. Keep `use` deferred.
 
 Update README with interactive and unattended installation examples, first JDK
 installation, terminal refresh, repeat-install updates, pinned versions, and
-manual tool removal. Removal instructions must identify only installer-owned
+manual tool removal. Removal instructions must identify the installed
 files/blocks/registry entries, preserve JDKs/config/cache, and avoid restoring
 old environment values over subsequent user edits. Keep project-copy instructions.
 

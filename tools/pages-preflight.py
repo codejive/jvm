@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Verify latest.txt against complete, public release assets before deploying Pages."""
 import hashlib
+import io
 import pathlib
 import re
+import tarfile
 import urllib.request
 
 root = pathlib.Path(__file__).resolve().parent.parent
@@ -27,13 +29,16 @@ def get(name):
         return response.read()
 
 
-lines = get('SHA256SUMS').decode('ascii').splitlines()
-hashes = {}
-for line in lines:
-    match = re.fullmatch(r'([0-9a-f]{64})  (jvm|jvm\.ps1|jvm\.cmd)', line)
-    assert match and match[2] not in hashes, 'Invalid SHA256SUMS'
-    hashes[match[2]] = match[1]
-assert set(hashes) == {'jvm', 'jvm.ps1', 'jvm.cmd'}, 'Incomplete release'
-for name, digest in hashes.items():
-    assert hashlib.sha256(get(name)).hexdigest() == digest, f'Invalid {name}'
+assert get('latest.txt') == version.encode('ascii'), 'Release latest.txt mismatch'
+checksum = get('jvm.tar.gz.sha256').decode('ascii')
+assert re.fullmatch(r'[0-9a-f]{64}\n', checksum), 'Invalid archive checksum'
+archive = get('jvm.tar.gz')
+assert hashlib.sha256(archive).hexdigest() == checksum.strip(), 'Archive checksum mismatch'
+with tarfile.open(fileobj=io.BytesIO(archive), mode='r:gz') as tar:
+    members = tar.getmembers()
+    assert len(members) == 4 and {m.name for m in members} == {'jvm', 'jvm.ps1', 'jvm.cmd', 'latest.txt'}, 'Invalid archive contents'
+    assert all(m.isfile() and m.size > 0 for m in members), 'Invalid archive entry type or size'
+    assert tar.extractfile('latest.txt').read() == version.encode('ascii'), 'Archive latest.txt mismatch'
+    for member in members:
+        assert len(tar.extractfile(member).read()) == member.size, 'Truncated archive payload'
 print(f'Complete verified public release: v{version.strip()}')

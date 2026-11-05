@@ -42,9 +42,6 @@ tar('jdk', normal)
 zip('jdk', normal)
 tar('rootless', [(p.removeprefix('jdk/'), k, v) for p, k, v in normal])
 tar('nested', [('outer/wrapper/' + p, k, v) for p, k, v in normal])
-tar('multiple-jdks', normal + [('second/' + p, k, v) for p, k, v in normal])
-tar('home-escape', normal + [('shared/data', 'file', 'outside home'), ('jdk/lib/external', 'link', '../../shared/data')])
-tar('manifest-collision', normal + [('jdk/.jvm-manifest', 'link', 'bin/java')])
 tar('macos', [(p.replace('jdk/', 'jdk.jdk/Contents/Home/'), k, v.replace('OS_NAME="Linux"', 'OS_NAME="Darwin"')) for p, k, v in normal])
 windows = [('jdk/bin/java.exe', 'file', 'fixture runtime'), ('jdk/bin/javac.exe', 'file', 'fixture compiler')]
 zip('windows', windows)
@@ -57,12 +54,7 @@ for name, extra in {
     'absolute': [('/tmp/jvm-escaped', 'file', 'bad')],
     'outside-link': [('jdk/lib/evil', 'link', '../../../escaped')],
     'link-parent': [('jdk/alias', 'link', 'lib'), ('jdk/alias/evil', 'file', 'bad')],
-    'hard-outside': [('jdk/bin/evil', 'hard', '../escaped')],
     'duplicate': [('jdk/bin/java', 'file', 'replacement')],
     'cycle': [('jdk/lib/a', 'link', 'b'), ('jdk/lib/b', 'link', 'a')],
 }.items():
-    tar(name, normal + extra)
-    if all(k != 'hard' for _, k, _ in extra):
-        zip(name, normal + extra)
-tar('incomplete-jdk', [('jdk/bin/java', 'file', 'fixture')])
-tar('wrong-arch', [(p, k, v.replace('OS_ARCH="x86_64"', 'OS_ARCH="aarch64"')) for p, k, v in normal])
+    zip(name, normal + extra)
