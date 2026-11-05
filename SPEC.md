@@ -297,6 +297,28 @@ is prepared fully before printing and never evaluated by `jvm`. `jvm.ps1 env`
 emits equivalent PowerShell `$env:` assignments, for example
 `iex (& '.\jvm.ps1' env 'temurin-21')`.
 
+The Windows launcher passes a leading `--cmd` signal to `jvm.ps1`. Only that
+position consumes the signal; it is removed before command parsing, usage-comment
+generation and `exec` argument forwarding. Without it, PowerShell output remains
+the default. With it, `env`/`e` prints commands for copying and pasting into a
+CMD window:
+
+```bat
+rem Copy ^& paste these lines into your CMD window
+set "JAVA_HOME=C:\selected\home"
+set "GRAALVM_HOME=C:\selected\home"
+set "PATH=C:\selected\home\bin;%PATH%"
+```
+
+The ampersand in the comment is escaped so the comment itself can also be pasted.
+`GRAALVM_HOME` appears only for GraalVM. PATH deduplication and `-f` work
+identically to PowerShell output. The PATH statement uses `%PATH%`, expanded by
+CMD when pasted, rather than embedding the inherited PATH. No invocation path,
+alias or arguments are included in the CMD comment. This mode selects syntax
+explicitly, without parent-process shell detection. Running `jvm.cmd` from
+PowerShell also requests CMD output; use `jvm.ps1` for PowerShell assignments.
+Pasted statements follow normal CMD percent-variable and delayed-expansion rules.
+
 `exec` runs `<command>` with `JAVA_HOME` set and the selected JDK's `bin` first
 on `PATH` (always prepended). It uses the physical home, never a mutable link,
 and does not change the parent shell. Automatic installation initializes missing
@@ -610,8 +632,8 @@ Last-Modified and last-check metadata.
   both in one change.
 - **`jvm.cmd`**: a thin launcher for `cmd.exe` and double-click use. It runs
   the `jvm.ps1` beside it with `powershell.exe -NoProfile -ExecutionPolicy
-  Bypass -File`, forwards all arguments and returns its exit code. It contains
-  no parsing logic.
+  Bypass -File`, adds the leading `--cmd` output signal, forwards all user
+  arguments and returns its exit code. It contains no parsing logic.
 - Fixtures, tests and contributor tooling stay outside the shipped scripts and
   are never runtime dependencies. No runtime dependency on Java.
 

@@ -1,5 +1,26 @@
 # Discovery, installation and uninstallation verification
 
+## CMD environment output (2026-11-05)
+
+`jvm.cmd` supplies the leading `--cmd` signal. CMD `env`/`e` now prints a
+copy-and-paste comment and `set "PATH=...;%PATH%"` rather than embedding the
+inherited PATH or suggesting FOR /F evaluation. The comment escapes its
+ampersand so it can also be pasted safely.
+
+Focused offline regressions passed under Windows PowerShell 5.1. They feed
+separate output lines, including the comment, into native CMD and verify PATH
+expansion, JAVA_HOME, GraalVM, PATH deduplication and `-f`. They also check the
+signal's leading-only position and unchanged PowerShell usage comments from
+spaced and apostrophe-containing invocation paths. All fixtures use temporary
+HOME/XDG roots and child processes; no real JDK is executed.
+
+Bash syntax, PowerShell parsing and `git diff --check` passed. The full 30-group
+PowerShell suite passed for the preceding CMD implementation; this output-only
+revision reran the focused environment cases. ShellCheck is unavailable. No
+additional Unix/Cygwin/MSYS2 or Bash 3.2 validation was performed. Distributed
+sizes: `jvm` 70,088 bytes, `jvm.ps1` 80,521 bytes and `jvm.cmd` 1,271 bytes,
+all retaining LF endings.
+
 ## Installed-JDK reminder (2026-11-05)
 
 Both installers now suggest listing the installed JDKs when the managed
