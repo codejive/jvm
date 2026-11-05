@@ -32,29 +32,25 @@ This runs `your_app` with a matching JDK (Java 25 or newer), downloading
 and installing Temurin if no installed JDK matches. Use `.\jvm.cmd` on Windows
 outside Bash.
 
-Or you can configure your PATH and JAVA_HOME for the duration of your shell session
-by running:
+There are of course ways to make this easier, but they would either require the user to install `jvm`, install `java` or to at least temporarily change their environment. The beauty of the above command is that it can be copy & pasted and will always work.
+
+## Using it in your scripts
+
+Add one line near the start of your script to ensure Java 25 or newer is
+available, installing a matching JDK if needed. It sets `JAVA_HOME` and updates
+`PATH` so subsequent commands in your script can use Java.
+
+On Linux and macOS (Bash):
 
 ```sh
-eval $(./jvm env 25+)
+eval "$(./jvm env 25+)"
 ```
 
-(You can run plain `./jvm env` if you need a reminder on how to use it with `eval`)
+On Windows (PowerShell):
 
-To avoid repeating the JDK version in every command, add a `.jvmrc` file to the
-project root (see [Configuration](#configuration)):
-
+```powershell
+Invoke-Expression (& .\jvm env '25+')
 ```
-java=25+
-```
-
-At which point the previous command can be simplified to:
-
-```sh
-eval $(./jvm env)
-```
-
-
 
 ## Neat Trick (Runnable .java files)
 
@@ -82,10 +78,78 @@ Now, you could already do this without `jvm`, but the nice thing is that now it
 will even work for people who don't have Java installed. And it will even make
 sure it's the correct version!
 
+
+## What versions are available
+
+```sh
+jvm available
+```
+
+Will show you a (long) list of available JDKs from just about any vendor you
+can think of. The list looks a bit like this:
+
+```tsv
+26.0.2.1+1-temurin              temurin                 26.0.2.1+1                      hotspot
+25.0.5+8-temurin                temurin                 25.0.5+8-LTS                    hotspot
+24.0.2+12-temurin               temurin                 24.0.2+12                       hotspot
+23.0.2+7-temurin                temurin                 23.0.2+7                        hotspot
+```
+
+The list will only show the latest version for each major version for that
+distribution/vendor.
+
+The first column is the ID of the JDK and can be used if you want to select a
+very specific JDK. But most of the time you can simply refer to it by it's
+distro name and version number, eg. `temurin-24`.
+
+## Selecting versions
+
+You can refer to JDKs, either installed or available for installation in
+several ways:
+
+- **Number**, eg `25`, which refers to the JDK's major version number (the
+major version of 26.0.2.1+1 is 26). It will select a JDK that has that same
+version.
+- **Number+**, eg `24+`, will select a JDK that has _at least_ that version.
+So 24 will match, but so will 25 or 27.
+- **Distro-number**, eg `temurin-25`, will select a JDK with that version
+from the given distrubution.
+- **Distro-number+**, eg `temurin-24+`, as before but now for a JDK from the
+given distribution that has _at least_ that version.
+
+Btw, in many cases you don't even need to specify a version; `jvm` also keeps
+"defaults" for each version and globally (see the `default` command), so it
+can select a proper JDK for you. Or you can use the configuration file that
+is explained in the next section.
+
+## Don't Repeat Yourself
+
+To avoid repeating the JDK version in every command, add a `.jvmrc` file to the
+project root (see [Configuration](#configuration)):
+
+```
+java=25+
+```
+
+At which point any commands that expect a version will now use the one defined
+in that file, eg:
+
+```sh
+jvm home
+```
+
+Will now show the path to a JDK 25 or newer installation, installing one if
+none is available.
+
 ## Using it installed
 
-Run the installer to choose a local project copy or installation for your user
-account in `~/.local/bin`:
+Just go to [getjvm.dev](https://getjvm.dev) and follow the instructions to
+install!
+
+For a more thorough explanation, keep reading:
+
+The installer can be used to install either a local project copy or
+installation for your user account in `~/.local/bin`:
 
 ```sh
 # Linux, macOS, Git Bash, MSYS2 or Cygwin:
