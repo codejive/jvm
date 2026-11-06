@@ -135,13 +135,13 @@ function Set-UserEnvironment([string]$Destination, [string]$JavaHome, [string]$P
             Write-InstallerMessage "`nLet's set up jvm for future terminals.`nThe optional settings below update your user environment variables:`n  PATH and JAVA_HOME (HKCU\Environment)"
         }
         if (-not $toolPresent -and $PathChoice -ne 'no') {
-            Write-InstallerMessage "`nRun jvm from any directory?`n`nAdds $Destination to your user PATH.`n`nYes: enable the jvm command in future terminals.`nNo:  leave your Java environment settings unchanged.`n"
+            Write-InstallerMessage "`nRun jvm from any directory?`n`nAdds $Destination to your user PATH.`n`nYes: enable the jvm command in future terminals.`nNo:  leave your environment settings unchanged.`n"
             $toolYes = Get-SetupConsent $PathChoice $Unattended 'Enable this?'
         }
         if (-not $javaPresent -and $JavaChoice -ne 'no') {
             $oldJavaDisplay = '<unset>'
             if ($oldJava.Exists) { $oldJavaDisplay = [string]$oldJava.Value }
-            Write-InstallerMessage "`nUse jvm's default JDK for Java commands?`n`nSets JAVA_HOME to $JavaHome`n(current value: $oldJavaDisplay)`nand adds its bin directory to your user PATH.`n`nYes: configure future terminals to use jvm's default JDK.`nNo:  leave your Java environment settings unchanged.`n"
+            Write-InstallerMessage "`nUse jvm's default JDK for Java commands?`n`nSets JAVA_HOME to $JavaHome`n(current value: $oldJavaDisplay)`nand adds its bin directory to your user PATH.`n`nYes: configure future terminals to use jvm's default JDK.`nNo:  leave your environment settings unchanged.`n"
             $javaYes = Get-SetupConsent $JavaChoice $Unattended 'Enable this?'
         }
         if (-not $toolYes -and -not $javaYes) {
