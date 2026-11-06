@@ -270,7 +270,7 @@ setup() {
         else
             printf '\nRun jvm from any directory?\n\nAdds %s to PATH.\n\nYes: enable the jvm command in future terminals.\n' "$value" >&2
         fi
-        printf 'No:  leave your Java environment settings unchanged.\n\n' >&2
+        printf 'No:  leave your environment settings unchanged.\n\n' >&2
         if { [ "$kind" = path ] && consent "$pc" 'Enable this?'; } || { [ "$kind" = java ] && consent "$jc" 'Enable this?'; }; then
             for file in "${files[@]}"; do edit_profile "$file" "$kind" "$value"; done
             SETUP_FILES=() SETUP_BACKUPS=() SETUP_EXISTED=()

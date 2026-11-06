@@ -797,7 +797,7 @@ show a shared introduction listing the shell startup files or user environment
 variables (HKCU\Environment), then explain each choice in terms of its effect
 in future terminals. Show the added paths and current/new JAVA_HOME. Both
 questions use `Enable this? [Y/n]`; an empty answer accepts setup, while a
-failed read never consents. Both no descriptions say `leave your Java environment
+failed read never consents. Both no descriptions say `leave your environment
 settings unchanged`. Bash reads `/dev/tty`, never the piped bootstrap stdin.
 Without a
 usable terminal, or in noninteractive mode, unspecified setup is skipped with

@@ -149,7 +149,7 @@ run --version 0.2.0 --non-interactive --no-path --no-java
 ok 'pinned install bypasses latest'
 run --path --java --shell bash --non-interactive
 [ "$(grep -c 'optional settings below' "$TEMP/err")" = 1 ]
-[ "$(grep -c 'No:  leave your Java environment settings unchanged.' "$TEMP/err")" = 2 ]
+[ "$(grep -c 'No:  leave your environment settings unchanged.' "$TEMP/err")" = 2 ]
 grep -q 'Run jvm from any directory?' "$TEMP/err"
 grep -q "Use jvm's default JDK for Java commands?" "$TEMP/err"
 grep -q 'Open a new terminal application' "$TEMP/err"
